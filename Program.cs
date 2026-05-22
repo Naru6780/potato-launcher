@@ -668,26 +668,18 @@ internal sealed class MainForm : Form
                 })
                 .Where(account => !string.IsNullOrWhiteSpace(account.UserName))
                 .ToList();
-            var flagsByUserName = accountEntries
-                .GroupBy(account => account.UserName, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    group => group.Key,
-                    group => (UseSteam: group.Any(account => account.UseSteam), UseOtp: group.Any(account => account.UseOtp)),
-                    StringComparer.OrdinalIgnoreCase);
 
             foreach (var entry in accountEntries)
             {
                 var userName = entry.UserName;
-                var flags = flagsByUserName[userName];
-                var useSteam = flags.UseSteam;
-                var useOtp = flags.UseOtp;
+                var useSteam = entry.UseSteam;
+                var useOtp = entry.UseOtp;
                 var accountKey = BuildAccountKey(userName, useSteam, useOtp);
-                var originalAccountKey = BuildAccountKey(userName, entry.UseSteam, entry.UseOtp);
                 var characterName = GetJsonString(entry.Element, "ChosenCharacterName");
                 var displayName = string.IsNullOrWhiteSpace(characterName) ? userName : $"{userName} - {characterName}";
                 var key = accountKey;
                 var order = 999;
-                if (batLookup.TryGetValue(originalAccountKey, out var batAccount))
+                if (batLookup.TryGetValue(accountKey, out var batAccount))
                 {
                     displayName = $"{userName} - {batAccount.Name}";
                     key = batAccount.BatchFile;
