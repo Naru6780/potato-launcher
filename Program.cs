@@ -50,6 +50,7 @@ internal sealed class AppSettings
     public bool LaunchModeChosen { get; set; }
     public string Theme { get; set; } = "Pink";
     public bool MusicMuted { get; set; }
+    public string LastShownChangelogVersion { get; set; } = "";
     public List<BandConfig> Bands { get; set; } = [];
     public List<BandConfig> InstancedBands { get; set; } = [];
     public List<BandConfig> SharedBands { get; set; } = [];
@@ -60,7 +61,7 @@ internal sealed record ThemePalette(Color Back1, Color Back2, Color Card, Color 
 internal readonly record struct LauncherWindow(int ProcessId, IntPtr Handle);
 internal readonly record struct LaunchCommand(string FileName, string Arguments, string WorkingDirectory);
 internal readonly record struct BatchLaunchInfo(string AccountKey, string RoamingPath);
-internal sealed record NewsBanner(string ImageUrl, string LinkUrl);
+internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
 internal sealed record NewsEntry(string Title, string Url, DateTimeOffset Date, string Tag);
 
 internal sealed class MainForm : Form
@@ -164,6 +165,7 @@ internal sealed class MainForm : Form
         MigrateLegacyBands();
         PopulateLists();
         ApplyTheme(settings.Theme);
+        Shown += async (_, _) => await ShowChangelogIfNewVersionAsync();
         if (!settings.LaunchModeChosen) Shown += (_, _) => ShowLaunchChoiceOverlay();
     }
 
@@ -1552,6 +1554,15 @@ internal sealed class MainForm : Form
         http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
+        var headlineJson = await http.GetStringAsync($"https://frontier.ffxiv.com/news/headline.json?lang=en-us&media=pcapp&_={timestamp}");
+        using var headlineDocument = JsonDocument.Parse(headlineJson);
+        var topicEntries = ReadNewsEntries(headlineDocument.RootElement, "topics", true)
+            .OrderByDescending(entry => entry.Date)
+            .Take(5)
+            .ToList();
+        newsEntries.AddRange(ReadNewsEntries(headlineDocument.RootElement, "news", false));
+        newsEntries.Sort((left, right) => right.Date.CompareTo(left.Date));
+
         var bannerJson = await http.GetStringAsync($"https://frontier.ffxiv.com/v2/topics/en-us/banner.json?lang=en-us&media=pcapp&_={timestamp}");
         using (var bannerDocument = JsonDocument.Parse(bannerJson))
         {
@@ -1566,21 +1577,24 @@ internal sealed class MainForm : Form
                     var linkUrl = GetJsonString(item, "link");
                     if (!string.IsNullOrWhiteSpace(imageUrl) && !string.IsNullOrWhiteSpace(linkUrl))
                     {
-                        newsBanners.Add(new NewsBanner(imageUrl, linkUrl));
+                        newsBanners.Add(new NewsBanner(imageUrl, linkUrl, linkUrl));
                     }
                 }
             }
         }
 
-        var headlineJson = await http.GetStringAsync($"https://frontier.ffxiv.com/news/headline.json?lang=en-us&media=pcapp&_={timestamp}");
-        using var headlineDocument = JsonDocument.Parse(headlineJson);
-        AddNewsEntries(headlineDocument.RootElement, "news", false);
-        newsEntries.Sort((left, right) => right.Date.CompareTo(left.Date));
+        foreach (var topic in topicEntries)
+        {
+            if (newsBanners.Count >= 5) break;
+            if (newsBanners.Any(banner => banner.LinkUrl.Equals(topic.Url, StringComparison.OrdinalIgnoreCase))) continue;
+            newsBanners.Add(new NewsBanner("", topic.Url, topic.Title));
+        }
     }
 
-    private void AddNewsEntries(JsonElement root, string propertyName, bool topic)
+    private static List<NewsEntry> ReadNewsEntries(JsonElement root, string propertyName, bool topic)
     {
-        if (!root.TryGetProperty(propertyName, out var items) || items.ValueKind != JsonValueKind.Array) return;
+        var entries = new List<NewsEntry>();
+        if (!root.TryGetProperty(propertyName, out var items) || items.ValueKind != JsonValueKind.Array) return entries;
         foreach (var item in items.EnumerateArray())
         {
             var title = GetJsonString(item, "title");
@@ -1596,8 +1610,9 @@ internal sealed class MainForm : Form
 
             var date = ParseNewsDate(GetJsonString(item, "date"));
             var tag = GetJsonString(item, "tag");
-            newsEntries.Add(new NewsEntry(title, url, date, tag));
+            entries.Add(new NewsEntry(title, url, date, tag));
         }
+        return entries;
     }
 
     private async Task RenderNewsOverlayAsync()
@@ -1620,7 +1635,12 @@ internal sealed class MainForm : Form
         }
 
         var banner = newsBanners[Math.Clamp(selectedNewsBannerIndex, 0, newsBanners.Count - 1)];
-        newsBannerTitle.Text = banner.LinkUrl;
+        newsBannerTitle.Text = string.IsNullOrWhiteSpace(banner.Title) ? banner.LinkUrl : banner.Title;
+        if (string.IsNullOrWhiteSpace(banner.ImageUrl))
+        {
+            newsBannerPicture.Image = CreateGeneratedNewsBanner(banner.Title);
+            return;
+        }
         try
         {
             using var http = new HttpClient();
@@ -1633,6 +1653,47 @@ internal sealed class MainForm : Form
         {
             newsBannerTitle.Text = "Could not load featured image. Click to open it online.";
         }
+    }
+
+    private Image CreateGeneratedNewsBanner(string title)
+    {
+        var image = new Bitmap(newsBannerPicture.Width, newsBannerPicture.Height);
+        using var graphics = Graphics.FromImage(image);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var backgroundBrush = new LinearGradientBrush(new Rectangle(Point.Empty, image.Size), palette.Back1, palette.Back2, 35);
+        graphics.FillRectangle(backgroundBrush, new Rectangle(Point.Empty, image.Size));
+        using var veil = new SolidBrush(Color.FromArgb(150, palette.Card));
+        using var card = RoundedRectangle(new Rectangle(34, 34, image.Width - 68, image.Height - 68), 28);
+        graphics.FillPath(veil, card);
+        using var border = new Pen(palette.Border, 2);
+        graphics.DrawPath(border, card);
+        using var titleFont = new Font("Segoe UI", 20F, FontStyle.Bold);
+        using var subtitleFont = new Font("Segoe UI", 10F, FontStyle.Bold);
+        using var titleBrush = new SolidBrush(palette.Text);
+        using var mutedBrush = new SolidBrush(palette.Muted);
+        using var titleFormat = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisWord };
+        graphics.DrawString("Latest Lodestone Topic", subtitleFont, mutedBrush, new RectangleF(50, 58, image.Width - 100, 28), titleFormat);
+        graphics.DrawString(title, titleFont, titleBrush, new RectangleF(64, 82, image.Width - 128, 120), titleFormat);
+        graphics.DrawString("Click to open", subtitleFont, mutedBrush, new RectangleF(50, 202, image.Width - 100, 28), titleFormat);
+        return image;
+    }
+
+    private static GraphicsPath RoundedRectangle(Rectangle bounds, int radius)
+    {
+        var path = new GraphicsPath();
+        if (bounds.Width <= 0 || bounds.Height <= 0) return path;
+        radius = Math.Min(radius, Math.Max(1, Math.Min(bounds.Width, bounds.Height) / 2));
+        var diameter = radius * 2;
+        var arc = new Rectangle(bounds.Left, bounds.Top, diameter, diameter);
+        path.AddArc(arc, 180, 90);
+        arc.X = bounds.Right - diameter;
+        path.AddArc(arc, 270, 90);
+        arc.Y = bounds.Bottom - diameter;
+        path.AddArc(arc, 0, 90);
+        arc.X = bounds.Left;
+        path.AddArc(arc, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     private void RenderNewsDots()
@@ -1838,9 +1899,66 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task ShowChangelogIfNewVersionAsync()
+    {
+        if (!settings.LaunchModeChosen) return;
+        var tagName = CurrentReleaseTag();
+        if (tagName.Equals(settings.LastShownChangelogVersion, StringComparison.OrdinalIgnoreCase)) return;
+
+        try
+        {
+            using var http = new HttpClient();
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
+            var json = await http.GetStringAsync($"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases/tags/{tagName}");
+            using var document = JsonDocument.Parse(json);
+            var body = GetJsonString(document.RootElement, "body");
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                ShowChangelogOverlay(tagName, body);
+            }
+            settings.LastShownChangelogVersion = tagName;
+            SaveSettings(settings);
+        }
+        catch
+        {
+        }
+    }
+
+    private void ShowChangelogOverlay(string tagName, string changelog)
+    {
+        var overlay = new RoundedPanel { Bounds = new Rectangle(220, 130, 550, 420), Radius = 24 };
+        overlay.Controls.Add(Header($"Updated to {tagName}", 24, 22, 320, 38));
+        var close = Button("OK", 394, 354, 110, 36, "Primary");
+        close.Click += (_, _) =>
+        {
+            background.Controls.Remove(overlay);
+            overlay.Dispose();
+        };
+        var notes = new TextBox
+        {
+            Text = changelog.Replace("\n", Environment.NewLine),
+            Bounds = new Rectangle(24, 78, 480, 252),
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical,
+            BorderStyle = BorderStyle.FixedSingle
+        };
+        overlay.Controls.Add(notes);
+        overlay.Controls.Add(close);
+        background.Controls.Add(overlay);
+        ApplyThemeRecursive(overlay);
+        overlay.BringToFront();
+    }
+
     private static Version CurrentAppVersion()
     {
         return System.Reflection.Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0);
+    }
+
+    private static string CurrentReleaseTag()
+    {
+        var version = CurrentAppVersion();
+        return $"v{version.Major}.{version.Minor}.{version.Build}";
     }
 
     private static Version ParseReleaseVersion(string tagName)
