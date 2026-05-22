@@ -58,6 +58,8 @@ internal sealed record ThemePalette(Color Back1, Color Back2, Color Card, Color 
 internal readonly record struct LauncherWindow(int ProcessId, IntPtr Handle);
 internal readonly record struct LaunchCommand(string FileName, string Arguments, string WorkingDirectory);
 internal readonly record struct BatchLaunchInfo(string AccountKey, string RoamingPath);
+internal sealed record NewsBanner(string ImageUrl, string LinkUrl);
+internal sealed record NewsEntry(string Title, string Url, DateTimeOffset Date, string Tag);
 
 internal sealed class MainForm : Form
 {
@@ -113,6 +115,8 @@ internal sealed class MainForm : Form
     private Button browseSharedProfileButton = null!;
     private Button updateButton = null!;
     private Button settingsButton = null!;
+    private Button killGameButton = null!;
+    private Button whatsNewButton = null!;
     private MascotOverlayForm? mascotOverlay;
     private RoundedPanel statusPill = null!;
     private Label status = null!;
@@ -124,6 +128,12 @@ internal sealed class MainForm : Form
     private Label loadingTitle = null!;
     private Label loadingStatus = null!;
     private Button loadingCancel = null!;
+    private RoundedPanel newsOverlay = null!;
+    private PictureBox newsBannerPicture = null!;
+    private Label newsBannerTitle = null!;
+    private FlowLayoutPanel newsDots = null!;
+    private FlowLayoutPanel newsListPanel = null!;
+    private Button newsCloseButton = null!;
     private ElementHost videoHost = null!;
     private WpfMediaElement backgroundVideo = null!;
     private WpfImage wpfMascot = null!;
@@ -136,6 +146,9 @@ internal sealed class MainForm : Form
     private bool themeHasVideo;
     private bool themeHasImage;
     private bool settingsDrawerOpen;
+    private readonly List<NewsBanner> newsBanners = [];
+    private readonly List<NewsEntry> newsEntries = [];
+    private int selectedNewsBannerIndex;
 
     public MainForm()
     {
@@ -166,6 +179,12 @@ internal sealed class MainForm : Form
         settingsButton = Button("Settings", 36, 24, 102, 34, "Secondary");
         settingsButton.Click += (_, _) => ToggleSettingsDrawer();
         background.Controls.Add(settingsButton);
+        killGameButton = Button("Kill FFXIV", 154, 24, 104, 34, "Danger");
+        killGameButton.Click += (_, _) => KillGameInstances();
+        background.Controls.Add(killGameButton);
+        whatsNewButton = Button("What's new?", 272, 24, 122, 34, "Secondary");
+        whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
+        background.Controls.Add(whatsNewButton);
         mascotOverlay = CreateMascotOverlay();
         Shown += (_, _) => UpdateMascotOverlay();
         Move += (_, _) => UpdateMascotOverlay();
@@ -181,6 +200,7 @@ internal sealed class MainForm : Form
         background.Controls.Add(statusPill);
         BuildLoadingOverlay();
         BuildLaunchChoiceOverlay();
+        BuildNewsOverlay();
         settingsDrawer.BringToFront();
         ConfigureSettingsDrawerAnimation();
     }
@@ -369,6 +389,11 @@ internal sealed class MainForm : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
+        if (keyData == Keys.Escape && newsOverlay is { Visible: true })
+        {
+            HideNewsOverlay();
+            return true;
+        }
         if (keyData == Keys.Escape && settingsDrawerOpen)
         {
             CloseSettingsDrawer();
@@ -549,6 +574,57 @@ internal sealed class MainForm : Form
         loadingOverlay.Controls.Add(card);
         background.Controls.Add(loadingOverlay);
         loadingOverlay.BringToFront();
+    }
+
+    private void BuildNewsOverlay()
+    {
+        newsOverlay = new RoundedPanel { Bounds = new Rectangle(95, 62, 800, 590), Radius = 26, Visible = false };
+        newsOverlay.Controls.Add(Header("What's new?", 24, 18, 230, 40));
+        newsCloseButton = Button("X", 744, 20, 34, 30, "Danger");
+        newsCloseButton.Click += (_, _) => HideNewsOverlay();
+        newsOverlay.Controls.Add(newsCloseButton);
+
+        newsBannerPicture = new PictureBox
+        {
+            Bounds = new Rectangle(28, 68, 744, 250),
+            BackColor = Color.Black,
+            Cursor = Cursors.Hand,
+            SizeMode = PictureBoxSizeMode.Zoom
+        };
+        newsBannerPicture.Click += (_, _) => OpenSelectedNewsBanner();
+        newsOverlay.Controls.Add(newsBannerPicture);
+
+        newsBannerTitle = new Label
+        {
+            Text = "Loading launcher news...",
+            Bounds = new Rectangle(28, 324, 744, 24),
+            BackColor = Color.Transparent,
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Cursor = Cursors.Hand
+        };
+        newsBannerTitle.Click += (_, _) => OpenSelectedNewsBanner();
+        newsOverlay.Controls.Add(newsBannerTitle);
+
+        newsDots = new FlowLayoutPanel
+        {
+            Bounds = new Rectangle(300, 352, 200, 28),
+            BackColor = Color.Transparent,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false
+        };
+        newsOverlay.Controls.Add(newsDots);
+
+        newsListPanel = new FlowLayoutPanel
+        {
+            Bounds = new Rectangle(28, 390, 744, 170),
+            BackColor = Color.Transparent,
+            AutoScroll = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false
+        };
+        newsOverlay.Controls.Add(newsListPanel);
+        background.Controls.Add(newsOverlay);
     }
 
     private void BuildLaunchChoiceOverlay()
@@ -1361,6 +1437,248 @@ internal sealed class MainForm : Form
         loadingOverlay.Visible = false;
     }
 
+    private async Task ShowNewsOverlayAsync()
+    {
+        newsOverlay.Visible = true;
+        newsOverlay.BringToFront();
+        newsBannerTitle.Text = "Loading launcher news...";
+        newsListPanel.Controls.Clear();
+        newsDots.Controls.Clear();
+        whatsNewButton.Enabled = false;
+        try
+        {
+            await LoadLauncherNewsAsync();
+            await RenderNewsOverlayAsync();
+        }
+        catch (Exception ex)
+        {
+            newsBannerTitle.Text = "Could not load FFXIV news.";
+            newsListPanel.Controls.Add(new Label
+            {
+                Text = ex.Message,
+                Width = 700,
+                Height = 48,
+                ForeColor = palette.Text,
+                BackColor = Color.Transparent
+            });
+        }
+        finally
+        {
+            whatsNewButton.Enabled = true;
+            ApplyThemeRecursive(newsOverlay);
+        }
+    }
+
+    private void HideNewsOverlay()
+    {
+        newsOverlay.Visible = false;
+        var oldImage = newsBannerPicture.Image;
+        newsBannerPicture.Image = null;
+        oldImage?.Dispose();
+    }
+
+    private void KillGameInstances()
+    {
+        var killed = 0;
+        var failures = 0;
+        foreach (var processName in new[] { "ffxiv", "ffxiv_dx11" })
+        {
+            foreach (var process in Process.GetProcessesByName(processName))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                    killed++;
+                }
+                catch
+                {
+                    failures++;
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+        }
+
+        status.Text = killed == 0
+            ? "No FFXIV game instances found."
+            : $"Terminated {killed} FFXIV game instance{(killed == 1 ? "" : "s")}{(failures > 0 ? $" ({failures} failed)" : "")}.";
+    }
+
+    private async Task LoadLauncherNewsAsync()
+    {
+        newsBanners.Clear();
+        newsEntries.Clear();
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        var bannerJson = await http.GetStringAsync($"https://frontier.ffxiv.com/v2/topics/en-us/banner.json?lang=en-us&media=pcapp&_={timestamp}");
+        using (var bannerDocument = JsonDocument.Parse(bannerJson))
+        {
+            if (bannerDocument.RootElement.TryGetProperty("banner", out var banners) && banners.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in banners.EnumerateArray()
+                    .OrderBy(item => GetJsonInt(item, "fix_order") ?? int.MaxValue)
+                    .ThenBy(item => GetJsonInt(item, "order_priority") ?? int.MaxValue)
+                    .Take(5))
+                {
+                    var imageUrl = GetJsonString(item, "lsb_banner");
+                    var linkUrl = GetJsonString(item, "link");
+                    if (!string.IsNullOrWhiteSpace(imageUrl) && !string.IsNullOrWhiteSpace(linkUrl))
+                    {
+                        newsBanners.Add(new NewsBanner(imageUrl, linkUrl));
+                    }
+                }
+            }
+        }
+
+        var headlineJson = await http.GetStringAsync($"https://frontier.ffxiv.com/news/headline.json?lang=en-us&media=pcapp&_={timestamp}");
+        using var headlineDocument = JsonDocument.Parse(headlineJson);
+        AddNewsEntries(headlineDocument.RootElement, "topics", true);
+        AddNewsEntries(headlineDocument.RootElement, "pinned", false);
+        AddNewsEntries(headlineDocument.RootElement, "news", false);
+    }
+
+    private void AddNewsEntries(JsonElement root, string propertyName, bool topic)
+    {
+        if (!root.TryGetProperty(propertyName, out var items) || items.ValueKind != JsonValueKind.Array) return;
+        foreach (var item in items.EnumerateArray().Take(topic ? 5 : 8))
+        {
+            var title = GetJsonString(item, "title");
+            if (string.IsNullOrWhiteSpace(title)) continue;
+            var url = GetJsonString(item, "url");
+            var id = GetJsonString(item, "id");
+            if (string.IsNullOrWhiteSpace(url) && !string.IsNullOrWhiteSpace(id))
+            {
+                url = topic
+                    ? $"https://na.finalfantasyxiv.com/lodestone/topics/detail/{id}"
+                    : $"https://na.finalfantasyxiv.com/lodestone/news/detail/{id}";
+            }
+
+            var date = DateTimeOffset.TryParse(GetJsonString(item, "date"), out var parsedDate) ? parsedDate : DateTimeOffset.MinValue;
+            var tag = GetJsonString(item, "tag");
+            newsEntries.Add(new NewsEntry(title, url, date, tag));
+        }
+    }
+
+    private async Task RenderNewsOverlayAsync()
+    {
+        selectedNewsBannerIndex = 0;
+        await RenderSelectedNewsBannerAsync();
+        RenderNewsDots();
+        RenderNewsList();
+    }
+
+    private async Task RenderSelectedNewsBannerAsync()
+    {
+        var oldImage = newsBannerPicture.Image;
+        newsBannerPicture.Image = null;
+        oldImage?.Dispose();
+        if (newsBanners.Count == 0)
+        {
+            newsBannerTitle.Text = "No featured events found.";
+            return;
+        }
+
+        var banner = newsBanners[Math.Clamp(selectedNewsBannerIndex, 0, newsBanners.Count - 1)];
+        newsBannerTitle.Text = banner.LinkUrl;
+        try
+        {
+            using var http = new HttpClient();
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
+            var bytes = await http.GetByteArrayAsync(banner.ImageUrl);
+            using var stream = new MemoryStream(bytes);
+            newsBannerPicture.Image = Image.FromStream(stream);
+        }
+        catch
+        {
+            newsBannerTitle.Text = "Could not load featured image. Click to open it online.";
+        }
+    }
+
+    private void RenderNewsDots()
+    {
+        newsDots.Controls.Clear();
+        for (var index = 0; index < newsBanners.Count; index++)
+        {
+            var dotIndex = index;
+            var dot = new Button
+            {
+                Text = index == selectedNewsBannerIndex ? "●" : "○",
+                Width = 26,
+                Height = 24,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.Transparent,
+                ForeColor = palette.Primary,
+                Cursor = Cursors.Hand,
+                Tag = "Flat"
+            };
+            dot.FlatAppearance.BorderSize = 0;
+            dot.Click += async (_, _) =>
+            {
+                selectedNewsBannerIndex = dotIndex;
+                RenderNewsDots();
+                await RenderSelectedNewsBannerAsync();
+            };
+            newsDots.Controls.Add(dot);
+        }
+    }
+
+    private void RenderNewsList()
+    {
+        newsListPanel.Controls.Clear();
+        foreach (var item in newsEntries.Take(12))
+        {
+            var link = new LinkLabel
+            {
+                Text = $"{NewsDateLabel(item.Date)}  {item.Title}",
+                Width = 700,
+                Height = 25,
+                LinkColor = palette.Text,
+                ActiveLinkColor = palette.Primary,
+                VisitedLinkColor = palette.Muted,
+                BackColor = Color.Transparent,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                Tag = item.Url
+            };
+            link.Click += (_, _) => OpenUrl(link.Tag?.ToString() ?? "");
+            newsListPanel.Controls.Add(link);
+        }
+    }
+
+    private static string NewsDateLabel(DateTimeOffset date)
+    {
+        return date == DateTimeOffset.MinValue ? "News" : date.ToLocalTime().ToString("MMM d");
+    }
+
+    private void OpenSelectedNewsBanner()
+    {
+        if (newsBanners.Count == 0) return;
+        OpenUrl(newsBanners[Math.Clamp(selectedNewsBannerIndex, 0, newsBanners.Count - 1)].LinkUrl);
+    }
+
+    private static void OpenUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch
+        {
+        }
+    }
+
+    private static int? GetJsonInt(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property)) return null;
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var number)) return number;
+        if (property.ValueKind == JsonValueKind.String && int.TryParse(property.GetString(), out number)) return number;
+        return null;
+    }
+
     private void SetRandomLoadingGif()
     {
         var folder = GetLoadingGifFolder();
@@ -1550,6 +1868,8 @@ internal sealed class MainForm : Form
             background.BackgroundArt = null;
             wpfMascot.Visibility = System.Windows.Visibility.Collapsed;
             settingsButton.BringToFront();
+            killGameButton.BringToFront();
+            whatsNewButton.BringToFront();
             backgroundVideo.Stop();
             backgroundVideo.Source = new Uri(video, UriKind.Absolute);
             videoHost.Visible = true;
@@ -1572,7 +1892,10 @@ internal sealed class MainForm : Form
         ApplyLauncherLayout();
         UpdateMascotOverlay();
         settingsButton.BringToFront();
+        killGameButton.BringToFront();
+        whatsNewButton.BringToFront();
         statusPill.BringToFront();
+        if (newsOverlay.Visible) newsOverlay.BringToFront();
         if (settingsDrawerOpen) settingsDrawer.BringToFront();
     }
 
