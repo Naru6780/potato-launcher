@@ -636,20 +636,20 @@ internal sealed class MainForm : Form
             Text = "Choose your launch method",
             TextAlign = ContentAlignment.MiddleCenter,
             BackColor = Color.Transparent,
-            Font = new Font("Segoe UI", 25F, FontStyle.Bold),
-            Bounds = new Rectangle(35, 38, 610, 54)
+            Font = new Font("Segoe UI", 23F, FontStyle.Bold),
+            Bounds = new Rectangle(20, 34, 640, 70)
         };
         var subtitle = new Label
         {
             Text = "Pick how Potato Launcher should start your accounts. You can change this later in Settings.",
             TextAlign = ContentAlignment.MiddleCenter,
             BackColor = Color.Transparent,
-            Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
-            Bounds = new Rectangle(70, 96, 540, 52)
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            Bounds = new Rectangle(46, 106, 588, 56)
         };
         var mascot = new PictureBox
         {
-            Bounds = new Rectangle(282, 138, 116, 150),
+            Bounds = new Rectangle(282, 164, 116, 130),
             BackColor = Color.Transparent,
             SizeMode = PictureBoxSizeMode.Zoom
         };
@@ -659,9 +659,9 @@ internal sealed class MainForm : Form
         }
         catch { }
 
-        var instanced = Button("Instanced", 88, 318, 210, 50, "Primary");
+        var instanced = Button("Instanced", 88, 326, 210, 50, "Primary");
         instanced.Click += (_, _) => ChooseLaunchMode("Instanced");
-        var shared = Button("Shared", 382, 318, 210, 50, "Secondary");
+        var shared = Button("Shared", 382, 326, 210, 50, "Secondary");
         shared.Click += (_, _) => ChooseLaunchMode("Shared");
         card.Controls.AddRange([title, subtitle, mascot, instanced, shared]);
         launchChoiceOverlay.Controls.Add(card);
