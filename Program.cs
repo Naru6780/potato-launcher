@@ -50,6 +50,7 @@ internal sealed class AppSettings
     public bool LaunchModeChosen { get; set; }
     public string Theme { get; set; } = "Pink";
     public bool MusicMuted { get; set; }
+    public bool RandomizeThemeAtLaunch { get; set; }
     public string LastShownChangelogVersion { get; set; } = "";
     public List<BandConfig> Bands { get; set; } = [];
     public List<BandConfig> InstancedBands { get; set; } = [];
@@ -90,7 +91,8 @@ internal sealed class MainForm : Form
         ["Stormblood"] = new(Color.FromArgb(94,28,34), Color.FromArgb(218,132,62), Color.FromArgb(246,255,246,235), Color.FromArgb(190,91,72), Color.FromArgb(84,36,37), Color.FromArgb(134,72,59), Color.FromArgb(197,64,58), Color.FromArgb(218,147,62), Color.FromArgb(151,50,57), Color.FromArgb(255,249,241)),
         ["Shadowbringers"] = new(Color.FromArgb(29,22,45), Color.FromArgb(92,63,119), Color.FromArgb(240,31,28,47), Color.FromArgb(114,89,143), Color.FromArgb(244,237,255), Color.FromArgb(199,183,220), Color.FromArgb(154,94,211), Color.FromArgb(223,190,112), Color.FromArgb(218,88,111), Color.FromArgb(43,37,56)),
         ["Endwalker"] = new(Color.FromArgb(23,29,55), Color.FromArgb(115,118,142), Color.FromArgb(242,246,247,255), Color.FromArgb(151,158,186), Color.FromArgb(38,43,66), Color.FromArgb(91,97,122), Color.FromArgb(75,105,196), Color.FromArgb(194,185,174), Color.FromArgb(188,76,92), Color.FromArgb(248,250,255)),
-        ["Dawntrail"] = new(Color.FromArgb(253,201,99), Color.FromArgb(43,153,178), Color.FromArgb(246,255,250,232), Color.FromArgb(232,168,83), Color.FromArgb(70,57,39), Color.FromArgb(111,91,60), Color.FromArgb(226,139,49), Color.FromArgb(58,164,181), Color.FromArgb(199,82,69), Color.FromArgb(255,252,240))
+        ["Dawntrail"] = new(Color.FromArgb(253,201,99), Color.FromArgb(43,153,178), Color.FromArgb(246,255,250,232), Color.FromArgb(232,168,83), Color.FromArgb(70,57,39), Color.FromArgb(111,91,60), Color.FromArgb(226,139,49), Color.FromArgb(58,164,181), Color.FromArgb(199,82,69), Color.FromArgb(255,252,240)),
+        ["Woke Lamat"] = new(Color.FromArgb(255,202,101), Color.FromArgb(48,178,173), Color.FromArgb(247,255,248,230), Color.FromArgb(232,160,79), Color.FromArgb(75,51,34), Color.FromArgb(121,86,54), Color.FromArgb(231,126,54), Color.FromArgb(56,171,176), Color.FromArgb(202,78,69), Color.FromArgb(255,251,237))
     };
 
     private readonly AppSettings settings = LoadSettings();
@@ -118,6 +120,7 @@ internal sealed class MainForm : Form
     private Button browseSharedProfileButton = null!;
     private Button updateButton = null!;
     private CheckBox muteMusicInput = null!;
+    private CheckBox randomizeThemeInput = null!;
     private Button settingsButton = null!;
     private Button killGameButton = null!;
     private Button whatsNewButton = null!;
@@ -159,6 +162,7 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         EnsureThemeAssetFolders();
+        RandomizeThemeForLaunch();
         RemoveOldDefaultBands();
         LoadAccounts();
         BuildUi();
@@ -526,7 +530,11 @@ internal sealed class MainForm : Form
         };
         settingsDrawer.Controls.Add(muteMusicInput);
 
-        updateButton = Button("Check for updates", 24, 464, 180, 34, "Secondary");
+        randomizeThemeInput = new CheckBox { Text = "Randomize theme at launch", Checked = settings.RandomizeThemeAtLaunch, Bounds = new Rectangle(24, 454, 250, 28), BackColor = Color.Transparent };
+        randomizeThemeInput.CheckedChanged += (_, _) => SaveSettingsFromInputs();
+        settingsDrawer.Controls.Add(randomizeThemeInput);
+
+        updateButton = Button("Check for updates", 24, 500, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
         UpdateLaunchModeUi();
@@ -554,7 +562,8 @@ internal sealed class MainForm : Form
             SetY(themeLabel, 344);
             SetY(themeInput, 372);
             SetY(muteMusicInput, 420);
-            SetY(updateButton, 464);
+            SetY(randomizeThemeInput, 454);
+            SetY(updateButton, 500);
         }
         else
         {
@@ -564,7 +573,8 @@ internal sealed class MainForm : Form
             SetY(themeLabel, 344);
             SetY(themeInput, 372);
             SetY(muteMusicInput, 420);
-            SetY(updateButton, 464);
+            SetY(randomizeThemeInput, 454);
+            SetY(updateButton, 500);
         }
     }
 
@@ -1830,6 +1840,7 @@ internal sealed class MainForm : Form
         settings.DelaySeconds = (int)delayInput.Value;
         settings.Theme = themeInput?.SelectedItem?.ToString() ?? settings.Theme;
         settings.MusicMuted = muteMusicInput?.Checked ?? settings.MusicMuted;
+        settings.RandomizeThemeAtLaunch = randomizeThemeInput?.Checked ?? settings.RandomizeThemeAtLaunch;
         SaveSettings(settings);
     }
 
@@ -2013,6 +2024,17 @@ internal sealed class MainForm : Form
         loadingOverlay.Invalidate();
         launchChoiceOverlay.Invalidate();
         ApplyThemeRecursive(this);
+    }
+
+    private void RandomizeThemeForLaunch()
+    {
+        if (!settings.RandomizeThemeAtLaunch) return;
+        var themes = Palettes.Keys.ToList();
+        if (themes.Count == 0) return;
+        var currentTheme = NormalizeThemeName(settings.Theme);
+        var candidates = themes.Where(theme => !theme.Equals(currentTheme, StringComparison.OrdinalIgnoreCase)).ToList();
+        settings.Theme = candidates.Count > 0 ? candidates[Random.Shared.Next(candidates.Count)] : themes[Random.Shared.Next(themes.Count)];
+        SaveSettings(settings);
     }
 
     private void ApplyThemeAssets(string themeName)
@@ -2563,6 +2585,7 @@ internal sealed class LoadingSplashForm : Form
             "Gridania" => new(Color.FromArgb(204,226,181), Color.FromArgb(71,111,72), Color.FromArgb(246,251,246,236), Color.FromArgb(139,174,113), Color.FromArgb(46,75,39), Color.FromArgb(92,116,70), Color.FromArgb(91,143,74), Color.FromArgb(159,119,75), Color.FromArgb(192,92,64), Color.FromArgb(250,255,244)),
             "Ul'dah" => new(Color.FromArgb(238,202,143), Color.FromArgb(143,88,49), Color.FromArgb(248,255,246,232), Color.FromArgb(196,142,75), Color.FromArgb(86,54,32), Color.FromArgb(130,86,52), Color.FromArgb(199,134,54), Color.FromArgb(124,92,142), Color.FromArgb(183,72,61), Color.FromArgb(255,250,235)),
             "Ishgard" => new(Color.FromArgb(217,226,235), Color.FromArgb(78,96,125), Color.FromArgb(244,248,251,255), Color.FromArgb(151,166,190), Color.FromArgb(45,55,76), Color.FromArgb(91,101,126), Color.FromArgb(82,111,164), Color.FromArgb(168,177,194), Color.FromArgb(174,76,91), Color.FromArgb(248,251,255)),
+            "Woke Lamat" => new(Color.FromArgb(255,202,101), Color.FromArgb(48,178,173), Color.FromArgb(247,255,248,230), Color.FromArgb(232,160,79), Color.FromArgb(75,51,34), Color.FromArgb(121,86,54), Color.FromArgb(231,126,54), Color.FromArgb(56,171,176), Color.FromArgb(202,78,69), Color.FromArgb(255,251,237)),
             "Fuchsia" => new(Color.FromArgb(74,20,86), Color.FromArgb(255,97,187), Color.FromArgb(242,255,241,252), Color.FromArgb(245,160,230), Color.FromArgb(84,27,96), Color.FromArgb(139,63,145), Color.FromArgb(217,42,154), Color.FromArgb(139,88,232), Color.FromArgb(224,76,112), Color.FromArgb(255,247,253)),
             _ => new(Color.FromArgb(255,226,242), Color.FromArgb(210,236,255), Color.FromArgb(250,255,250,255), Color.FromArgb(238,182,226), Color.FromArgb(92,48,104), Color.FromArgb(137,82,139), Color.FromArgb(239,111,166), Color.FromArgb(124,150,224), Color.FromArgb(222,104,130), Color.FromArgb(255,250,255))
         };
