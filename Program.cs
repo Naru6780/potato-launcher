@@ -131,7 +131,7 @@ internal sealed class MainForm : Form
     private RoundedPanel newsOverlay = null!;
     private PictureBox newsBannerPicture = null!;
     private Label newsBannerTitle = null!;
-    private FlowLayoutPanel newsDots = null!;
+    private NewsDotsControl newsDots = null!;
     private FlowLayoutPanel newsListPanel = null!;
     private Button newsCloseButton = null!;
     private ElementHost videoHost = null!;
@@ -600,7 +600,7 @@ internal sealed class MainForm : Form
         {
             Text = "Loading launcher news...",
             Bounds = new Rectangle(28, 324, 744, 24),
-            BackColor = Color.Transparent,
+            BackColor = Color.FromArgb(255, palette.Card),
             Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleCenter,
             Cursor = Cursors.Hand
@@ -608,12 +608,18 @@ internal sealed class MainForm : Form
         newsBannerTitle.Click += (_, _) => OpenSelectedNewsBanner();
         newsOverlay.Controls.Add(newsBannerTitle);
 
-        newsDots = new FlowLayoutPanel
+        newsDots = new NewsDotsControl
         {
             Bounds = new Rectangle(300, 352, 200, 28),
-            BackColor = Color.Transparent,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false
+            BackColor = Color.FromArgb(255, palette.Card),
+            Cursor = Cursors.Hand,
+            Palette = palette
+        };
+        newsDots.DotSelected += async (_, index) =>
+        {
+            selectedNewsBannerIndex = index;
+            RenderNewsDots();
+            await RenderSelectedNewsBannerAsync();
         };
         newsOverlay.Controls.Add(newsDots);
 
@@ -1449,7 +1455,7 @@ internal sealed class MainForm : Form
         newsOverlay.BringToFront();
         newsBannerTitle.Text = "Loading launcher news...";
         newsListPanel.Controls.Clear();
-        newsDots.Controls.Clear();
+        newsDots.DotCount = 0;
         whatsNewButton.Enabled = false;
         try
         {
@@ -1465,7 +1471,7 @@ internal sealed class MainForm : Form
                 Width = 700,
                 Height = 48,
                 ForeColor = palette.Text,
-                BackColor = Color.Transparent
+                BackColor = palette.ListBack
             });
         }
         finally
@@ -1606,30 +1612,10 @@ internal sealed class MainForm : Form
 
     private void RenderNewsDots()
     {
-        newsDots.Controls.Clear();
-        for (var index = 0; index < newsBanners.Count; index++)
-        {
-            var dotIndex = index;
-            var dot = new Button
-            {
-                Text = index == selectedNewsBannerIndex ? "●" : "○",
-                Width = 26,
-                Height = 24,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.Transparent,
-                ForeColor = palette.Primary,
-                Cursor = Cursors.Hand,
-                Tag = "Flat"
-            };
-            dot.FlatAppearance.BorderSize = 0;
-            dot.Click += async (_, _) =>
-            {
-                selectedNewsBannerIndex = dotIndex;
-                RenderNewsDots();
-                await RenderSelectedNewsBannerAsync();
-            };
-            newsDots.Controls.Add(dot);
-        }
+        newsDots.Palette = palette;
+        newsDots.DotCount = newsBanners.Count;
+        newsDots.SelectedIndex = selectedNewsBannerIndex;
+
     }
 
     private void RenderNewsList()
@@ -1952,6 +1938,10 @@ internal sealed class MainForm : Form
                     panel.BorderColor = palette.Border;
                     panel.Invalidate();
                     break;
+                case NewsDotsControl dots:
+                    dots.Palette = palette;
+                    dots.BackColor = Color.FromArgb(255, palette.Card);
+                    break;
                 case LinkLabel linkLabel:
                     linkLabel.LinkColor = palette.Text;
                     linkLabel.ActiveLinkColor = palette.Primary;
@@ -1960,6 +1950,7 @@ internal sealed class MainForm : Form
                     break;
                 case Label label:
                     label.ForeColor = label.Font.Bold ? palette.Text : palette.Muted;
+                    if (ReferenceEquals(label, newsBannerTitle)) label.BackColor = Color.FromArgb(255, palette.Card);
                     break;
                 case FlowLayoutPanel flow:
                     flow.BackColor = ReferenceEquals(flow, newsListPanel) ? palette.ListBack : Color.Transparent;
@@ -1997,6 +1988,7 @@ internal sealed class MainForm : Form
     private Color CurrentCardColor(RoundedPanel panel)
     {
         if (ReferenceEquals(panel, settingsDrawer)) return Color.FromArgb(244, palette.Card);
+        if (ReferenceEquals(panel, newsOverlay)) return Color.FromArgb(255, palette.Card);
         if (ReferenceEquals(panel, statusPill)) return Color.FromArgb(themeHasVideo ? 135 : themeHasImage ? 155 : 170, palette.Card);
         if (ReferenceEquals(panel, accountCard) || ReferenceEquals(panel, bandCard))
         {
@@ -2491,5 +2483,99 @@ internal sealed class BufferedFlowLayoutPanel : FlowLayoutPanel
     {
         base.OnScroll(se);
         Invalidate();
+    }
+}
+
+internal sealed class NewsDotsControl : Control
+{
+    private int dotCount;
+    private int selectedIndex;
+    public event EventHandler<int>? DotSelected;
+    public ThemePalette Palette { get; set; } = new(Color.White, Color.White, Color.White, Color.LightGray, Color.Black, Color.Gray, Color.HotPink, Color.CornflowerBlue, Color.IndianRed, Color.White);
+
+    public int DotCount
+    {
+        get => dotCount;
+        set
+        {
+            dotCount = Math.Max(0, value);
+            if (selectedIndex >= dotCount) selectedIndex = Math.Max(0, dotCount - 1);
+            Invalidate();
+        }
+    }
+
+    public int SelectedIndex
+    {
+        get => selectedIndex;
+        set
+        {
+            selectedIndex = dotCount == 0 ? 0 : Math.Clamp(value, 0, dotCount - 1);
+            Invalidate();
+        }
+    }
+
+    public NewsDotsControl()
+    {
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        UpdateStyles();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var background = new SolidBrush(BackColor);
+        e.Graphics.FillRectangle(background, ClientRectangle);
+        if (dotCount <= 0) return;
+
+        const int dotSize = 12;
+        const int spacing = 20;
+        var totalWidth = (dotCount * dotSize) + ((dotCount - 1) * spacing);
+        var startX = Math.Max(0, (Width - totalWidth) / 2);
+        var y = Math.Max(0, (Height - dotSize) / 2);
+        using var selectedBrush = new SolidBrush(Palette.Primary);
+        using var emptyBrush = new SolidBrush(Color.FromArgb(230, Palette.Card));
+        using var outlinePen = new Pen(Palette.Primary, 2);
+
+        for (var index = 0; index < dotCount; index++)
+        {
+            var bounds = new Rectangle(startX + index * (dotSize + spacing), y, dotSize, dotSize);
+            if (index == selectedIndex)
+            {
+                e.Graphics.FillEllipse(selectedBrush, bounds);
+            }
+            else
+            {
+                e.Graphics.FillEllipse(emptyBrush, bounds);
+                e.Graphics.DrawEllipse(outlinePen, bounds);
+            }
+        }
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        var hit = HitTest(e.Location);
+        if (hit < 0) return;
+        SelectedIndex = hit;
+        DotSelected?.Invoke(this, hit);
+    }
+
+    private int HitTest(Point point)
+    {
+        if (dotCount <= 0) return -1;
+        const int dotSize = 12;
+        const int spacing = 20;
+        var totalWidth = (dotCount * dotSize) + ((dotCount - 1) * spacing);
+        var startX = Math.Max(0, (Width - totalWidth) / 2);
+        var y = Math.Max(0, (Height - dotSize) / 2);
+        for (var index = 0; index < dotCount; index++)
+        {
+            var bounds = new Rectangle(startX + index * (dotSize + spacing) - 4, y - 4, dotSize + 8, dotSize + 8);
+            if (bounds.Contains(point)) return index;
+        }
+        return -1;
     }
 }
