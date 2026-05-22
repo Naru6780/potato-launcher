@@ -95,6 +95,14 @@ internal sealed class MainForm : Form
         ["Woke Lamat"] = new(Color.FromArgb(255,202,101), Color.FromArgb(48,178,173), Color.FromArgb(247,255,248,230), Color.FromArgb(232,160,79), Color.FromArgb(75,51,34), Color.FromArgb(121,86,54), Color.FromArgb(231,126,54), Color.FromArgb(56,171,176), Color.FromArgb(202,78,69), Color.FromArgb(255,251,237))
     };
 
+    private static readonly HashSet<string> DefaultThemeNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Pink",
+        "Fuchsia",
+        "Dark",
+        "Sky"
+    };
+
     private readonly AppSettings settings = LoadSettings();
     private readonly List<Account> accounts = [];
     private CuteBackgroundPanel background = null!;
@@ -2029,7 +2037,9 @@ internal sealed class MainForm : Form
     private void RandomizeThemeForLaunch()
     {
         if (!settings.RandomizeThemeAtLaunch) return;
-        var themes = Palettes.Keys.ToList();
+        var themes = Palettes.Keys
+            .Where(theme => !DefaultThemeNames.Contains(theme))
+            .ToList();
         if (themes.Count == 0) return;
         var currentTheme = NormalizeThemeName(settings.Theme);
         var candidates = themes.Where(theme => !theme.Equals(currentTheme, StringComparison.OrdinalIgnoreCase)).ToList();
