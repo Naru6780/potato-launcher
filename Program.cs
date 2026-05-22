@@ -12,6 +12,7 @@ using WpfGrid = System.Windows.Controls.Grid;
 using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
 using WpfImage = System.Windows.Controls.Image;
 using WpfMediaElement = System.Windows.Controls.MediaElement;
+using WpfMediaPlayer = System.Windows.Media.MediaPlayer;
 using WpfStretch = System.Windows.Media.Stretch;
 using WpfThickness = System.Windows.Thickness;
 using WpfVerticalAlignment = System.Windows.VerticalAlignment;
@@ -48,6 +49,7 @@ internal sealed class AppSettings
     public string SharedProfileFolder { get; set; } = "";
     public bool LaunchModeChosen { get; set; }
     public string Theme { get; set; } = "Pink";
+    public bool MusicMuted { get; set; }
     public List<BandConfig> Bands { get; set; } = [];
     public List<BandConfig> InstancedBands { get; set; } = [];
     public List<BandConfig> SharedBands { get; set; } = [];
@@ -114,6 +116,7 @@ internal sealed class MainForm : Form
     private Button browseBatButton = null!;
     private Button browseSharedProfileButton = null!;
     private Button updateButton = null!;
+    private CheckBox muteMusicInput = null!;
     private Button settingsButton = null!;
     private Button killGameButton = null!;
     private Button whatsNewButton = null!;
@@ -136,6 +139,7 @@ internal sealed class MainForm : Form
     private Button newsCloseButton = null!;
     private ElementHost videoHost = null!;
     private WpfMediaElement backgroundVideo = null!;
+    private readonly WpfMediaPlayer themeMusic = new();
     private WpfImage wpfMascot = null!;
     private readonly DispatcherTimer mascotTimer = new();
     private readonly List<BitmapSource> mascotFrames = [];
@@ -146,6 +150,7 @@ internal sealed class MainForm : Form
     private bool themeHasVideo;
     private bool themeHasImage;
     private bool settingsDrawerOpen;
+    private string? currentMusicPath;
     private readonly List<NewsBanner> newsBanners = [];
     private readonly List<NewsEntry> newsEntries = [];
     private int selectedNewsBannerIndex;
@@ -175,6 +180,12 @@ internal sealed class MainForm : Form
         background = new CuteBackgroundPanel { Dock = DockStyle.Fill };
         Controls.Add(background);
         BuildVideoBackground();
+        themeMusic.MediaEnded += (_, _) =>
+        {
+            if (settings.MusicMuted || string.IsNullOrWhiteSpace(currentMusicPath)) return;
+            themeMusic.Position = TimeSpan.Zero;
+            themeMusic.Play();
+        };
 
         settingsButton = Button("Settings", 36, 24, 102, 34, "Secondary");
         settingsButton.Click += (_, _) => ToggleSettingsDrawer();
@@ -190,7 +201,12 @@ internal sealed class MainForm : Form
         Move += (_, _) => UpdateMascotOverlay();
         Resize += (_, _) => UpdateMascotOverlay();
         Activated += (_, _) => UpdateMascotOverlay();
-        FormClosed += (_, _) => mascotOverlay?.Close();
+        FormClosed += (_, _) =>
+        {
+            themeMusic.Stop();
+            themeMusic.Close();
+            mascotOverlay?.Close();
+        };
         BuildLauncherTab(background);
         BuildSettingsDrawer();
 
@@ -500,7 +516,15 @@ internal sealed class MainForm : Form
         themeInput.SelectedIndexChanged += (_, _) => { SaveSettingsFromInputs(); ApplyTheme(settings.Theme); };
         settingsDrawer.Controls.AddRange([themeLabel, themeInput]);
 
-        updateButton = Button("Check for updates", 24, 426, 180, 34, "Secondary");
+        muteMusicInput = new CheckBox { Text = "Mute theme music", Checked = settings.MusicMuted, Bounds = new Rectangle(24, 420, 220, 28), BackColor = Color.Transparent };
+        muteMusicInput.CheckedChanged += (_, _) =>
+        {
+            SaveSettingsFromInputs();
+            ApplyThemeMusic(settings.Theme);
+        };
+        settingsDrawer.Controls.Add(muteMusicInput);
+
+        updateButton = Button("Check for updates", 24, 464, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
         UpdateLaunchModeUi();
@@ -527,7 +551,8 @@ internal sealed class MainForm : Form
             SetY(secondsLabel, 271);
             SetY(themeLabel, 344);
             SetY(themeInput, 372);
-            SetY(updateButton, 426);
+            SetY(muteMusicInput, 420);
+            SetY(updateButton, 464);
         }
         else
         {
@@ -536,7 +561,8 @@ internal sealed class MainForm : Form
             SetY(secondsLabel, 271);
             SetY(themeLabel, 344);
             SetY(themeInput, 372);
-            SetY(updateButton, 426);
+            SetY(muteMusicInput, 420);
+            SetY(updateButton, 464);
         }
     }
 
@@ -1742,6 +1768,7 @@ internal sealed class MainForm : Form
         settings.LaunchModeChosen = true;
         settings.DelaySeconds = (int)delayInput.Value;
         settings.Theme = themeInput?.SelectedItem?.ToString() ?? settings.Theme;
+        settings.MusicMuted = muteMusicInput?.Checked ?? settings.MusicMuted;
         SaveSettings(settings);
     }
 
@@ -1863,6 +1890,7 @@ internal sealed class MainForm : Form
         loadingOverlay.Palette = palette;
         launchChoiceOverlay.Palette = palette;
         ApplyThemeAssets(themeName);
+        ApplyThemeMusic(themeName);
         background.Invalidate();
         loadingOverlay.Invalidate();
         launchChoiceOverlay.Invalidate();
@@ -1909,6 +1937,33 @@ internal sealed class MainForm : Form
         statusPill.BringToFront();
         if (newsOverlay.Visible) newsOverlay.BringToFront();
         if (settingsDrawerOpen) settingsDrawer.BringToFront();
+    }
+
+    private void ApplyThemeMusic(string themeName)
+    {
+        themeName = NormalizeThemeName(themeName);
+        if (settings.MusicMuted)
+        {
+            themeMusic.Stop();
+            return;
+        }
+
+        var music = PickThemeAsset(ThemeFolder(themeName), [".mp3", ".wav", ".wma", ".aac", ".m4a"]);
+        if (string.IsNullOrWhiteSpace(music))
+        {
+            themeMusic.Stop();
+            currentMusicPath = null;
+            return;
+        }
+
+        if (!music.Equals(currentMusicPath, StringComparison.OrdinalIgnoreCase))
+        {
+            themeMusic.Stop();
+            themeMusic.Open(new Uri(music, UriKind.Absolute));
+            currentMusicPath = music;
+        }
+        themeMusic.Volume = 0.45;
+        themeMusic.Play();
     }
 
     private static Image? LoadUnlockedImage(string path)
