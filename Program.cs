@@ -1701,11 +1701,8 @@ internal sealed class MainForm : Form
     private static void EnsureThemeAssetFolders()
     {
         Directory.CreateDirectory(GetAssetRoot());
+        Directory.CreateDirectory(GetLoadingGifFolder());
         Directory.CreateDirectory(Path.Combine(GetAssetRoot(), "themes"));
-        foreach (var themeName in Palettes.Keys)
-        {
-            Directory.CreateDirectory(ThemeFolder(themeName));
-        }
     }
 
     private RoundedPanel Card(int x, int y, int width, int height) => new() { Bounds = new Rectangle(x, y, width, height), Radius = 22 };
