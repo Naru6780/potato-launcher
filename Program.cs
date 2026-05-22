@@ -195,7 +195,9 @@ internal sealed class MainForm : Form
         BuildSettingsDrawer();
 
         statusPill = new RoundedPanel { Bounds = new Rectangle(310, 616, 370, 30), Radius = 15 };
+        statusPill.Click += (_, _) => BrowseFolderFromStatus();
         status = new Label { Text = "Ready.", TextAlign = ContentAlignment.MiddleCenter, BackColor = Color.Transparent, Bounds = new Rectangle(10, 4, 350, 20), Font = new Font("Segoe UI", 9F, FontStyle.Bold) };
+        status.Click += (_, _) => BrowseFolderFromStatus();
         statusPill.Controls.Add(status);
         background.Controls.Add(statusPill);
         BuildLoadingOverlay();
@@ -615,10 +617,10 @@ internal sealed class MainForm : Form
         };
         newsOverlay.Controls.Add(newsDots);
 
-        newsListPanel = new FlowLayoutPanel
+        newsListPanel = new BufferedFlowLayoutPanel
         {
             Bounds = new Rectangle(28, 390, 744, 170),
-            BackColor = Color.Transparent,
+            BackColor = palette.ListBack,
             AutoScroll = true,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false
@@ -927,10 +929,14 @@ internal sealed class MainForm : Form
         if (accounts.Count == 0)
         {
             status.Text = IsSharedLaunchMode()
-                ? "Choose your Shared folder."
-                : "Choose your Instanced folder.";
+                ? "Click here to choose your Shared folder."
+                : "Click here to choose your Instanced folder.";
+            statusPill.Cursor = Cursors.Hand;
+            status.Cursor = Cursors.Hand;
             return;
         }
+        statusPill.Cursor = Cursors.Default;
+        status.Cursor = Cursors.Default;
         status.Text = IsSharedLaunchMode()
             ? $"Found {accounts.Count} shared account{(accounts.Count == 1 ? "" : "s")}."
             : $"Found {accounts.Count} launcher BAT file{(accounts.Count == 1 ? "" : "s")}.";
@@ -1629,18 +1635,21 @@ internal sealed class MainForm : Form
     private void RenderNewsList()
     {
         newsListPanel.Controls.Clear();
+        newsListPanel.BackColor = palette.ListBack;
+        var linkWidth = Math.Max(260, newsListPanel.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 12);
         foreach (var item in newsEntries.Take(12))
         {
             var link = new LinkLabel
             {
                 Text = $"{NewsDateLabel(item.Date)}  {item.Title}",
-                Width = 700,
+                Width = linkWidth,
                 Height = 25,
                 LinkColor = palette.Text,
                 ActiveLinkColor = palette.Primary,
                 VisitedLinkColor = palette.Muted,
-                BackColor = Color.Transparent,
+                BackColor = palette.ListBack,
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                Margin = new Padding(0, 0, 0, 3),
                 Tag = item.Url
             };
             link.Click += (_, _) => OpenUrl(link.Tag?.ToString() ?? "");
@@ -1713,6 +1722,17 @@ internal sealed class MainForm : Form
             target.Text = dialog.SelectedPath;
             afterSelection();
         }
+    }
+
+    private void BrowseFolderFromStatus()
+    {
+        if (accounts.Count > 0) return;
+        if (IsSharedLaunchMode())
+        {
+            BrowseFolder(sharedProfileInput, "Choose the XIVLauncher folder containing accountsList.json", SaveAndRescan);
+            return;
+        }
+        BrowseFolder(folderInput, "Choose the folder containing your instanced launcher .bat files", SaveAndRescan);
     }
 
     private void SaveAndRescan()
@@ -1932,8 +1952,17 @@ internal sealed class MainForm : Form
                     panel.BorderColor = palette.Border;
                     panel.Invalidate();
                     break;
+                case LinkLabel linkLabel:
+                    linkLabel.LinkColor = palette.Text;
+                    linkLabel.ActiveLinkColor = palette.Primary;
+                    linkLabel.VisitedLinkColor = palette.Muted;
+                    linkLabel.BackColor = ReferenceEquals(linkLabel.Parent, newsListPanel) ? palette.ListBack : Color.Transparent;
+                    break;
                 case Label label:
                     label.ForeColor = label.Font.Bold ? palette.Text : palette.Muted;
+                    break;
+                case FlowLayoutPanel flow:
+                    flow.BackColor = ReferenceEquals(flow, newsListPanel) ? palette.ListBack : Color.Transparent;
                     break;
                 case CheckedListBox checkedList:
                     checkedList.BackColor = palette.ListBack;
@@ -2446,5 +2475,21 @@ internal sealed class RoundedPanel : Panel
         path.AddArc(rect, 90, 90);
         path.CloseFigure();
         return path;
+    }
+}
+
+internal sealed class BufferedFlowLayoutPanel : FlowLayoutPanel
+{
+    public BufferedFlowLayoutPanel()
+    {
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        UpdateStyles();
+    }
+
+    protected override void OnScroll(ScrollEventArgs se)
+    {
+        base.OnScroll(se);
+        Invalidate();
     }
 }
