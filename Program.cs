@@ -1548,15 +1548,14 @@ internal sealed class MainForm : Form
 
         var headlineJson = await http.GetStringAsync($"https://frontier.ffxiv.com/news/headline.json?lang=en-us&media=pcapp&_={timestamp}");
         using var headlineDocument = JsonDocument.Parse(headlineJson);
-        AddNewsEntries(headlineDocument.RootElement, "topics", true);
-        AddNewsEntries(headlineDocument.RootElement, "pinned", false);
         AddNewsEntries(headlineDocument.RootElement, "news", false);
+        newsEntries.Sort((left, right) => right.Date.CompareTo(left.Date));
     }
 
     private void AddNewsEntries(JsonElement root, string propertyName, bool topic)
     {
         if (!root.TryGetProperty(propertyName, out var items) || items.ValueKind != JsonValueKind.Array) return;
-        foreach (var item in items.EnumerateArray().Take(topic ? 5 : 8))
+        foreach (var item in items.EnumerateArray())
         {
             var title = GetJsonString(item, "title");
             if (string.IsNullOrWhiteSpace(title)) continue;
@@ -1569,7 +1568,7 @@ internal sealed class MainForm : Form
                     : $"https://na.finalfantasyxiv.com/lodestone/news/detail/{id}";
             }
 
-            var date = DateTimeOffset.TryParse(GetJsonString(item, "date"), out var parsedDate) ? parsedDate : DateTimeOffset.MinValue;
+            var date = ParseNewsDate(GetJsonString(item, "date"));
             var tag = GetJsonString(item, "tag");
             newsEntries.Add(new NewsEntry(title, url, date, tag));
         }
@@ -1623,7 +1622,7 @@ internal sealed class MainForm : Form
         newsListPanel.Controls.Clear();
         newsListPanel.BackColor = palette.ListBack;
         var linkWidth = Math.Max(260, newsListPanel.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 12);
-        foreach (var item in newsEntries.Take(12))
+        foreach (var item in newsEntries.Take(5))
         {
             var link = new LinkLabel
             {
@@ -1646,6 +1645,13 @@ internal sealed class MainForm : Form
     private static string NewsDateLabel(DateTimeOffset date)
     {
         return date == DateTimeOffset.MinValue ? "News" : date.ToLocalTime().ToString("MMM d");
+    }
+
+    private static DateTimeOffset ParseNewsDate(string rawDate)
+    {
+        if (DateTimeOffset.TryParse(rawDate, out var parsedDate)) return parsedDate;
+        if (long.TryParse(rawDate, out var unixSeconds)) return DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+        return DateTimeOffset.MinValue;
     }
 
     private void OpenSelectedNewsBanner()
