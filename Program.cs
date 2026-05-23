@@ -43,8 +43,6 @@ internal sealed class BandConfig
 
 internal sealed class AppSettings
 {
-    public int DelaySeconds { get; set; } = 15;
-    public int InGameWaitSeconds { get; set; } = 25;
     public string DalamudFolder { get; set; } = "";
     public string LaunchMode { get; set; } = "Instanced";
     public string SharedProfileFolder { get; set; } = "";
@@ -63,6 +61,7 @@ internal sealed class AppSettings
 
 internal sealed record ThemePalette(Color Back1, Color Back2, Color Card, Color Border, Color Text, Color Muted, Color Primary, Color Secondary, Color Danger, Color ListBack);
 internal readonly record struct LauncherWindow(int ProcessId, IntPtr Handle);
+internal readonly record struct GameClientWindow(int ProcessId, IntPtr Handle);
 internal readonly record struct LaunchCommand(string FileName, string Arguments, string WorkingDirectory);
 internal readonly record struct BatchLaunchInfo(string AccountKey, string RoamingPath);
 internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
@@ -76,6 +75,45 @@ internal sealed class MainForm : Form
 
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr hObject);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect lpRect);
+
+    [DllImport("iphlpapi.dll", SetLastError = true)]
+    private static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int dwOutBufLen, bool sort, int ipVersion, TcpTableClass tblClass, uint reserved = 0);
+
+    private const int AfInet = 2;
+    private const uint TcpStateEstablished = 5;
+
+    private enum TcpTableClass
+    {
+        OwnerPidAll = 5
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TcpRowOwnerPid
+    {
+        public uint State;
+        public uint LocalAddr;
+        public uint LocalPort;
+        public uint RemoteAddr;
+        public uint RemotePort;
+        public uint OwningPid;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct NativeRect
+    {
+        public readonly int Left;
+        public readonly int Top;
+        public readonly int Right;
+        public readonly int Bottom;
+        public int Width => Right - Left;
+        public int Height => Bottom - Top;
+    }
 
     private static readonly Dictionary<string, ThemePalette> Palettes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -119,15 +157,9 @@ internal sealed class MainForm : Form
     private TextBox bandName = null!;
     private Label folderLabel = null!;
     private Label sharedProfileLabel = null!;
-    private Label cooldownLabel = null!;
-    private Label inGameWaitLabel = null!;
-    private Label secondsLabel = null!;
-    private Label inGameWaitSecondsLabel = null!;
     private Label themeLabel = null!;
     private TextBox folderInput = null!;
     private TextBox sharedProfileInput = null!;
-    private NumericUpDown delayInput = null!;
-    private NumericUpDown inGameWaitInput = null!;
     private ComboBox launchModeInput = null!;
     private ComboBox themeInput = null!;
     private Button browseBatButton = null!;
@@ -526,18 +558,6 @@ internal sealed class MainForm : Form
         browseSharedProfileButton.Click += (_, _) => BrowseFolder(sharedProfileInput, "Choose the folder containing accountsList.json", SaveAndRescan);
         settingsDrawer.Controls.AddRange([sharedProfileLabel, sharedProfileInput, browseSharedProfileButton]);
 
-        cooldownLabel = Label("Cooldown between launches", 24, 420, 220, 24);
-        delayInput = new NumericUpDown { Minimum = 1, Maximum = 300, Value = Math.Clamp(settings.DelaySeconds, 1, 300), Bounds = new Rectangle(246, 418, 72, 29) };
-        delayInput.ValueChanged += (_, _) => SaveSettingsFromInputs();
-        secondsLabel = Label("sec", 326, 421, 42, 24);
-        settingsDrawer.Controls.AddRange([cooldownLabel, delayInput, secondsLabel]);
-
-        inGameWaitLabel = Label("Extra in-game wait after launch", 24, 312, 220, 24);
-        inGameWaitInput = new NumericUpDown { Minimum = 0, Maximum = 300, Value = Math.Clamp(settings.InGameWaitSeconds, 0, 300), Bounds = new Rectangle(246, 310, 72, 29) };
-        inGameWaitInput.ValueChanged += (_, _) => SaveSettingsFromInputs();
-        inGameWaitSecondsLabel = Label("sec", 326, 313, 42, 24);
-        settingsDrawer.Controls.AddRange([inGameWaitLabel, inGameWaitInput, inGameWaitSecondsLabel]);
-
         themeLabel = Label("Theme", 24, 580, 120, 24);
         themeInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 608, 260, 29) };
         themeInput.Items.AddRange(Palettes.Keys.ToArray());
@@ -604,37 +624,25 @@ internal sealed class MainForm : Form
 
         if (sharedMode)
         {
-            SetY(cooldownLabel, 270);
-            SetY(delayInput, 268);
-            SetY(secondsLabel, 271);
-            SetY(inGameWaitLabel, 312);
-            SetY(inGameWaitInput, 310);
-            SetY(inGameWaitSecondsLabel, 313);
-            SetY(themeLabel, 354);
-            SetY(themeInput, 382);
-            SetY(muteMusicInput, 426);
-            SetY(stopMusicWhenLoadedInput, 458);
-            SetY(musicVolumeLabel, 490);
-            SetY(musicVolumeInput, 514);
-            SetY(randomizeThemeInput, 562);
-            SetY(updateButton, 608);
+            SetY(themeLabel, 270);
+            SetY(themeInput, 298);
+            SetY(muteMusicInput, 350);
+            SetY(stopMusicWhenLoadedInput, 382);
+            SetY(musicVolumeLabel, 418);
+            SetY(musicVolumeInput, 442);
+            SetY(randomizeThemeInput, 498);
+            SetY(updateButton, 544);
         }
         else
         {
-            SetY(cooldownLabel, 270);
-            SetY(delayInput, 268);
-            SetY(secondsLabel, 271);
-            SetY(inGameWaitLabel, 312);
-            SetY(inGameWaitInput, 310);
-            SetY(inGameWaitSecondsLabel, 313);
-            SetY(themeLabel, 354);
-            SetY(themeInput, 382);
-            SetY(muteMusicInput, 426);
-            SetY(stopMusicWhenLoadedInput, 458);
-            SetY(musicVolumeLabel, 490);
-            SetY(musicVolumeInput, 514);
-            SetY(randomizeThemeInput, 562);
-            SetY(updateButton, 608);
+            SetY(themeLabel, 270);
+            SetY(themeInput, 298);
+            SetY(muteMusicInput, 350);
+            SetY(stopMusicWhenLoadedInput, 382);
+            SetY(musicVolumeLabel, 418);
+            SetY(musicVolumeInput, 442);
+            SetY(randomizeThemeInput, 498);
+            SetY(updateButton, 544);
         }
     }
 
@@ -1197,16 +1205,7 @@ internal sealed class MainForm : Form
                 loadingTitle.Text = $"Loading {account.Name}";
                 UpdateLoadingOverlay($"{band.Name}: launching {account.Name} ({index + 1}/{bandAccounts.Count}).");
                 await LaunchAccountAsync(account, cancellation.Token, true);
-                status.Text = $"{band.Name}: launched {account.Name} ({index + 1}/{bandAccounts.Count}).";
-                if (index == bandAccounts.Count - 1) break;
-                var next = bandAccounts[index + 1];
-                for (var remaining = settings.DelaySeconds; remaining > 0; remaining--)
-                {
-                    cancellation.Token.ThrowIfCancellationRequested();
-                    status.Text = $"{band.Name}: next {next.Name} in {remaining}s.";
-                    UpdateLoadingOverlay($"Next: {next.Name} in {remaining}s.");
-                    await Task.Delay(1000, cancellation.Token);
-                }
+                status.Text = $"{band.Name}: {account.Name} connected ({index + 1}/{bandAccounts.Count}).";
             }
             status.Text = $"{band.Name} queue complete.";
             UpdateLoadingOverlay($"{band.Name} queue complete.");
@@ -1231,7 +1230,8 @@ internal sealed class MainForm : Form
         SaveSettingsFromInputs();
         try
         {
-            var before = GetLauncherProcessIds();
+            var launcherProcessesBefore = GetLauncherProcessIds();
+            var gameClientsBefore = GetGameClientProcessIds();
             var command = IsSharedLaunchMode()
                 ? BuildSharedLaunchCommand(account)
                 : BuildBatchLaunchCommand(account);
@@ -1253,13 +1253,13 @@ internal sealed class MainForm : Form
                 : $"Started {account.Name}. Waiting for XIVLauncher to finish...";
             UpdateLoadingOverlay(waitMessage);
 
-            await WaitForLauncherHandoffAsync(launcherProcess, before, account.Name, token);
-            await WaitForClientSettleAsync(account.Name, token);
+            await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, account.Name, token);
+            await WaitForGameClientConnectedAsync(gameClientsBefore, account.Name, token);
             if (!quiet)
             {
-                status.Text = $"Launcher finished for {account.Name}.";
+                status.Text = $"{account.Name} connected.";
             }
-            UpdateLoadingOverlay($"{account.Name} is ready.");
+            UpdateLoadingOverlay($"{account.Name} connected.");
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1483,19 +1483,118 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task WaitForClientSettleAsync(string accountName, CancellationToken token)
+    private static HashSet<int> GetLauncherProcessIds() => GetLauncherWindows().Select(window => window.ProcessId).ToHashSet();
+
+    private async Task WaitForGameClientConnectedAsync(HashSet<int> existingProcessIds, string accountName, CancellationToken token)
     {
-        var waitSeconds = Math.Clamp(settings.InGameWaitSeconds, 0, 300);
-        for (var remaining = waitSeconds; remaining > 0; remaining--)
+        var deadline = DateTime.UtcNow.AddMinutes(10);
+        GameClientWindow? client = null;
+        while (DateTime.UtcNow < deadline)
         {
             token.ThrowIfCancellationRequested();
-            status.Text = $"Waiting for {accountName} to reach in-game... {remaining}s.";
+            client ??= GetFreshGameClient(existingProcessIds);
+            if (client is null)
+            {
+                status.Text = $"Waiting for {accountName}'s game client to appear...";
+                UpdateLoadingOverlay(status.Text);
+                await Task.Delay(500, token);
+                continue;
+            }
+
+            var processId = client.Value.ProcessId;
+            if (HasEstablishedTcpConnection(processId))
+            {
+                status.Text = $"{accountName}'s game client connected.";
+                UpdateLoadingOverlay(status.Text);
+                return;
+            }
+
+            status.Text = $"Waiting for {accountName}'s game client to connect...";
             UpdateLoadingOverlay(status.Text);
-            await Task.Delay(1000, token);
+            await Task.Delay(500, token);
         }
+
+        throw new TimeoutException($"Timed out waiting for {accountName}'s FFXIV client to connect.");
     }
 
-    private static HashSet<int> GetLauncherProcessIds() => GetLauncherWindows().Select(window => window.ProcessId).ToHashSet();
+    private static HashSet<int> GetGameClientProcessIds()
+    {
+        var ids = new HashSet<int>();
+        foreach (var processName in new[] { "ffxiv", "ffxiv_dx11" })
+        {
+            foreach (var process in Process.GetProcessesByName(processName))
+            {
+                try
+                {
+                    ids.Add(process.Id);
+                }
+                catch { }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+        }
+        return ids;
+    }
+
+    private static GameClientWindow? GetFreshGameClient(HashSet<int> existingProcessIds)
+    {
+        foreach (var processName in new[] { "ffxiv", "ffxiv_dx11" })
+        {
+            foreach (var process in Process.GetProcessesByName(processName))
+            {
+                try
+                {
+                    if (existingProcessIds.Contains(process.Id)) continue;
+                    var handle = process.MainWindowHandle;
+                    if (handle == IntPtr.Zero) return new GameClientWindow(process.Id, handle);
+                    if (IsWindowVisible(handle) && GetWindowRect(handle, out var rect) && rect.Width > 320 && rect.Height > 240)
+                    {
+                        return new GameClientWindow(process.Id, handle);
+                    }
+                }
+                catch { }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static bool HasEstablishedTcpConnection(int processId)
+    {
+        var bufferLength = 0;
+        _ = GetExtendedTcpTable(IntPtr.Zero, ref bufferLength, true, AfInet, TcpTableClass.OwnerPidAll);
+        if (bufferLength <= 0) return false;
+
+        var buffer = Marshal.AllocHGlobal(bufferLength);
+        try
+        {
+            var result = GetExtendedTcpTable(buffer, ref bufferLength, true, AfInet, TcpTableClass.OwnerPidAll);
+            if (result != 0) return false;
+
+            var rowCount = Marshal.ReadInt32(buffer);
+            var rowPointer = IntPtr.Add(buffer, sizeof(uint));
+            var rowSize = Marshal.SizeOf<TcpRowOwnerPid>();
+            for (var index = 0; index < rowCount; index++)
+            {
+                var row = Marshal.PtrToStructure<TcpRowOwnerPid>(IntPtr.Add(rowPointer, index * rowSize));
+                if (row.OwningPid == processId && row.State == TcpStateEstablished && row.RemoteAddr != 0)
+                {
+                    return true;
+                }
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+
+        return false;
+    }
 
     private static List<LauncherWindow> GetLauncherWindows()
     {
@@ -1912,8 +2011,6 @@ internal sealed class MainForm : Form
         settings.SharedProfileFolder = sharedProfileInput.Text.Trim();
         settings.LaunchMode = NormalizeLaunchMode(launchModeInput?.SelectedItem?.ToString() ?? settings.LaunchMode);
         settings.LaunchModeChosen = true;
-        settings.DelaySeconds = (int)delayInput.Value;
-        settings.InGameWaitSeconds = (int)inGameWaitInput.Value;
         settings.Theme = themeInput?.SelectedItem?.ToString() ?? settings.Theme;
         settings.MusicMuted = muteMusicInput?.Checked ?? settings.MusicMuted;
         settings.StopMusicWhenAllLoaded = stopMusicWhenLoadedInput?.Checked ?? settings.StopMusicWhenAllLoaded;
