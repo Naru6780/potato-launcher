@@ -162,7 +162,9 @@ internal sealed class MainForm : Form
     private bool themeHasVideo;
     private bool themeHasImage;
     private bool settingsDrawerOpen;
-    private string? currentMusicPath;
+    private readonly List<string> currentMusicPlaylist = [];
+    private string? currentMusicFolder;
+    private int currentMusicIndex;
     private readonly List<NewsBanner> newsBanners = [];
     private readonly List<NewsEntry> newsEntries = [];
     private int selectedNewsBannerIndex;
@@ -196,9 +198,7 @@ internal sealed class MainForm : Form
         BuildVideoBackground();
         themeMusic.MediaEnded += (_, _) =>
         {
-            if (settings.MusicMuted || string.IsNullOrWhiteSpace(currentMusicPath)) return;
-            themeMusic.Position = TimeSpan.Zero;
-            themeMusic.Play();
+            PlayNextThemeSong();
         };
 
         settingsButton = Button("Settings", 36, 24, 102, 34, "Secondary");
@@ -2098,22 +2098,47 @@ internal sealed class MainForm : Form
             return;
         }
 
-        var music = PickThemeAsset(ThemeFolder(themeName), [".mp3", ".wav", ".wma", ".aac", ".m4a"]);
-        if (string.IsNullOrWhiteSpace(music))
+        var musicFolder = ThemeFolder(themeName);
+        var playlist = PickThemeAssets(musicFolder, [".mp3", ".wav", ".wma", ".aac", ".m4a"]);
+        if (playlist.Count == 0)
         {
             themeMusic.Stop();
-            currentMusicPath = null;
+            currentMusicPlaylist.Clear();
+            currentMusicFolder = null;
+            currentMusicIndex = 0;
             return;
         }
 
-        if (!music.Equals(currentMusicPath, StringComparison.OrdinalIgnoreCase))
+        if (!musicFolder.Equals(currentMusicFolder, StringComparison.OrdinalIgnoreCase) ||
+            !playlist.SequenceEqual(currentMusicPlaylist, StringComparer.OrdinalIgnoreCase))
         {
             themeMusic.Stop();
-            themeMusic.Open(new Uri(music, UriKind.Absolute));
-            currentMusicPath = music;
+            currentMusicPlaylist.Clear();
+            currentMusicPlaylist.AddRange(playlist);
+            currentMusicFolder = musicFolder;
+            currentMusicIndex = 0;
+            PlayCurrentThemeSong();
+            return;
         }
+
         themeMusic.Volume = 0.45;
         themeMusic.Play();
+    }
+
+    private void PlayCurrentThemeSong()
+    {
+        if (settings.MusicMuted || currentMusicPlaylist.Count == 0) return;
+        currentMusicIndex = Math.Clamp(currentMusicIndex, 0, currentMusicPlaylist.Count - 1);
+        themeMusic.Open(new Uri(currentMusicPlaylist[currentMusicIndex], UriKind.Absolute));
+        themeMusic.Volume = 0.45;
+        themeMusic.Play();
+    }
+
+    private void PlayNextThemeSong()
+    {
+        if (settings.MusicMuted || currentMusicPlaylist.Count == 0) return;
+        currentMusicIndex = (currentMusicIndex + 1) % currentMusicPlaylist.Count;
+        PlayCurrentThemeSong();
     }
 
     private static Image? LoadUnlockedImage(string path)
@@ -2131,11 +2156,16 @@ internal sealed class MainForm : Form
 
     private static string? PickThemeAsset(string folder, string[] extensions)
     {
-        if (!Directory.Exists(folder)) return null;
+        return PickThemeAssets(folder, extensions).FirstOrDefault();
+    }
+
+    private static List<string> PickThemeAssets(string folder, string[] extensions)
+    {
+        if (!Directory.Exists(folder)) return [];
         return Directory.GetFiles(folder)
             .Where(path => extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
             .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
+            .ToList();
     }
 
     private void ApplyThemeRecursive(Control root)
