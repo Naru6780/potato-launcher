@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.21`
+**Current version:** `1.0.22`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 
@@ -40,11 +40,11 @@ Steam service account state is carried through the account key and should remain
 
 ## Readiness Detection
 
-`v1.0.21` waits for the newly launched game client process:
+`v1.0.22` separates band queue pacing from readiness:
 
-- process name `ffxiv` or `ffxiv_dx11`
-- process did not exist before the launch request
-- window title switches from `FINAL FANTASY XIV` to a stable `Character@World` title for multiple consecutive checks
+- each account is launched after the previous launch handoff plus the configured cooldown
+- default cooldown is `0` seconds, the minimum allowed value
+- the loading screen stays visible until every launched client has a stable `Character@World` window title
 
 Known caveat: title detection depends on the game client updating its Windows title. This is more precise than generic TCP connection detection for the launcher queue and avoids screenshot/OCR fragility.
 

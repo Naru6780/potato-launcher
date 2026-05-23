@@ -51,6 +51,7 @@ internal sealed class AppSettings
     public bool MusicMuted { get; set; }
     public bool StopMusicWhenAllLoaded { get; set; }
     public int MusicVolume { get; set; } = 45;
+    public int LaunchCooldownSeconds { get; set; } = 0;
     public bool RandomizeThemeAtLaunch { get; set; }
     public string LastShownChangelogVersion { get; set; } = "";
     public List<BandConfig> Bands { get; set; } = [];
@@ -64,6 +65,7 @@ internal readonly record struct LauncherWindow(int ProcessId, IntPtr Handle);
 internal readonly record struct GameClientWindow(int ProcessId, IntPtr Handle, string Title);
 internal readonly record struct LaunchCommand(string FileName, string Arguments, string WorkingDirectory);
 internal readonly record struct BatchLaunchInfo(string AccountKey, string RoamingPath);
+internal readonly record struct StartedGameClient(Account Account, int ProcessId);
 internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
 internal sealed record NewsEntry(string Title, string Url, DateTimeOffset Date, string Tag);
 
@@ -169,6 +171,8 @@ internal sealed class MainForm : Form
     private CheckBox stopMusicWhenLoadedInput = null!;
     private TrackBar musicVolumeInput = null!;
     private Label musicVolumeLabel = null!;
+    private Label launchCooldownLabel = null!;
+    private NumericUpDown launchCooldownInput = null!;
     private CheckBox randomizeThemeInput = null!;
     private Button settingsButton = null!;
     private Button killGameButton = null!;
@@ -598,6 +602,18 @@ internal sealed class MainForm : Form
         };
         settingsDrawer.Controls.AddRange([musicVolumeLabel, musicVolumeInput]);
 
+        launchCooldownLabel = Label("Launch cooldown: seconds between clients", 24, 488, 300, 24);
+        settingsDrawer.Controls.Add(launchCooldownLabel);
+        launchCooldownInput = new NumericUpDown
+        {
+            Minimum = 0,
+            Maximum = 300,
+            Value = Math.Clamp(settings.LaunchCooldownSeconds, 0, 300),
+            Bounds = new Rectangle(24, 522, 96, 29)
+        };
+        launchCooldownInput.ValueChanged += (_, _) => SaveSettingsFromInputs();
+        settingsDrawer.Controls.Add(launchCooldownInput);
+
         randomizeThemeInput = new CheckBox { Text = "Randomize theme at launch", Checked = settings.RandomizeThemeAtLaunch, Bounds = new Rectangle(24, 560, 250, 28), BackColor = Color.Transparent };
         randomizeThemeInput.CheckedChanged += (_, _) => SaveSettingsFromInputs();
         settingsDrawer.Controls.Add(randomizeThemeInput);
@@ -630,8 +646,10 @@ internal sealed class MainForm : Form
             SetY(stopMusicWhenLoadedInput, 382);
             SetY(musicVolumeLabel, 418);
             SetY(musicVolumeInput, 442);
-            SetY(randomizeThemeInput, 498);
-            SetY(updateButton, 544);
+            SetY(launchCooldownLabel, 498);
+            SetY(launchCooldownInput, 522);
+            SetY(randomizeThemeInput, 560);
+            SetY(updateButton, 606);
         }
         else
         {
@@ -641,8 +659,10 @@ internal sealed class MainForm : Form
             SetY(stopMusicWhenLoadedInput, 382);
             SetY(musicVolumeLabel, 418);
             SetY(musicVolumeInput, 442);
-            SetY(randomizeThemeInput, 498);
-            SetY(updateButton, 544);
+            SetY(launchCooldownLabel, 498);
+            SetY(launchCooldownInput, 522);
+            SetY(randomizeThemeInput, 560);
+            SetY(updateButton, 606);
         }
     }
 
@@ -1196,6 +1216,7 @@ internal sealed class MainForm : Form
         cancelButton.Visible = true;
         launchBandButton.Enabled = false;
         ShowLoadingOverlay($"Loading {band.Name}", $"Queueing {bandAccounts.Count} account{(bandAccounts.Count == 1 ? "" : "s")}...");
+        var launchedClients = new List<StartedGameClient>();
         try
         {
             for (var index = 0; index < bandAccounts.Count; index++)
@@ -1204,8 +1225,20 @@ internal sealed class MainForm : Form
                 SetRandomLoadingGif();
                 loadingTitle.Text = $"Loading {account.Name}";
                 UpdateLoadingOverlay($"{band.Name}: launching {account.Name} ({index + 1}/{bandAccounts.Count}).");
-                await LaunchAccountAsync(account, cancellation.Token, true);
-                status.Text = $"{band.Name}: {account.Name} connected ({index + 1}/{bandAccounts.Count}).";
+                var client = await StartAccountAndWaitForClientAsync(account, cancellation.Token);
+                launchedClients.Add(new StartedGameClient(account, client.ProcessId));
+                status.Text = $"{band.Name}: started {account.Name} ({index + 1}/{bandAccounts.Count}).";
+                if (index < bandAccounts.Count - 1)
+                {
+                    await WaitForLaunchCooldownAsync(band.Name, cancellation.Token);
+                }
+            }
+            for (var index = 0; index < launchedClients.Count; index++)
+            {
+                var client = launchedClients[index];
+                loadingTitle.Text = $"Waiting for {client.Account.Name}";
+                UpdateLoadingOverlay($"{band.Name}: waiting for character title ({index + 1}/{launchedClients.Count}).");
+                await WaitForGameClientCharacterTitleAsync(client, cancellation.Token);
             }
             status.Text = $"{band.Name} queue complete.";
             UpdateLoadingOverlay($"{band.Name} queue complete.");
@@ -1214,6 +1247,11 @@ internal sealed class MainForm : Form
         {
             status.Text = $"{band.Name} queue cancelled.";
             UpdateLoadingOverlay($"{band.Name} queue cancelled.");
+        }
+        catch (Exception ex)
+        {
+            status.Text = $"{band.Name} queue failed: {ex.Message}";
+            UpdateLoadingOverlay(status.Text);
         }
         finally
         {
@@ -1227,34 +1265,10 @@ internal sealed class MainForm : Form
 
     private async Task<bool> LaunchAccountAsync(Account account, CancellationToken token, bool quiet = false)
     {
-        SaveSettingsFromInputs();
         try
         {
-            var launcherProcessesBefore = GetLauncherProcessIds();
-            var gameClientsBefore = GetGameClientProcessIds();
-            var command = IsSharedLaunchMode()
-                ? BuildSharedLaunchCommand(account)
-                : BuildBatchLaunchCommand(account);
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = command.FileName,
-                Arguments = command.Arguments,
-                WorkingDirectory = command.WorkingDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-            using var launcherProcess = Process.Start(startInfo);
-            status.Text = IsSharedLaunchMode()
-                ? $"Started {account.Name} through Shared."
-                : $"Started {account.Name} from BAT command.";
-            var waitMessage = account.UseOtp
-                ? $"Started {account.Name}. OTP is enabled, waiting for manual login..."
-                : $"Started {account.Name}. Waiting for XIVLauncher to finish...";
-            UpdateLoadingOverlay(waitMessage);
-
-            await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, account.Name, token);
-            await WaitForGameClientCharacterTitleAsync(gameClientsBefore, account.Name, token);
+            var client = await StartAccountAndWaitForClientAsync(account, token);
+            await WaitForGameClientCharacterTitleAsync(new StartedGameClient(account, client.ProcessId), token);
             if (!quiet)
             {
                 status.Text = $"{account.Name} reached the character window title.";
@@ -1266,6 +1280,49 @@ internal sealed class MainForm : Form
         {
             status.Text = $"Could not launch {account.Name}: {ex.Message}";
             return false;
+        }
+    }
+
+    private async Task<GameClientWindow> StartAccountAndWaitForClientAsync(Account account, CancellationToken token)
+    {
+        SaveSettingsFromInputs();
+        var launcherProcessesBefore = GetLauncherProcessIds();
+        var gameClientsBefore = GetGameClientProcessIds();
+        var command = IsSharedLaunchMode()
+            ? BuildSharedLaunchCommand(account)
+            : BuildBatchLaunchCommand(account);
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = command.FileName,
+            Arguments = command.Arguments,
+            WorkingDirectory = command.WorkingDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        using var launcherProcess = Process.Start(startInfo);
+        status.Text = IsSharedLaunchMode()
+            ? $"Started {account.Name} through Shared."
+            : $"Started {account.Name} from BAT command.";
+        var waitMessage = account.UseOtp
+            ? $"Started {account.Name}. OTP is enabled, waiting for manual login..."
+            : $"Started {account.Name}. Waiting for XIVLauncher to finish...";
+        UpdateLoadingOverlay(waitMessage);
+
+        await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, account.Name, token);
+        return await WaitForFreshGameClientAsync(gameClientsBefore, account.Name, token);
+    }
+
+    private async Task WaitForLaunchCooldownAsync(string bandName, CancellationToken token)
+    {
+        var seconds = Math.Clamp(settings.LaunchCooldownSeconds, 0, 300);
+        if (seconds <= 0) return;
+        for (var remaining = seconds; remaining > 0; remaining--)
+        {
+            token.ThrowIfCancellationRequested();
+            status.Text = $"{bandName}: next client launches in {remaining}s.";
+            UpdateLoadingOverlay(status.Text);
+            await Task.Delay(TimeSpan.FromSeconds(1), token);
         }
     }
 
@@ -1485,7 +1542,29 @@ internal sealed class MainForm : Form
 
     private static HashSet<int> GetLauncherProcessIds() => GetLauncherWindows().Select(window => window.ProcessId).ToHashSet();
 
-    private async Task WaitForGameClientCharacterTitleAsync(HashSet<int> existingProcessIds, string accountName, CancellationToken token)
+    private async Task<GameClientWindow> WaitForFreshGameClientAsync(HashSet<int> existingProcessIds, string accountName, CancellationToken token)
+    {
+        var deadline = DateTime.UtcNow.AddMinutes(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            token.ThrowIfCancellationRequested();
+            var client = GetFreshGameClient(existingProcessIds);
+            if (client is not null)
+            {
+                status.Text = $"Found {accountName}'s game client.";
+                UpdateLoadingOverlay(status.Text);
+                return client.Value;
+            }
+
+            status.Text = $"Waiting for {accountName}'s game client to appear...";
+            UpdateLoadingOverlay(status.Text);
+            await Task.Delay(500, token);
+        }
+
+        throw new TimeoutException($"Timed out waiting for {accountName}'s FFXIV client to appear.");
+    }
+
+    private async Task WaitForGameClientCharacterTitleAsync(StartedGameClient startedClient, CancellationToken token)
     {
         var deadline = DateTime.UtcNow.AddMinutes(10);
         var stableCharacterTitleHits = 0;
@@ -1494,10 +1573,10 @@ internal sealed class MainForm : Form
         while (DateTime.UtcNow < deadline)
         {
             token.ThrowIfCancellationRequested();
-            var client = GetFreshGameClient(existingProcessIds);
+            var client = GetGameClientByProcessId(startedClient.ProcessId);
             if (client is null)
             {
-                status.Text = $"Waiting for {accountName}'s game client to appear...";
+                status.Text = $"Waiting for {startedClient.Account.Name}'s game client...";
                 UpdateLoadingOverlay(status.Text);
                 await Task.Delay(500, token);
                 continue;
@@ -1530,15 +1609,15 @@ internal sealed class MainForm : Form
                 stableCharacterTitleHits = 0;
                 stableCharacterTitle = null;
                 status.Text = sawGameConnection
-                    ? $"Waiting for {accountName}'s character title..."
-                    : $"Waiting for {accountName}'s data center connection...";
+                    ? $"Waiting for {startedClient.Account.Name}'s character title..."
+                    : $"Waiting for {startedClient.Account.Name}'s data center connection...";
                 UpdateLoadingOverlay(status.Text);
             }
 
             await Task.Delay(700, token);
         }
 
-        throw new TimeoutException($"Timed out waiting for {accountName}'s FFXIV window title to switch to Character@World.");
+        throw new TimeoutException($"Timed out waiting for {startedClient.Account.Name}'s FFXIV window title to switch to Character@World.");
     }
 
     private static HashSet<int> GetGameClientProcessIds()
@@ -1588,6 +1667,20 @@ internal sealed class MainForm : Form
             }
         }
         return null;
+    }
+
+    private static GameClientWindow? GetGameClientByProcessId(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            process.Refresh();
+            return new GameClientWindow(process.Id, process.MainWindowHandle, process.MainWindowTitle ?? "");
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static bool IsCharacterTitle(string title)
@@ -2048,6 +2141,7 @@ internal sealed class MainForm : Form
         settings.MusicMuted = muteMusicInput?.Checked ?? settings.MusicMuted;
         settings.StopMusicWhenAllLoaded = stopMusicWhenLoadedInput?.Checked ?? settings.StopMusicWhenAllLoaded;
         settings.MusicVolume = musicVolumeInput?.Value ?? settings.MusicVolume;
+        settings.LaunchCooldownSeconds = (int)(launchCooldownInput?.Value ?? settings.LaunchCooldownSeconds);
         settings.RandomizeThemeAtLaunch = randomizeThemeInput?.Checked ?? settings.RandomizeThemeAtLaunch;
         SaveSettings(settings);
     }

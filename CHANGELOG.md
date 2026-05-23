@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.22 - 2026-05-23
+
+- Added a configurable band launch cooldown with a default minimum of `0` seconds.
+- Separated queue pacing from loading completion so clients can start on cooldown while the loading screen waits for every `Character@World` title.
+
 ## 1.0.21 - 2026-05-23
 
 - Replaced character-selection screenshot detection with FFXIV window-title readiness.
