@@ -44,6 +44,7 @@ internal sealed class BandConfig
 internal sealed class AppSettings
 {
     public int DelaySeconds { get; set; } = 15;
+    public int InGameWaitSeconds { get; set; } = 25;
     public string DalamudFolder { get; set; } = "";
     public string LaunchMode { get; set; } = "Instanced";
     public string SharedProfileFolder { get; set; } = "";
@@ -119,11 +120,14 @@ internal sealed class MainForm : Form
     private Label folderLabel = null!;
     private Label sharedProfileLabel = null!;
     private Label cooldownLabel = null!;
+    private Label inGameWaitLabel = null!;
     private Label secondsLabel = null!;
+    private Label inGameWaitSecondsLabel = null!;
     private Label themeLabel = null!;
     private TextBox folderInput = null!;
     private TextBox sharedProfileInput = null!;
     private NumericUpDown delayInput = null!;
+    private NumericUpDown inGameWaitInput = null!;
     private ComboBox launchModeInput = null!;
     private ComboBox themeInput = null!;
     private Button browseBatButton = null!;
@@ -528,6 +532,12 @@ internal sealed class MainForm : Form
         secondsLabel = Label("sec", 326, 421, 42, 24);
         settingsDrawer.Controls.AddRange([cooldownLabel, delayInput, secondsLabel]);
 
+        inGameWaitLabel = Label("Extra in-game wait after launch", 24, 312, 220, 24);
+        inGameWaitInput = new NumericUpDown { Minimum = 0, Maximum = 300, Value = Math.Clamp(settings.InGameWaitSeconds, 0, 300), Bounds = new Rectangle(246, 310, 72, 29) };
+        inGameWaitInput.ValueChanged += (_, _) => SaveSettingsFromInputs();
+        inGameWaitSecondsLabel = Label("sec", 326, 313, 42, 24);
+        settingsDrawer.Controls.AddRange([inGameWaitLabel, inGameWaitInput, inGameWaitSecondsLabel]);
+
         themeLabel = Label("Theme", 24, 580, 120, 24);
         themeInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 608, 260, 29) };
         themeInput.Items.AddRange(Palettes.Keys.ToArray());
@@ -597,28 +607,34 @@ internal sealed class MainForm : Form
             SetY(cooldownLabel, 270);
             SetY(delayInput, 268);
             SetY(secondsLabel, 271);
-            SetY(themeLabel, 344);
-            SetY(themeInput, 372);
-            SetY(muteMusicInput, 420);
-            SetY(stopMusicWhenLoadedInput, 454);
-            SetY(musicVolumeLabel, 488);
-            SetY(musicVolumeInput, 512);
-            SetY(randomizeThemeInput, 560);
-            SetY(updateButton, 606);
+            SetY(inGameWaitLabel, 312);
+            SetY(inGameWaitInput, 310);
+            SetY(inGameWaitSecondsLabel, 313);
+            SetY(themeLabel, 354);
+            SetY(themeInput, 382);
+            SetY(muteMusicInput, 426);
+            SetY(stopMusicWhenLoadedInput, 458);
+            SetY(musicVolumeLabel, 490);
+            SetY(musicVolumeInput, 514);
+            SetY(randomizeThemeInput, 562);
+            SetY(updateButton, 608);
         }
         else
         {
             SetY(cooldownLabel, 270);
             SetY(delayInput, 268);
             SetY(secondsLabel, 271);
-            SetY(themeLabel, 344);
-            SetY(themeInput, 372);
-            SetY(muteMusicInput, 420);
-            SetY(stopMusicWhenLoadedInput, 454);
-            SetY(musicVolumeLabel, 488);
-            SetY(musicVolumeInput, 512);
-            SetY(randomizeThemeInput, 560);
-            SetY(updateButton, 606);
+            SetY(inGameWaitLabel, 312);
+            SetY(inGameWaitInput, 310);
+            SetY(inGameWaitSecondsLabel, 313);
+            SetY(themeLabel, 354);
+            SetY(themeInput, 382);
+            SetY(muteMusicInput, 426);
+            SetY(stopMusicWhenLoadedInput, 458);
+            SetY(musicVolumeLabel, 490);
+            SetY(musicVolumeInput, 514);
+            SetY(randomizeThemeInput, 562);
+            SetY(updateButton, 608);
         }
     }
 
@@ -1238,11 +1254,12 @@ internal sealed class MainForm : Form
             UpdateLoadingOverlay(waitMessage);
 
             await WaitForLauncherHandoffAsync(launcherProcess, before, account.Name, token);
+            await WaitForClientSettleAsync(account.Name, token);
             if (!quiet)
             {
                 status.Text = $"Launcher finished for {account.Name}.";
             }
-            UpdateLoadingOverlay($"{account.Name} launcher handoff complete.");
+            UpdateLoadingOverlay($"{account.Name} is ready.");
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1463,6 +1480,18 @@ internal sealed class MainForm : Form
             }
 
             await Task.Delay(500, token);
+        }
+    }
+
+    private async Task WaitForClientSettleAsync(string accountName, CancellationToken token)
+    {
+        var waitSeconds = Math.Clamp(settings.InGameWaitSeconds, 0, 300);
+        for (var remaining = waitSeconds; remaining > 0; remaining--)
+        {
+            token.ThrowIfCancellationRequested();
+            status.Text = $"Waiting for {accountName} to reach in-game... {remaining}s.";
+            UpdateLoadingOverlay(status.Text);
+            await Task.Delay(1000, token);
         }
     }
 
@@ -1884,6 +1913,7 @@ internal sealed class MainForm : Form
         settings.LaunchMode = NormalizeLaunchMode(launchModeInput?.SelectedItem?.ToString() ?? settings.LaunchMode);
         settings.LaunchModeChosen = true;
         settings.DelaySeconds = (int)delayInput.Value;
+        settings.InGameWaitSeconds = (int)inGameWaitInput.Value;
         settings.Theme = themeInput?.SelectedItem?.ToString() ?? settings.Theme;
         settings.MusicMuted = muteMusicInput?.Checked ?? settings.MusicMuted;
         settings.StopMusicWhenAllLoaded = stopMusicWhenLoadedInput?.Checked ?? settings.StopMusicWhenAllLoaded;
