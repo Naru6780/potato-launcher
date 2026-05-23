@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.22`
+**Current version:** `1.0.23`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 

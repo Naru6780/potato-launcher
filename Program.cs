@@ -1237,7 +1237,7 @@ internal sealed class MainForm : Form
             {
                 var client = launchedClients[index];
                 loadingTitle.Text = $"Waiting for {client.Account.Name}";
-                UpdateLoadingOverlay($"{band.Name}: waiting for character title ({index + 1}/{launchedClients.Count}).");
+                UpdateLoadingOverlay($"{band.Name}: waiting {client.Account.Name} to connect ({index + 1}/{launchedClients.Count}).");
                 await WaitForGameClientCharacterTitleAsync(client, cancellation.Token);
             }
             status.Text = $"{band.Name} queue complete.";
@@ -1609,7 +1609,7 @@ internal sealed class MainForm : Form
                 stableCharacterTitleHits = 0;
                 stableCharacterTitle = null;
                 status.Text = sawGameConnection
-                    ? $"Waiting for {startedClient.Account.Name}'s character title..."
+                    ? $"Waiting {startedClient.Account.Name} to connect..."
                     : $"Waiting for {startedClient.Account.Name}'s data center connection...";
                 UpdateLoadingOverlay(status.Text);
             }

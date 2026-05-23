@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.23 - 2026-05-23
+
+- Updated the loading status wording while waiting for each character title.
+
 ## 1.0.22 - 2026-05-23
 
 - Added a configurable band launch cooldown with a default minimum of `0` seconds.
