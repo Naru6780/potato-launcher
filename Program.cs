@@ -177,6 +177,7 @@ internal sealed class MainForm : Form
     private Button settingsButton = null!;
     private Button killGameButton = null!;
     private Button whatsNewButton = null!;
+    private Button muteMusicButton = null!;
     private MascotOverlayForm? mascotOverlay;
     private RoundedPanel statusPill = null!;
     private Label status = null!;
@@ -255,6 +256,9 @@ internal sealed class MainForm : Form
         whatsNewButton = Button("What's new?", 272, 24, 122, 34, "Secondary");
         whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
         background.Controls.Add(whatsNewButton);
+        muteMusicButton = Button("", 834, 24, 120, 34, "Secondary");
+        muteMusicButton.Click += (_, _) => ToggleMusicMute();
+        background.Controls.Add(muteMusicButton);
         mascotOverlay = CreateMascotOverlay();
         Shown += (_, _) => UpdateMascotOverlay();
         Move += (_, _) => UpdateMascotOverlay();
@@ -573,6 +577,7 @@ internal sealed class MainForm : Form
         muteMusicInput.CheckedChanged += (_, _) =>
         {
             SaveSettingsFromInputs();
+            UpdateMuteMusicButton();
             ApplyThemeMusic(settings.Theme);
         };
         settingsDrawer.Controls.Add(muteMusicInput);
@@ -621,6 +626,7 @@ internal sealed class MainForm : Form
         updateButton = Button("Check for updates", 24, 606, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
+        UpdateMuteMusicButton();
         UpdateLaunchModeUi();
         background.Controls.Add(settingsDrawer);
     }
@@ -2146,6 +2152,27 @@ internal sealed class MainForm : Form
         SaveSettings(settings);
     }
 
+    private void ToggleMusicMute()
+    {
+        settings.MusicMuted = !settings.MusicMuted;
+        if (muteMusicInput is not null)
+        {
+            muteMusicInput.Checked = settings.MusicMuted;
+        }
+        SaveSettingsFromInputs();
+        UpdateMuteMusicButton();
+        ApplyThemeMusic(settings.Theme);
+    }
+
+    private void UpdateMuteMusicButton()
+    {
+        if (muteMusicButton is null) return;
+        muteMusicButton.Text = settings.MusicMuted ? "Music Off" : "Music On";
+        muteMusicButton.Tag = settings.MusicMuted ? "Danger" : "Secondary";
+        muteMusicButton.BackColor = settings.MusicMuted ? palette.Danger : palette.Secondary;
+        muteMusicButton.ForeColor = Color.White;
+    }
+
     private async Task CheckForUpdatesAsync()
     {
         updateButton.Enabled = false;
@@ -2354,6 +2381,7 @@ internal sealed class MainForm : Form
             settingsButton.BringToFront();
             killGameButton.BringToFront();
             whatsNewButton.BringToFront();
+            muteMusicButton.BringToFront();
             backgroundVideo.Stop();
             backgroundVideo.Source = new Uri(video, UriKind.Absolute);
             videoHost.Visible = true;
@@ -2378,6 +2406,7 @@ internal sealed class MainForm : Form
         settingsButton.BringToFront();
         killGameButton.BringToFront();
         whatsNewButton.BringToFront();
+        muteMusicButton.BringToFront();
         statusPill.BringToFront();
         if (newsOverlay.Visible) newsOverlay.BringToFront();
         if (settingsDrawerOpen) settingsDrawer.BringToFront();
@@ -2538,6 +2567,7 @@ internal sealed class MainForm : Form
             }
             ApplyThemeRecursive(control);
         }
+        UpdateMuteMusicButton();
     }
 
     private Color CurrentCardColor(RoundedPanel panel)

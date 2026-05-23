@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.24 - 2026-05-23
+
+- Added a main-window music mute toggle for quick access.
+- Kept the Settings mute checkbox synced with the main mute button.
+
 ## 1.0.23 - 2026-05-23
 
 - Updated the loading status wording while waiting for each character title.
