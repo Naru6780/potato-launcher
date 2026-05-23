@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.25 - 2026-05-23
+
+- Moved the main-window music mute toggle beside the Kill FFXIV button so it no longer overlaps the mascot area.
+
 ## 1.0.24 - 2026-05-23
 
 - Added a main-window music mute toggle for quick access.

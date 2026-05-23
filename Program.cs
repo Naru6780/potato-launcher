@@ -253,12 +253,12 @@ internal sealed class MainForm : Form
         killGameButton = Button("Kill FFXIV", 154, 24, 104, 34, "Danger");
         killGameButton.Click += (_, _) => KillGameInstances();
         background.Controls.Add(killGameButton);
-        whatsNewButton = Button("What's new?", 272, 24, 122, 34, "Secondary");
-        whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
-        background.Controls.Add(whatsNewButton);
-        muteMusicButton = Button("", 834, 24, 120, 34, "Secondary");
+        muteMusicButton = Button("", 272, 24, 108, 34, "Secondary");
         muteMusicButton.Click += (_, _) => ToggleMusicMute();
         background.Controls.Add(muteMusicButton);
+        whatsNewButton = Button("What's new?", 394, 24, 122, 34, "Secondary");
+        whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
+        background.Controls.Add(whatsNewButton);
         mascotOverlay = CreateMascotOverlay();
         Shown += (_, _) => UpdateMascotOverlay();
         Move += (_, _) => UpdateMascotOverlay();
