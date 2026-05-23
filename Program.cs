@@ -50,6 +50,8 @@ internal sealed class AppSettings
     public bool LaunchModeChosen { get; set; }
     public string Theme { get; set; } = "Pink";
     public bool MusicMuted { get; set; }
+    public bool StopMusicWhenAllLoaded { get; set; }
+    public int MusicVolume { get; set; } = 45;
     public bool RandomizeThemeAtLaunch { get; set; }
     public string LastShownChangelogVersion { get; set; } = "";
     public List<BandConfig> Bands { get; set; } = [];
@@ -128,6 +130,9 @@ internal sealed class MainForm : Form
     private Button browseSharedProfileButton = null!;
     private Button updateButton = null!;
     private CheckBox muteMusicInput = null!;
+    private CheckBox stopMusicWhenLoadedInput = null!;
+    private TrackBar musicVolumeInput = null!;
+    private Label musicVolumeLabel = null!;
     private CheckBox randomizeThemeInput = null!;
     private Button settingsButton = null!;
     private Button killGameButton = null!;
@@ -538,11 +543,36 @@ internal sealed class MainForm : Form
         };
         settingsDrawer.Controls.Add(muteMusicInput);
 
-        randomizeThemeInput = new CheckBox { Text = "Randomize theme at launch", Checked = settings.RandomizeThemeAtLaunch, Bounds = new Rectangle(24, 454, 250, 28), BackColor = Color.Transparent };
+        stopMusicWhenLoadedInput = new CheckBox { Text = "Stop music when all loaded", Checked = settings.StopMusicWhenAllLoaded, Bounds = new Rectangle(24, 454, 260, 28), BackColor = Color.Transparent };
+        stopMusicWhenLoadedInput.CheckedChanged += (_, _) =>
+        {
+            SaveSettingsFromInputs();
+            ApplyThemeMusic(settings.Theme);
+        };
+        settingsDrawer.Controls.Add(stopMusicWhenLoadedInput);
+
+        musicVolumeLabel = Label($"Music volume: {Math.Clamp(settings.MusicVolume, 0, 100)}%", 24, 488, 180, 24);
+        musicVolumeInput = new TrackBar
+        {
+            Minimum = 0,
+            Maximum = 100,
+            TickFrequency = 10,
+            Value = Math.Clamp(settings.MusicVolume, 0, 100),
+            Bounds = new Rectangle(22, 512, 260, 42)
+        };
+        musicVolumeInput.ValueChanged += (_, _) =>
+        {
+            musicVolumeLabel.Text = $"Music volume: {musicVolumeInput.Value}%";
+            SaveSettingsFromInputs();
+            themeMusic.Volume = MusicVolume();
+        };
+        settingsDrawer.Controls.AddRange([musicVolumeLabel, musicVolumeInput]);
+
+        randomizeThemeInput = new CheckBox { Text = "Randomize theme at launch", Checked = settings.RandomizeThemeAtLaunch, Bounds = new Rectangle(24, 560, 250, 28), BackColor = Color.Transparent };
         randomizeThemeInput.CheckedChanged += (_, _) => SaveSettingsFromInputs();
         settingsDrawer.Controls.Add(randomizeThemeInput);
 
-        updateButton = Button("Check for updates", 24, 500, 180, 34, "Secondary");
+        updateButton = Button("Check for updates", 24, 606, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
         UpdateLaunchModeUi();
@@ -570,8 +600,11 @@ internal sealed class MainForm : Form
             SetY(themeLabel, 344);
             SetY(themeInput, 372);
             SetY(muteMusicInput, 420);
-            SetY(randomizeThemeInput, 454);
-            SetY(updateButton, 500);
+            SetY(stopMusicWhenLoadedInput, 454);
+            SetY(musicVolumeLabel, 488);
+            SetY(musicVolumeInput, 512);
+            SetY(randomizeThemeInput, 560);
+            SetY(updateButton, 606);
         }
         else
         {
@@ -581,8 +614,11 @@ internal sealed class MainForm : Form
             SetY(themeLabel, 344);
             SetY(themeInput, 372);
             SetY(muteMusicInput, 420);
-            SetY(randomizeThemeInput, 454);
-            SetY(updateButton, 500);
+            SetY(stopMusicWhenLoadedInput, 454);
+            SetY(musicVolumeLabel, 488);
+            SetY(musicVolumeInput, 512);
+            SetY(randomizeThemeInput, 560);
+            SetY(updateButton, 606);
         }
     }
 
@@ -1481,6 +1517,7 @@ internal sealed class MainForm : Form
         loadingOverlay.BringToFront();
         loadingOverlay.Focus();
         loadingOverlay.Refresh();
+        if (settings.StopMusicWhenAllLoaded) ApplyThemeMusic(settings.Theme);
     }
 
     private void UpdateLoadingOverlay(string detail)
@@ -1493,6 +1530,7 @@ internal sealed class MainForm : Form
     private void HideLoadingOverlay()
     {
         loadingOverlay.Visible = false;
+        if (settings.StopMusicWhenAllLoaded) themeMusic.Stop();
     }
 
     private async Task ShowNewsOverlayAsync()
@@ -1848,6 +1886,8 @@ internal sealed class MainForm : Form
         settings.DelaySeconds = (int)delayInput.Value;
         settings.Theme = themeInput?.SelectedItem?.ToString() ?? settings.Theme;
         settings.MusicMuted = muteMusicInput?.Checked ?? settings.MusicMuted;
+        settings.StopMusicWhenAllLoaded = stopMusicWhenLoadedInput?.Checked ?? settings.StopMusicWhenAllLoaded;
+        settings.MusicVolume = musicVolumeInput?.Value ?? settings.MusicVolume;
         settings.RandomizeThemeAtLaunch = randomizeThemeInput?.Checked ?? settings.RandomizeThemeAtLaunch;
         SaveSettings(settings);
     }
@@ -2109,6 +2149,16 @@ internal sealed class MainForm : Form
             return;
         }
 
+        if (!ShouldPlayThemeMusic())
+        {
+            themeMusic.Stop();
+            currentMusicPlaylist.Clear();
+            currentMusicPlaylist.AddRange(playlist);
+            currentMusicFolder = musicFolder;
+            currentMusicIndex = 0;
+            return;
+        }
+
         if (!musicFolder.Equals(currentMusicFolder, StringComparison.OrdinalIgnoreCase) ||
             !playlist.SequenceEqual(currentMusicPlaylist, StringComparer.OrdinalIgnoreCase))
         {
@@ -2121,24 +2171,34 @@ internal sealed class MainForm : Form
             return;
         }
 
-        themeMusic.Volume = 0.45;
+        themeMusic.Volume = MusicVolume();
         themeMusic.Play();
     }
 
     private void PlayCurrentThemeSong()
     {
-        if (settings.MusicMuted || currentMusicPlaylist.Count == 0) return;
+        if (!ShouldPlayThemeMusic() || currentMusicPlaylist.Count == 0) return;
         currentMusicIndex = Math.Clamp(currentMusicIndex, 0, currentMusicPlaylist.Count - 1);
         themeMusic.Open(new Uri(currentMusicPlaylist[currentMusicIndex], UriKind.Absolute));
-        themeMusic.Volume = 0.45;
+        themeMusic.Volume = MusicVolume();
         themeMusic.Play();
     }
 
     private void PlayNextThemeSong()
     {
-        if (settings.MusicMuted || currentMusicPlaylist.Count == 0) return;
+        if (!ShouldPlayThemeMusic() || currentMusicPlaylist.Count == 0) return;
         currentMusicIndex = (currentMusicIndex + 1) % currentMusicPlaylist.Count;
         PlayCurrentThemeSong();
+    }
+
+    private bool ShouldPlayThemeMusic()
+    {
+        return !settings.MusicMuted && (!settings.StopMusicWhenAllLoaded || loadingOverlay is { Visible: true });
+    }
+
+    private double MusicVolume()
+    {
+        return Math.Clamp(settings.MusicVolume, 0, 100) / 100d;
     }
 
     private static Image? LoadUnlockedImage(string path)
