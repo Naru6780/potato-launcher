@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Net.Http;
 using System.Runtime.InteropServices;
@@ -62,7 +61,7 @@ internal sealed class AppSettings
 
 internal sealed record ThemePalette(Color Back1, Color Back2, Color Card, Color Border, Color Text, Color Muted, Color Primary, Color Secondary, Color Danger, Color ListBack);
 internal readonly record struct LauncherWindow(int ProcessId, IntPtr Handle);
-internal readonly record struct GameClientWindow(int ProcessId, IntPtr Handle);
+internal readonly record struct GameClientWindow(int ProcessId, IntPtr Handle, string Title);
 internal readonly record struct LaunchCommand(string FileName, string Arguments, string WorkingDirectory);
 internal readonly record struct BatchLaunchInfo(string AccountKey, string RoamingPath);
 internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
@@ -1255,12 +1254,12 @@ internal sealed class MainForm : Form
             UpdateLoadingOverlay(waitMessage);
 
             await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, account.Name, token);
-            await WaitForGameClientAtCharacterSelectAsync(gameClientsBefore, account.Name, token);
+            await WaitForGameClientCharacterTitleAsync(gameClientsBefore, account.Name, token);
             if (!quiet)
             {
-                status.Text = $"{account.Name} reached character selection.";
+                status.Text = $"{account.Name} reached the character window title.";
             }
-            UpdateLoadingOverlay($"{account.Name} reached character selection.");
+            UpdateLoadingOverlay($"{account.Name} reached the character window title.");
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1486,10 +1485,11 @@ internal sealed class MainForm : Form
 
     private static HashSet<int> GetLauncherProcessIds() => GetLauncherWindows().Select(window => window.ProcessId).ToHashSet();
 
-    private async Task WaitForGameClientAtCharacterSelectAsync(HashSet<int> existingProcessIds, string accountName, CancellationToken token)
+    private async Task WaitForGameClientCharacterTitleAsync(HashSet<int> existingProcessIds, string accountName, CancellationToken token)
     {
         var deadline = DateTime.UtcNow.AddMinutes(10);
-        var stableCharacterSelectHits = 0;
+        var stableCharacterTitleHits = 0;
+        string? stableCharacterTitle = null;
         var sawGameConnection = false;
         while (DateTime.UtcNow < deadline)
         {
@@ -1509,34 +1509,28 @@ internal sealed class MainForm : Form
                 sawGameConnection = true;
             }
 
-            if (client.Value.Handle == IntPtr.Zero || !IsWindowVisible(client.Value.Handle))
+            var title = client.Value.Title.Trim();
+            if (IsCharacterTitle(title))
             {
-                stableCharacterSelectHits = 0;
-                status.Text = sawGameConnection
-                    ? $"Waiting for {accountName}'s character selection window..."
-                    : $"Waiting for {accountName}'s game client to connect...";
+                stableCharacterTitleHits = title.Equals(stableCharacterTitle, StringComparison.Ordinal)
+                    ? stableCharacterTitleHits + 1
+                    : 1;
+                stableCharacterTitle = title;
+                status.Text = $"Detected {title} ({stableCharacterTitleHits}/3).";
                 UpdateLoadingOverlay(status.Text);
-                await Task.Delay(700, token);
-                continue;
-            }
-
-            if (IsCharacterSelectionVisible(client.Value.Handle))
-            {
-                stableCharacterSelectHits++;
-                status.Text = $"Detected {accountName}'s character selection ({stableCharacterSelectHits}/3).";
-                UpdateLoadingOverlay(status.Text);
-                if (stableCharacterSelectHits >= 3)
+                if (stableCharacterTitleHits >= 3)
                 {
-                    status.Text = $"{accountName}'s character selection is ready.";
+                    status.Text = $"{title} is ready.";
                     UpdateLoadingOverlay(status.Text);
                     return;
                 }
             }
             else
             {
-                stableCharacterSelectHits = 0;
+                stableCharacterTitleHits = 0;
+                stableCharacterTitle = null;
                 status.Text = sawGameConnection
-                    ? $"Waiting for {accountName} to reach character selection..."
+                    ? $"Waiting for {accountName}'s character title..."
                     : $"Waiting for {accountName}'s data center connection...";
                 UpdateLoadingOverlay(status.Text);
             }
@@ -1544,7 +1538,7 @@ internal sealed class MainForm : Form
             await Task.Delay(700, token);
         }
 
-        throw new TimeoutException($"Timed out waiting for {accountName}'s FFXIV client to reach character selection.");
+        throw new TimeoutException($"Timed out waiting for {accountName}'s FFXIV window title to switch to Character@World.");
     }
 
     private static HashSet<int> GetGameClientProcessIds()
@@ -1577,11 +1571,13 @@ internal sealed class MainForm : Form
                 try
                 {
                     if (existingProcessIds.Contains(process.Id)) continue;
+                    process.Refresh();
                     var handle = process.MainWindowHandle;
-                    if (handle == IntPtr.Zero) return new GameClientWindow(process.Id, handle);
+                    var title = process.MainWindowTitle ?? "";
+                    if (handle == IntPtr.Zero) return new GameClientWindow(process.Id, handle, title);
                     if (IsWindowVisible(handle) && GetWindowRect(handle, out var rect) && rect.Width > 320 && rect.Height > 240)
                     {
-                        return new GameClientWindow(process.Id, handle);
+                        return new GameClientWindow(process.Id, handle, title);
                     }
                 }
                 catch { }
@@ -1594,74 +1590,11 @@ internal sealed class MainForm : Form
         return null;
     }
 
-    private static bool IsCharacterSelectionVisible(IntPtr windowHandle)
+    private static bool IsCharacterTitle(string title)
     {
-        using var image = CaptureWindow(windowHandle);
-        return image is not null && LooksLikeCharacterSelection(image);
-    }
-
-    private static Bitmap? CaptureWindow(IntPtr windowHandle)
-    {
-        if (windowHandle == IntPtr.Zero) return null;
-        if (!GetWindowRect(windowHandle, out var rect)) return null;
-        if (rect.Width < 640 || rect.Height < 360) return null;
-
-        try
-        {
-            var bitmap = new Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb);
-            using var graphics = Graphics.FromImage(bitmap);
-            graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, bitmap.Size, CopyPixelOperation.SourceCopy);
-            return bitmap;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static bool LooksLikeCharacterSelection(Bitmap image)
-    {
-        var titleRatio = UiGlowRatio(image, RelativeRect(image, 0.34, 0.05, 0.30, 0.12));
-        var topRightRatio = UiGlowRatio(image, RelativeRect(image, 0.62, 0.08, 0.36, 0.14));
-        var leftPanelRatio = UiGlowRatio(image, RelativeRect(image, 0.02, 0.12, 0.28, 0.62));
-        var bottomNameRatio = UiGlowRatio(image, RelativeRect(image, 0.40, 0.78, 0.24, 0.14));
-
-        return titleRatio >= 0.010 &&
-            topRightRatio >= 0.012 &&
-            (leftPanelRatio >= 0.006 || bottomNameRatio >= 0.004);
-    }
-
-    private static Rectangle RelativeRect(Bitmap image, double x, double y, double width, double height)
-    {
-        var left = Math.Clamp((int)Math.Round(image.Width * x), 0, image.Width - 1);
-        var top = Math.Clamp((int)Math.Round(image.Height * y), 0, image.Height - 1);
-        var right = Math.Clamp((int)Math.Round(image.Width * (x + width)), left + 1, image.Width);
-        var bottom = Math.Clamp((int)Math.Round(image.Height * (y + height)), top + 1, image.Height);
-        return Rectangle.FromLTRB(left, top, right, bottom);
-    }
-
-    private static double UiGlowRatio(Bitmap image, Rectangle area)
-    {
-        var matches = 0;
-        var samples = 0;
-        for (var y = area.Top; y < area.Bottom; y += 2)
-        {
-            for (var x = area.Left; x < area.Right; x += 2)
-            {
-                samples++;
-                if (IsCharacterSelectUiPixel(image.GetPixel(x, y))) matches++;
-            }
-        }
-        return samples == 0 ? 0 : matches / (double)samples;
-    }
-
-    private static bool IsCharacterSelectUiPixel(Color color)
-    {
-        var brightness = color.R + color.G + color.B;
-        return color.B >= 150 &&
-            color.G >= 110 &&
-            brightness >= 390 &&
-            color.B >= color.R + 20;
+        return title.Contains('@', StringComparison.Ordinal) &&
+            !title.Equals("FINAL FANTASY XIV", StringComparison.OrdinalIgnoreCase) &&
+            title.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
     }
 
     private static bool HasEstablishedTcpConnection(int processId)

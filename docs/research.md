@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.20`
+**Current version:** `1.0.21`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 
@@ -40,13 +40,13 @@ Steam service account state is carried through the account key and should remain
 
 ## Readiness Detection
 
-`v1.0.20` waits for the newly launched game client process:
+`v1.0.21` waits for the newly launched game client process:
 
 - process name `ffxiv` or `ffxiv_dx11`
 - process did not exist before the launch request
-- visible game window matches character-selection UI markers for multiple consecutive checks
+- window title switches from `FINAL FANTASY XIV` to a stable `Character@World` title for multiple consecutive checks
 
-Known caveat: visual detection depends on the game window being visible and using a UI layout/language close enough to the current character-selection heuristic. This is more precise than generic TCP connection detection for the launcher queue, but it still does not prove the character is fully in-world.
+Known caveat: title detection depends on the game client updating its Windows title. This is more precise than generic TCP connection detection for the launcher queue and avoids screenshot/OCR fragility.
 
 Possible future improvement: add resource-stability detection for the specific new process by watching working set/private memory/GPU counters settle after the first heavy load spike.
 

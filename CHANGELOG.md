@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.21 - 2026-05-23
+
+- Replaced character-selection screenshot detection with FFXIV window-title readiness.
+- Advanced band queues after the new game window title stabilizes as `Character@World`.
+
 ## 1.0.20 - 2026-05-23
 
 - Changed band queue readiness to wait for the FFXIV character-selection screen.
