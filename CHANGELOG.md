@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.19 - 2026-05-23
+
+- Removed unused legacy GIF/loading splash helper classes.
+- Kept the current launcher feature set intact while trimming dead internal code.
+
 ## 1.0.18 - 2026-05-23
 
 - Removed arbitrary in-game wait and old launch cooldown countdown.
