@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Net.Http;
 using System.Runtime.InteropServices;
@@ -1254,12 +1255,12 @@ internal sealed class MainForm : Form
             UpdateLoadingOverlay(waitMessage);
 
             await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, account.Name, token);
-            await WaitForGameClientConnectedAsync(gameClientsBefore, account.Name, token);
+            await WaitForGameClientAtCharacterSelectAsync(gameClientsBefore, account.Name, token);
             if (!quiet)
             {
-                status.Text = $"{account.Name} connected.";
+                status.Text = $"{account.Name} reached character selection.";
             }
-            UpdateLoadingOverlay($"{account.Name} connected.");
+            UpdateLoadingOverlay($"{account.Name} reached character selection.");
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1485,14 +1486,15 @@ internal sealed class MainForm : Form
 
     private static HashSet<int> GetLauncherProcessIds() => GetLauncherWindows().Select(window => window.ProcessId).ToHashSet();
 
-    private async Task WaitForGameClientConnectedAsync(HashSet<int> existingProcessIds, string accountName, CancellationToken token)
+    private async Task WaitForGameClientAtCharacterSelectAsync(HashSet<int> existingProcessIds, string accountName, CancellationToken token)
     {
         var deadline = DateTime.UtcNow.AddMinutes(10);
-        GameClientWindow? client = null;
+        var stableCharacterSelectHits = 0;
+        var sawGameConnection = false;
         while (DateTime.UtcNow < deadline)
         {
             token.ThrowIfCancellationRequested();
-            client ??= GetFreshGameClient(existingProcessIds);
+            var client = GetFreshGameClient(existingProcessIds);
             if (client is null)
             {
                 status.Text = $"Waiting for {accountName}'s game client to appear...";
@@ -1504,17 +1506,45 @@ internal sealed class MainForm : Form
             var processId = client.Value.ProcessId;
             if (HasEstablishedTcpConnection(processId))
             {
-                status.Text = $"{accountName}'s game client connected.";
-                UpdateLoadingOverlay(status.Text);
-                return;
+                sawGameConnection = true;
             }
 
-            status.Text = $"Waiting for {accountName}'s game client to connect...";
-            UpdateLoadingOverlay(status.Text);
-            await Task.Delay(500, token);
+            if (client.Value.Handle == IntPtr.Zero || !IsWindowVisible(client.Value.Handle))
+            {
+                stableCharacterSelectHits = 0;
+                status.Text = sawGameConnection
+                    ? $"Waiting for {accountName}'s character selection window..."
+                    : $"Waiting for {accountName}'s game client to connect...";
+                UpdateLoadingOverlay(status.Text);
+                await Task.Delay(700, token);
+                continue;
+            }
+
+            if (IsCharacterSelectionVisible(client.Value.Handle))
+            {
+                stableCharacterSelectHits++;
+                status.Text = $"Detected {accountName}'s character selection ({stableCharacterSelectHits}/3).";
+                UpdateLoadingOverlay(status.Text);
+                if (stableCharacterSelectHits >= 3)
+                {
+                    status.Text = $"{accountName}'s character selection is ready.";
+                    UpdateLoadingOverlay(status.Text);
+                    return;
+                }
+            }
+            else
+            {
+                stableCharacterSelectHits = 0;
+                status.Text = sawGameConnection
+                    ? $"Waiting for {accountName} to reach character selection..."
+                    : $"Waiting for {accountName}'s data center connection...";
+                UpdateLoadingOverlay(status.Text);
+            }
+
+            await Task.Delay(700, token);
         }
 
-        throw new TimeoutException($"Timed out waiting for {accountName}'s FFXIV client to connect.");
+        throw new TimeoutException($"Timed out waiting for {accountName}'s FFXIV client to reach character selection.");
     }
 
     private static HashSet<int> GetGameClientProcessIds()
@@ -1562,6 +1592,76 @@ internal sealed class MainForm : Form
             }
         }
         return null;
+    }
+
+    private static bool IsCharacterSelectionVisible(IntPtr windowHandle)
+    {
+        using var image = CaptureWindow(windowHandle);
+        return image is not null && LooksLikeCharacterSelection(image);
+    }
+
+    private static Bitmap? CaptureWindow(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero) return null;
+        if (!GetWindowRect(windowHandle, out var rect)) return null;
+        if (rect.Width < 640 || rect.Height < 360) return null;
+
+        try
+        {
+            var bitmap = new Bitmap(rect.Width, rect.Height, PixelFormat.Format24bppRgb);
+            using var graphics = Graphics.FromImage(bitmap);
+            graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, bitmap.Size, CopyPixelOperation.SourceCopy);
+            return bitmap;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool LooksLikeCharacterSelection(Bitmap image)
+    {
+        var titleRatio = UiGlowRatio(image, RelativeRect(image, 0.34, 0.05, 0.30, 0.12));
+        var topRightRatio = UiGlowRatio(image, RelativeRect(image, 0.62, 0.08, 0.36, 0.14));
+        var leftPanelRatio = UiGlowRatio(image, RelativeRect(image, 0.02, 0.12, 0.28, 0.62));
+        var bottomNameRatio = UiGlowRatio(image, RelativeRect(image, 0.40, 0.78, 0.24, 0.14));
+
+        return titleRatio >= 0.010 &&
+            topRightRatio >= 0.012 &&
+            (leftPanelRatio >= 0.006 || bottomNameRatio >= 0.004);
+    }
+
+    private static Rectangle RelativeRect(Bitmap image, double x, double y, double width, double height)
+    {
+        var left = Math.Clamp((int)Math.Round(image.Width * x), 0, image.Width - 1);
+        var top = Math.Clamp((int)Math.Round(image.Height * y), 0, image.Height - 1);
+        var right = Math.Clamp((int)Math.Round(image.Width * (x + width)), left + 1, image.Width);
+        var bottom = Math.Clamp((int)Math.Round(image.Height * (y + height)), top + 1, image.Height);
+        return Rectangle.FromLTRB(left, top, right, bottom);
+    }
+
+    private static double UiGlowRatio(Bitmap image, Rectangle area)
+    {
+        var matches = 0;
+        var samples = 0;
+        for (var y = area.Top; y < area.Bottom; y += 2)
+        {
+            for (var x = area.Left; x < area.Right; x += 2)
+            {
+                samples++;
+                if (IsCharacterSelectUiPixel(image.GetPixel(x, y))) matches++;
+            }
+        }
+        return samples == 0 ? 0 : matches / (double)samples;
+    }
+
+    private static bool IsCharacterSelectUiPixel(Color color)
+    {
+        var brightness = color.R + color.G + color.B;
+        return color.B >= 150 &&
+            color.G >= 110 &&
+            brightness >= 390 &&
+            color.B >= color.R + 20;
     }
 
     private static bool HasEstablishedTcpConnection(int processId)

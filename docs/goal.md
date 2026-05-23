@@ -1,6 +1,6 @@
 # Potato Launcher Goal
 
-**Current version:** `1.0.19`
+**Current version:** `1.0.20`
 
 Potato Launcher is a cute, portable Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
 
@@ -28,7 +28,7 @@ Bands are named account groups.
 
 The loading screen must stay inside the main app window and include a Cancel button.
 
-The app currently waits for the newly launched `ffxiv` / `ffxiv_dx11` process to have an established TCP connection before it advances to the next account. This is an external readiness signal, not an exact in-game-ready signal.
+The app currently waits for the newly launched `ffxiv` / `ffxiv_dx11` window to reach character selection before it advances to the next account. This is a non-invasive visual readiness signal, not a game-memory or plugin signal.
 
 Future readiness improvements should prefer real client state over arbitrary cooldowns.
 

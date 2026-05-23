@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.20 - 2026-05-23
+
+- Changed band queue readiness to wait for the FFXIV character-selection screen.
+- Kept TCP connection checks as supporting status while the visual readiness gate waits for character selection.
+
 ## 1.0.19 - 2026-05-23
 
 - Removed unused legacy GIF/loading splash helper classes.
