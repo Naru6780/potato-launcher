@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.29`
+**Current version:** `1.0.30`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 
@@ -74,7 +74,7 @@ Account portraits are cached in:
 Potato Launcher Assets\Account Icons
 ```
 
-The cache is keyed by the launcher account key or BAT identity. Portraits are refreshed directly from saved Lodestone profile IDs when available. If no profile ID is known, refresh uses exact Lodestone search matches with a known world from prior profile/title mappings. The app caches both the face portrait (`fc0`) for roster tiles and the full-body portrait (`fl0`) for richer character-card UI. The app does not use placeholder/fallback icons in roster mode; missing icons stay visibly unmapped until the account has been launched once, matched against a known world, or assigned a profile URL from the right-click menu.
+The cache is keyed by the launcher account key or BAT identity. Portraits are refreshed directly from saved Lodestone profile IDs when available. If no profile ID is known, refresh uses exact Lodestone search matches with a known world and known surnames from prior profile/title mappings. The app caches both the face portrait (`fc0`) for roster tiles and the full-body portrait (`fl0`) for richer character-card UI. The app does not use placeholder/fallback icons in roster mode; missing icons stay visibly unmapped until the account has been launched once, inferred from known world/surname data, or assigned a profile URL from the right-click menu.
 
 ## News and Updates
 

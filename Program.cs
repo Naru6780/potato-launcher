@@ -1299,19 +1299,22 @@ internal sealed class MainForm : Form
         return name;
     }
 
-    private static IEnumerable<string> BuildLodestoneNameCandidates(Account account)
+    private IEnumerable<string> BuildLodestoneNameCandidates(Account account)
     {
         var displayName = AccountDisplayName(account);
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrWhiteSpace(displayName))
         {
+            emitted.Add(displayName);
             yield return displayName;
         }
 
         if (displayName.Contains(' ', StringComparison.Ordinal)) yield break;
 
-        foreach (var surname in GuessLodestoneSurnames(account))
+        foreach (var surname in GuessLodestoneSurnames(account).Concat(KnownLodestoneSurnames()))
         {
-            yield return $"{displayName} {surname}";
+            var candidate = $"{displayName} {surname}";
+            if (emitted.Add(candidate)) yield return candidate;
         }
     }
 
@@ -1322,6 +1325,17 @@ internal sealed class MainForm : Form
         if (source.Contains("mangler", StringComparison.Ordinal)) yield return "Mangler";
         if (source.Contains("garrison", StringComparison.Ordinal)) yield return "Garrison";
         if (source.Contains("skye", StringComparison.Ordinal)) yield return "Skye";
+    }
+
+    private IEnumerable<string> KnownLodestoneSurnames()
+    {
+        return settings.AccountIcons.Values
+            .Select(icon => icon.CharacterName)
+            .Where(name => !string.IsNullOrWhiteSpace(name) && name.Contains(' ', StringComparison.Ordinal))
+            .Select(name => name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Last())
+            .Where(surname => !string.IsNullOrWhiteSpace(surname))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private void RememberAccountCharacterTitle(Account account, string title)
@@ -1496,7 +1510,7 @@ internal sealed class MainForm : Form
 
         try
         {
-            var result = await FindLodestoneIconAsync(account, profile, KnownLodestoneWorlds());
+            var result = await FindLodestoneIconAsync(account, profile, KnownLodestoneWorlds(), BuildLodestoneNameCandidates(account));
             Directory.CreateDirectory(AccountIconsFolder());
             profile.LodestoneId = result.LodestoneId;
             profile.CharacterName = result.CharacterName;
@@ -1541,7 +1555,7 @@ internal sealed class MainForm : Form
             .ToList();
     }
 
-    private static async Task<LodestoneIconResult> FindLodestoneIconAsync(Account account, AccountIconProfile profile, IEnumerable<string> knownWorlds)
+    private static async Task<LodestoneIconResult> FindLodestoneIconAsync(Account account, AccountIconProfile profile, IEnumerable<string> knownWorlds, IEnumerable<string> candidateNames)
     {
         if (!string.IsNullOrWhiteSpace(profile.LodestoneId))
         {
@@ -1573,7 +1587,7 @@ internal sealed class MainForm : Form
             }
         }
 
-        foreach (var candidateName in BuildLodestoneNameCandidates(account))
+        foreach (var candidateName in candidateNames)
         {
             foreach (var candidateWorld in knownWorlds.Append(profile.World).Where(world => !string.IsNullOrWhiteSpace(world)).Distinct(StringComparer.OrdinalIgnoreCase))
             {

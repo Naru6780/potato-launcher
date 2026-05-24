@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.30 - 2026-05-24
+
+- Improved automatic Lodestone profile discovery by reusing known surnames and worlds from accounts that already have profile data.
+- Reduced the need to paste profile URLs manually after one matching profile has established the account group's world and surname pattern.
+
 ## 1.0.29 - 2026-05-24
 
 - Added right-click account menu actions to open, refresh, or set a Lodestone character profile URL.
