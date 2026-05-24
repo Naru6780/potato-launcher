@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.28 - 2026-05-24
+
+- Made the main Potato Launcher window resizable with a sensible minimum size.
+- Added responsive layout behavior for account roster, band manager, status pill, settings drawer, loading overlay, launch picker, and news panel.
+
 ## 1.0.27 - 2026-05-24
 
 - Replaced the oversized Windows icon list with a compact custom character roster grid.

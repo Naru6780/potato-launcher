@@ -1,10 +1,12 @@
 # Potato Launcher Goal
 
-**Current version:** `1.0.27`
+**Current version:** `1.0.28`
 
 Potato Launcher is a cute, portable Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
 
 The user-facing goal is simple: choose accounts or a named band, click launch, and let Potato Launcher sequence clients without forcing the user to manually babysit every XIVLauncher window.
+
+The main window should be resizable so users with large rosters can make the account and band panels taller or wider.
 
 ## Player Experience
 

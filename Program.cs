@@ -208,8 +208,13 @@ internal sealed class MainForm : Form
     private Label status = null!;
     private Button launchBandButton = null!;
     private Button cancelButton = null!;
+    private Button launchAccountButton = null!;
+    private Button newBandButton = null!;
+    private Button deleteBandButton = null!;
     private CuteBackgroundPanel loadingOverlay = null!;
     private CuteBackgroundPanel launchChoiceOverlay = null!;
+    private RoundedPanel loadingCard = null!;
+    private RoundedPanel launchChoiceCard = null!;
     private PictureBox loadingPicture = null!;
     private Label loadingTitle = null!;
     private Label loadingStatus = null!;
@@ -258,9 +263,8 @@ internal sealed class MainForm : Form
     {
         Text = "Potato Launcher";
         StartPosition = FormStartPosition.CenterScreen;
-        FormBorderStyle = FormBorderStyle.FixedSingle;
-        MaximizeBox = false;
         ClientSize = new Size(990, 700);
+        MinimumSize = new Size(860, 620);
         Font = new Font("Segoe UI", 10F);
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
@@ -287,7 +291,11 @@ internal sealed class MainForm : Form
         mascotOverlay = CreateMascotOverlay();
         Shown += (_, _) => UpdateMascotOverlay();
         Move += (_, _) => UpdateMascotOverlay();
-        Resize += (_, _) => UpdateMascotOverlay();
+        Resize += (_, _) =>
+        {
+            ApplyResponsiveLayout();
+            UpdateMascotOverlay();
+        };
         Activated += (_, _) => UpdateMascotOverlay();
         FormClosed += (_, _) =>
         {
@@ -307,6 +315,7 @@ internal sealed class MainForm : Form
         BuildLoadingOverlay();
         BuildLaunchChoiceOverlay();
         BuildNewsOverlay();
+        ApplyResponsiveLayout();
         settingsDrawer.BringToFront();
         ConfigureSettingsDrawerAnimation();
     }
@@ -518,9 +527,9 @@ internal sealed class MainForm : Form
         accountRosterGrid = new AccountRosterGrid { Bounds = new Rectangle(18, 58, 294, 320), Visible = false };
         accountRosterGrid.AccountActivated += (_, _) => LaunchSelectedAccount();
         accountCard.Controls.Add(accountRosterGrid);
-        var launchAccount = Button("Launch selected", 18, 394, 150, 36, "Primary");
-        launchAccount.Click += (_, _) => LaunchSelectedAccount();
-        accountCard.Controls.Add(launchAccount);
+        launchAccountButton = Button("Launch selected", 18, 394, 150, 36, "Primary");
+        launchAccountButton.Click += (_, _) => LaunchSelectedAccount();
+        accountCard.Controls.Add(launchAccountButton);
 
         bandCard = Card(392, 118, 560, 450);
         bandCard.Controls.Add(Header("Band Manager", 18, 12, 180, 32));
@@ -535,16 +544,16 @@ internal sealed class MainForm : Form
         memberList.ItemCheck += (_, _) => { if (!loadingBand) BeginInvoke(() => SaveCurrentBand()); };
         bandCard.Controls.Add(memberList);
 
-        var newBand = Button("New band", 18, 384, 104, 36, "Secondary");
-        newBand.Click += (_, _) => AddBand();
-        var deleteBand = Button("Delete", 132, 384, 76, 36, "Danger");
-        deleteBand.Click += (_, _) => DeleteBand();
+        newBandButton = Button("New band", 18, 384, 104, 36, "Secondary");
+        newBandButton.Click += (_, _) => AddBand();
+        deleteBandButton = Button("Delete", 132, 384, 76, 36, "Danger");
+        deleteBandButton.Click += (_, _) => DeleteBand();
         launchBandButton = Button("Launch band", 218, 384, 136, 36, "Primary");
         launchBandButton.Click += async (_, _) => await LaunchSelectedBandAsync();
         cancelButton = Button("Cancel", 366, 384, 74, 36, "Danger");
         cancelButton.Visible = false;
         cancelButton.Click += (_, _) => queueCancel?.Cancel();
-        bandCard.Controls.AddRange([newBand, deleteBand, launchBandButton, cancelButton]);
+        bandCard.Controls.AddRange([newBandButton, deleteBandButton, launchBandButton, cancelButton]);
         tab.Controls.Add(accountCard);
         tab.Controls.Add(bandCard);
     }
@@ -553,13 +562,86 @@ internal sealed class MainForm : Form
     {
         if (accountCard is null || bandCard is null || statusPill is null) return;
 
-        accountCard.Bounds = new Rectangle(42, 118, 330, 450);
-        bandCard.Bounds = new Rectangle(392, 118, 560, 450);
-        statusPill.Bounds = new Rectangle(310, 616, 370, 30);
+        var margin = Math.Max(24, ClientSize.Width / 24);
+        var top = 118;
+        var bottomReserved = 76;
+        var gap = 20;
+        var contentWidth = ClientSize.Width - margin * 2;
+        var contentHeight = Math.Max(390, ClientSize.Height - top - bottomReserved);
+        var accountWidth = Math.Clamp((int)(contentWidth * 0.34), 300, 390);
+        var bandWidth = Math.Max(420, contentWidth - accountWidth - gap);
+
+        accountCard.Bounds = new Rectangle(margin, top, accountWidth, contentHeight);
+        bandCard.Bounds = new Rectangle(margin + accountWidth + gap, top, bandWidth, contentHeight);
+
+        accountList.Bounds = new Rectangle(18, 58, accountCard.Width - 36, accountCard.Height - 130);
+        accountRosterGrid.Bounds = accountList.Bounds;
+        launchAccountButton.Location = new Point(18, accountCard.Height - 56);
+
+        var bandListWidth = Math.Clamp((int)(bandCard.Width * 0.34), 170, 230);
+        var editorLeft = bandListWidth + 38;
+        var editorWidth = Math.Max(220, bandCard.Width - editorLeft - 24);
+        var listHeight = Math.Max(220, bandCard.Height - 144);
+        bandList.Bounds = new Rectangle(18, 58, bandListWidth, listHeight);
+        bandName.Bounds = new Rectangle(editorLeft, 58, Math.Min(250, editorWidth), 29);
+        memberList.Bounds = new Rectangle(editorLeft, 98, editorWidth, Math.Max(200, bandCard.Height - 184));
+        newBandButton.Location = new Point(18, bandCard.Height - 66);
+        deleteBandButton.Location = new Point(132, bandCard.Height - 66);
+        launchBandButton.Location = new Point(editorLeft, bandCard.Height - 66);
+        cancelButton.Location = new Point(editorLeft + 148, bandCard.Height - 66);
+
+        statusPill.Bounds = new Rectangle(Math.Max(margin, (ClientSize.Width - 370) / 2), Math.Max(top + contentHeight + 24, ClientSize.Height - 56), 370, 30);
 
         accountCard.Invalidate();
         bandCard.Invalidate();
         statusPill.Invalidate();
+    }
+
+    private void ApplyResponsiveLayout()
+    {
+        if (background is null) return;
+
+        ApplyLauncherLayout();
+
+        if (settingsDrawer is not null)
+        {
+            settingsDrawer.Height = ClientSize.Height;
+            settingsDrawer.Left = settingsDrawerOpen ? ClientSize.Width - settingsDrawer.Width : ClientSize.Width + 4;
+            settingsDrawer.Invalidate();
+        }
+
+        if (loadingOverlay is not null)
+        {
+            loadingOverlay.Bounds = ClientRectangle;
+        }
+        if (loadingCard is not null)
+        {
+            loadingCard.Location = new Point(Math.Max(24, (ClientSize.Width - loadingCard.Width) / 2), Math.Max(44, (ClientSize.Height - loadingCard.Height) / 2));
+            loadingCard.Invalidate();
+        }
+
+        if (launchChoiceOverlay is not null)
+        {
+            launchChoiceOverlay.Bounds = ClientRectangle;
+        }
+        if (launchChoiceCard is not null)
+        {
+            launchChoiceCard.Location = new Point(Math.Max(24, (ClientSize.Width - launchChoiceCard.Width) / 2), Math.Max(54, (ClientSize.Height - launchChoiceCard.Height) / 2));
+            launchChoiceCard.Invalidate();
+        }
+
+        if (newsOverlay is not null)
+        {
+            var width = Math.Min(800, Math.Max(640, ClientSize.Width - 96));
+            var height = Math.Min(590, Math.Max(500, ClientSize.Height - 92));
+            newsOverlay.Bounds = new Rectangle(Math.Max(24, (ClientSize.Width - width) / 2), Math.Max(34, (ClientSize.Height - height) / 2), width, height);
+            newsCloseButton.Location = new Point(newsOverlay.Width - 56, 20);
+            newsBannerPicture.Bounds = new Rectangle(28, 68, newsOverlay.Width - 56, Math.Min(250, Math.Max(190, newsOverlay.Height - 340)));
+            newsBannerTitle.Bounds = new Rectangle(28, newsBannerPicture.Bottom + 6, newsOverlay.Width - 56, 24);
+            newsDots.Bounds = new Rectangle(Math.Max(28, (newsOverlay.Width - 200) / 2), newsBannerTitle.Bottom + 4, 200, 28);
+            newsListPanel.Bounds = new Rectangle(28, newsDots.Bottom + 10, newsOverlay.Width - 56, Math.Max(100, newsOverlay.Height - newsDots.Bottom - 30));
+            newsOverlay.Invalidate();
+        }
     }
 
     private void BuildSettingsDrawer()
@@ -724,7 +806,7 @@ internal sealed class MainForm : Form
     private void BuildLoadingOverlay()
     {
         loadingOverlay = new CuteBackgroundPanel { Bounds = new Rectangle(0, 0, 990, 700), Visible = false };
-        var card = new RoundedPanel { Bounds = new Rectangle(120, 92, 750, 500), Radius = 28 };
+        loadingCard = new RoundedPanel { Bounds = new Rectangle(120, 92, 750, 500), Radius = 28 };
 
         loadingPicture = new PictureBox
         {
@@ -751,8 +833,8 @@ internal sealed class MainForm : Form
         loadingCancel = Button("Cancel", 298, 410, 154, 42, "Danger");
         loadingCancel.Click += (_, _) => queueCancel?.Cancel();
 
-        card.Controls.AddRange([loadingPicture, loadingTitle, loadingStatus, loadingCancel]);
-        loadingOverlay.Controls.Add(card);
+        loadingCard.Controls.AddRange([loadingPicture, loadingTitle, loadingStatus, loadingCancel]);
+        loadingOverlay.Controls.Add(loadingCard);
         background.Controls.Add(loadingOverlay);
         loadingOverlay.BringToFront();
     }
@@ -817,7 +899,7 @@ internal sealed class MainForm : Form
     private void BuildLaunchChoiceOverlay()
     {
         launchChoiceOverlay = new CuteBackgroundPanel { Bounds = new Rectangle(0, 0, 990, 700), Visible = false };
-        var card = new RoundedPanel { Bounds = new Rectangle(155, 118, 680, 430), Radius = 30 };
+        launchChoiceCard = new RoundedPanel { Bounds = new Rectangle(155, 118, 680, 430), Radius = 30 };
         var title = new Label
         {
             Text = "Choose your launch method",
@@ -850,8 +932,8 @@ internal sealed class MainForm : Form
         instanced.Click += (_, _) => ChooseLaunchMode("Instanced");
         var shared = Button("Shared", 382, 326, 210, 50, "Secondary");
         shared.Click += (_, _) => ChooseLaunchMode("Shared");
-        card.Controls.AddRange([title, subtitle, mascot, instanced, shared]);
-        launchChoiceOverlay.Controls.Add(card);
+        launchChoiceCard.Controls.AddRange([title, subtitle, mascot, instanced, shared]);
+        launchChoiceOverlay.Controls.Add(launchChoiceCard);
         background.Controls.Add(launchChoiceOverlay);
     }
 
@@ -2676,7 +2758,7 @@ internal sealed class MainForm : Form
             videoHost.SendToBack();
             mascotTimer.Stop();
             backgroundVideo.Play();
-            ApplyLauncherLayout();
+            ApplyResponsiveLayout();
             UpdateMascotOverlay();
             return;
         }
@@ -2689,7 +2771,7 @@ internal sealed class MainForm : Form
         themeHasVideo = false;
         themeHasImage = !string.IsNullOrWhiteSpace(image);
         background.BackgroundArt = string.IsNullOrWhiteSpace(image) ? null : LoadUnlockedImage(image);
-        ApplyLauncherLayout();
+        ApplyResponsiveLayout();
         UpdateMascotOverlay();
         settingsButton.BringToFront();
         killGameButton.BringToFront();

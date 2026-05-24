@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.27`
+**Version:** `1.0.28`
 
 Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
@@ -19,6 +19,7 @@ Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 - Built-in FFXIV news panel and emergency `Kill FFXIV` button.
 - Portable settings stored beside the executable.
 - Built-in GitHub release updater.
+- Resizable main window with adaptive account, band, overlay, and drawer layout.
 
 ## Portable install
 
