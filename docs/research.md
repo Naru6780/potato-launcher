@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.37`
+**Current version:** `1.0.38`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 
@@ -89,6 +89,8 @@ Band names are edited by right-clicking a band and choosing `Set name`; the old 
 Account ordering is stored in portable `accountList.json` as `SharedAccountOrder` and `InstancedAccountOrder`, separate from `settings.json`. Dragging in the account list updates that order. Band Manager does not have a separate reorder model; it mirrors account order and saves checked band members in that order. `LastConnectedUtc` stores the timestamp when Potato Launcher observes a successful `Character@World` title, enabling sort-by-last-connected.
 
 The Accounts panel width is a UI setting saved in `settings.json`. The splitter between Accounts and Band Manager clamps the account panel so Band Manager keeps enough room at small window sizes.
+
+The Band Manager `Save` button writes `band.json` beside `settings.json`. Settings `Export bands` opens a save dialog so users can choose where to export a shareable band file.
 
 ## News and Updates
 

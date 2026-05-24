@@ -655,14 +655,14 @@ internal sealed class MainForm : Form
             ShowBandContextMenu(bandList, e.Location);
         };
         bandCard.Controls.Add(bandList);
-        memberList = new CheckedListBox { Bounds = new Rectangle(218, 58, 318, 306), CheckOnClick = true };
+        memberList = new CheckedListBox { Bounds = new Rectangle(218, 58, 318, 306), CheckOnClick = true, MultiColumn = true, ColumnWidth = 220, HorizontalScrollbar = true };
         memberList.ItemCheck += (_, _) => { if (!loadingBand) BeginInvoke(() => SaveCurrentBand()); };
         bandCard.Controls.Add(memberList);
 
         newBandButton = Button("Add Band", 18, 384, 104, 36, "Secondary");
         newBandButton.Click += (_, _) => AddBand();
         saveBandsButton = Button("Save", 132, 384, 76, 36, "Secondary");
-        saveBandsButton.Click += (_, _) => ExportBands();
+        saveBandsButton.Click += (_, _) => SaveBandsToDefault();
         deleteBandButton = Button("Delete", 218, 384, 76, 36, "Danger");
         deleteBandButton.Click += (_, _) => DeleteBand();
         launchBandButton = Button("Launch band", 304, 384, 136, 36, "Primary");
@@ -709,10 +709,11 @@ internal sealed class MainForm : Form
         tab.Controls.Add(accountResizeHandle);
     }
 
-    private void ApplyLauncherLayout()
+    private void ApplyLauncherLayout(bool forceRepaint = false)
     {
         if (accountCard is null || bandCard is null || statusPill is null) return;
 
+        var oldPanelBounds = Rectangle.Union(accountCard.Bounds, bandCard.Bounds);
         var margin = Math.Max(24, ClientSize.Width / 24);
         var top = 118;
         var bottomReserved = 76;
@@ -720,15 +721,19 @@ internal sealed class MainForm : Form
         var contentWidth = ClientSize.Width - margin * 2;
         var contentHeight = Math.Max(390, ClientSize.Height - top - bottomReserved);
         var maxAccountWidth = Math.Max(300, Math.Min(760, contentWidth - gap - 420));
-        var defaultAccountWidth = Math.Clamp((int)(contentWidth * 0.34), 300, Math.Min(390, maxAccountWidth));
+        var defaultAccountWidth = Math.Clamp((int)(contentWidth * 0.26), 330, Math.Min(620, maxAccountWidth));
         var requestedAccountWidth = settings.AccountPanelWidth > 0 ? settings.AccountPanelWidth : defaultAccountWidth;
         var accountWidth = Math.Clamp(requestedAccountWidth, 300, maxAccountWidth);
         var bandWidth = Math.Max(420, contentWidth - accountWidth - gap);
 
-        accountCard.Bounds = new Rectangle(margin, top, accountWidth, contentHeight);
-        bandCard.Bounds = new Rectangle(margin + accountWidth + gap, top, bandWidth, contentHeight);
-        accountResizeHandle.Bounds = new Rectangle(accountCard.Right + 3, top + 8, Math.Max(8, gap - 6), contentHeight - 16);
-        accountResizeHandle.BringToFront();
+        background.SuspendLayout();
+        accountCard.SetBounds(margin, top, accountWidth, contentHeight);
+        bandCard.SetBounds(margin + accountWidth + gap, top, bandWidth, contentHeight);
+        if (accountResizeHandle is not null)
+        {
+            accountResizeHandle.SetBounds(accountCard.Right + 3, top + 8, Math.Max(8, gap - 6), contentHeight - 16);
+            accountResizeHandle.BringToFront();
+        }
 
         accountList.Bounds = new Rectangle(18, 58, accountCard.Width - 36, accountCard.Height - 82);
         accountRosterGrid.Bounds = accountList.Bounds;
@@ -764,6 +769,14 @@ internal sealed class MainForm : Form
         accountCard.Invalidate();
         bandCard.Invalidate();
         statusPill.Invalidate();
+        background.ResumeLayout(false);
+        if (forceRepaint)
+        {
+            var dirty = Rectangle.Union(oldPanelBounds, Rectangle.Union(accountCard.Bounds, bandCard.Bounds));
+            dirty.Inflate(32, 32);
+            background.Invalidate(dirty, true);
+            background.Update();
+        }
     }
 
     private void ResizeAccountPanel(int screenX)
@@ -773,7 +786,7 @@ internal sealed class MainForm : Form
         var contentWidth = ClientSize.Width - margin * 2;
         var maxAccountWidth = Math.Max(300, Math.Min(760, contentWidth - gap - 420));
         settings.AccountPanelWidth = Math.Clamp(accountResizeStartWidth + screenX - accountResizeStartX, 300, maxAccountWidth);
-        ApplyLauncherLayout();
+        ApplyLauncherLayout(forceRepaint: true);
     }
 
     private void ApplyResponsiveLayout()
@@ -863,7 +876,7 @@ internal sealed class MainForm : Form
         importAccountsButton = Button("Import accounts", 190, 336, 154, 30, "Secondary");
         importAccountsButton.Click += (_, _) => ImportAccountList();
         exportBandsButton = Button("Export bands", 24, 374, 154, 30, "Secondary");
-        exportBandsButton.Click += (_, _) => ExportBands();
+        exportBandsButton.Click += (_, _) => ExportBandsAs();
         importBandsButton = Button("Import bands", 190, 374, 154, 30, "Secondary");
         importBandsButton.Click += (_, _) => ImportBands();
         settingsDrawer.Controls.AddRange([exportAccountsButton, importAccountsButton, exportBandsButton, importBandsButton]);
@@ -2135,7 +2148,7 @@ internal sealed class MainForm : Form
         }
     }
 
-    private void ExportBands()
+    private void SaveBandsToDefault()
     {
         SaveCurrentBand();
         var transfer = new BandTransfer
@@ -2147,6 +2160,26 @@ internal sealed class MainForm : Form
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
         status.Text = $"Saved {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")} to {Path.GetFileName(path)}.";
+    }
+
+    private void ExportBandsAs()
+    {
+        SaveCurrentBand();
+        var transfer = new BandTransfer
+        {
+            LaunchMode = NormalizeLaunchMode(settings.LaunchMode),
+            Bands = CurrentBands().Select(CloneBand).ToList()
+        };
+        using var dialog = new SaveFileDialog
+        {
+            Title = "Export bands",
+            Filter = "Potato bands (*.json)|*.json",
+            FileName = "band.json"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
+        status.Text = $"Exported {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")}.";
     }
 
     private void ImportBands()
@@ -4198,7 +4231,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.37 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.38 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -4569,6 +4602,10 @@ internal sealed class AccountRosterGrid : ScrollableControl
             if (bounds.Bottom < 0 || bounds.Top > ClientSize.Height) continue;
             DrawTile(e.Graphics, index, bounds);
         }
+        if (dragging)
+        {
+            DrawInsertionMarker(e.Graphics, DropIndex(dragPoint));
+        }
         if (dragging && dragIndex >= 0 && dragIndex < items.Count)
         {
             DrawTile(e.Graphics, dragIndex, new Rectangle(dragPoint.X - TileWidth / 2, dragPoint.Y - TileHeight / 2, TileWidth, TileHeight), ghost: true);
@@ -4727,7 +4764,36 @@ internal sealed class AccountRosterGrid : ScrollableControl
         if (hit < 0) return items.Count;
         var bounds = TileBounds(hit);
         bounds.Offset(AutoScrollPosition);
+        if (ColumnCount() > 1)
+        {
+            return point.X > bounds.Left + bounds.Width / 2 ? hit + 1 : hit;
+        }
         return point.Y > bounds.Top + bounds.Height / 2 ? hit + 1 : hit;
+    }
+
+    private void DrawInsertionMarker(Graphics graphics, int dropIndex)
+    {
+        if (items.Count == 0) return;
+        var marker = InsertionMarkerBounds(dropIndex);
+        marker.Offset(AutoScrollPosition);
+        using var glowBrush = new SolidBrush(Color.FromArgb(80, palette.Secondary));
+        using var markerBrush = new SolidBrush(palette.Secondary);
+        using var outlinePen = new Pen(Color.FromArgb(230, Color.White), 1.5F);
+        using var glowPath = Rounded(new Rectangle(marker.X - 4, marker.Y - 3, marker.Width + 8, marker.Height + 6), 5);
+        using var markerPath = Rounded(marker, 3);
+        graphics.FillPath(glowBrush, glowPath);
+        graphics.FillPath(markerBrush, markerPath);
+        graphics.DrawPath(outlinePen, markerPath);
+    }
+
+    private Rectangle InsertionMarkerBounds(int dropIndex)
+    {
+        dropIndex = Math.Clamp(dropIndex, 0, items.Count);
+        var bounds = TileBounds(dropIndex);
+        var columns = ColumnCount();
+        var column = dropIndex % columns;
+        var markerX = column == 0 ? bounds.Left - 5 : bounds.Left - TileGap / 2 - 2;
+        return new Rectangle(markerX, bounds.Top + 8, 5, bounds.Height - 16);
     }
 
     private static bool IsDragGesture(Point start, Point current)

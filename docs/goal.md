@@ -1,12 +1,12 @@
 # Potato Launcher Goal
 
-**Current version:** `1.0.37`
+**Current version:** `1.0.38`
 
 Potato Launcher is a cute, portable Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
 
 The user-facing goal is simple: choose accounts or a named band, click launch, and let Potato Launcher sequence clients without forcing the user to manually babysit every XIVLauncher window.
 
-The main window should be resizable so users with large rosters can make the account and band panels taller or wider. The Accounts panel should also be horizontally resizable with the mouse while Band Manager automatically uses the remaining space.
+The main window should be resizable so users with large rosters can make the account and band panels taller or wider. The Accounts panel should also be horizontally resizable with the mouse while Band Manager automatically uses the remaining space without repaint artifacts.
 
 ## Player Experience
 
@@ -61,6 +61,8 @@ When the user manually assigns a Lodestone profile to a Shared-mode account, Pot
 Users can export Shared-mode account metadata, custom account order, last-connected state, and Lodestone profile links, then import them on another machine. Importing must ask for an import mode so the user chooses whether to append, merge, replace matching entries, or overwrite everything.
 
 Users can drag accounts in the account list to define the shared display order. Band Manager mirrors that account order, and band launch order follows the checked member order shown there. Users can also sort accounts alphabetically, by the selected band, or by the most recent successful `Character@World` connection recorded by Potato Launcher. Account order and last-connected data live in portable `accountList.json`, not in `settings.json`.
+
+Roster dragging should show a clear insertion marker before the user releases the mouse.
 
 ## Guardrails
 

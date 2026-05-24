@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.38 - 2026-05-24
+
+- Smoothed Accounts/Band Manager splitter resizing by repainting the moved panel region during drag.
+- Made the default maximized Accounts panel wider so the roster naturally uses more columns.
+- Added a visible insertion marker while dragging roster accounts.
+- Changed Settings `Export bands` to open a save dialog; Band Manager `Save` still writes the local `band.json`.
+- Enabled multi-column Band Manager member lists on wide layouts.
+
 ## 1.0.37 - 2026-05-24
 
 - Account list export/import now carries custom account order and last-connected timestamps.
