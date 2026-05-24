@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.33 - 2026-05-24
+
+- Removed the Settings `Refresh account icons` button; per-account refresh remains in the account right-click menu.
+- Added a Settings `Export bands` action next to `Import bands`.
+- Changed Band Manager `Save` / `Export bands` to write `band.json` automatically beside `settings.json`.
+- Reduced bottom button flicker by using a buffered Band Manager button row.
+
 ## 1.0.32 - 2026-05-24
 
 - Removed the obsolete `Launch selected` button now that roster double-click launches individual accounts.

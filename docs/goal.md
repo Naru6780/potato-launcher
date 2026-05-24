@@ -1,6 +1,6 @@
 # Potato Launcher Goal
 
-**Current version:** `1.0.32`
+**Current version:** `1.0.33`
 
 Potato Launcher is a cute, portable Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
 
@@ -25,7 +25,7 @@ Bands are named account groups.
 - Bands are created by the user; no default bands should be generated.
 - Band edits autosave.
 - Launching a band should queue accounts safely and visibly through the Band Manager loading screen while leaving the account roster visible.
-- Bands can be saved as `band.json` and imported on another portable copy.
+- Bands can be saved/exported as `band.json` beside `settings.json` and imported on another portable copy.
 
 ## Loading Behavior
 

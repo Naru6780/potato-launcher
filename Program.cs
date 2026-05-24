@@ -231,7 +231,6 @@ internal sealed class MainForm : Form
     private Label musicVolumeLabel = null!;
     private Label accountDisplayLabel = null!;
     private ComboBox accountDisplayInput = null!;
-    private Button refreshAccountIconsButton = null!;
     private Label launchCooldownLabel = null!;
     private NumericUpDown launchCooldownInput = null!;
     private CheckBox randomizeThemeInput = null!;
@@ -251,6 +250,7 @@ internal sealed class MainForm : Form
     private Button importAccountsButton = null!;
     private Button exportAccountsButton = null!;
     private Button importBandsButton = null!;
+    private Button exportBandsButton = null!;
     private CuteBackgroundPanel loadingOverlay = null!;
     private CuteBackgroundPanel launchChoiceOverlay = null!;
     private RoundedPanel loadingCard = null!;
@@ -604,7 +604,7 @@ internal sealed class MainForm : Form
         cancelButton = Button("Cancel", 450, 384, 74, 36, "Danger");
         cancelButton.Visible = false;
         cancelButton.Click += (_, _) => queueCancel?.Cancel();
-        bandButtonPanel = new FlowLayoutPanel
+        bandButtonPanel = new BufferedFlowLayoutPanel
         {
             Bounds = new Rectangle(18, 384, 520, 48),
             BackColor = Color.Transparent,
@@ -754,17 +754,17 @@ internal sealed class MainForm : Form
             SaveSettingsFromInputs();
             UpdateAccountDisplayMode();
         };
-        refreshAccountIconsButton = Button("Refresh account icons", 196, 298, 160, 29, "Secondary");
-        refreshAccountIconsButton.Click += async (_, _) => await RefreshAccountIconsAsync();
-        settingsDrawer.Controls.AddRange([accountDisplayLabel, accountDisplayInput, refreshAccountIconsButton]);
+        settingsDrawer.Controls.AddRange([accountDisplayLabel, accountDisplayInput]);
 
         exportAccountsButton = Button("Export accounts", 24, 336, 154, 30, "Secondary");
         exportAccountsButton.Click += (_, _) => ExportAccountList();
         importAccountsButton = Button("Import accounts", 190, 336, 154, 30, "Secondary");
         importAccountsButton.Click += (_, _) => ImportAccountList();
-        importBandsButton = Button("Import bands", 24, 374, 154, 30, "Secondary");
+        exportBandsButton = Button("Export bands", 24, 374, 154, 30, "Secondary");
+        exportBandsButton.Click += (_, _) => ExportBands();
+        importBandsButton = Button("Import bands", 190, 374, 154, 30, "Secondary");
         importBandsButton.Click += (_, _) => ImportBands();
-        settingsDrawer.Controls.AddRange([exportAccountsButton, importAccountsButton, importBandsButton]);
+        settingsDrawer.Controls.AddRange([exportAccountsButton, importAccountsButton, exportBandsButton, importBandsButton]);
 
         themeLabel = Label("Theme", 24, 580, 120, 24);
         themeInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 608, 260, 29) };
@@ -848,9 +848,9 @@ internal sealed class MainForm : Form
         {
             SetY(accountDisplayLabel, 270);
             SetY(accountDisplayInput, 298);
-            SetY(refreshAccountIconsButton, 298);
             SetY(exportAccountsButton, 336);
             SetY(importAccountsButton, 336);
+            SetY(exportBandsButton, 374);
             SetY(importBandsButton, 374);
             SetY(themeLabel, 420);
             SetY(themeInput, 448);
@@ -867,9 +867,9 @@ internal sealed class MainForm : Form
         {
             SetY(accountDisplayLabel, 270);
             SetY(accountDisplayInput, 298);
-            SetY(refreshAccountIconsButton, 298);
             SetY(exportAccountsButton, 336);
             SetY(importAccountsButton, 336);
+            SetY(exportBandsButton, 374);
             SetY(importBandsButton, 374);
             SetY(themeLabel, 420);
             SetY(themeInput, 448);
@@ -1297,7 +1297,7 @@ internal sealed class MainForm : Form
             }
             else if (!string.IsNullOrWhiteSpace(profile.CharacterName) && !string.IsNullOrWhiteSpace(profile.World))
             {
-                tooltip = $"No downloaded icon yet for {profile.CharacterName}@{profile.World}. Use Refresh account icons.";
+                tooltip = $"No downloaded icon yet for {profile.CharacterName}@{profile.World}. Right-click and refresh this account.";
             }
 
             var bodyPath = AccountFullImagePath(profile);
@@ -1421,52 +1421,6 @@ internal sealed class MainForm : Form
         }
         SaveSettings(settings);
         _ = RefreshAccountIconAsync(account, quiet: true);
-    }
-
-    private async Task RefreshAccountIconsAsync()
-    {
-        refreshAccountIconsButton.Enabled = false;
-        var refreshed = 0;
-        var failed = 0;
-        var unmapped = 0;
-        try
-        {
-            foreach (var account in accounts)
-            {
-                var key = AccountIconKey(account);
-                if (!settings.AccountIcons.TryGetValue(key, out var profile))
-                {
-                    profile = new AccountIconProfile();
-                    settings.AccountIcons[key] = profile;
-                }
-
-                status.Text = $"Refreshing {AccountDisplayName(account)}...";
-                if (await RefreshAccountIconAsync(account, quiet: true))
-                {
-                    refreshed++;
-                }
-                else
-                {
-                    if (string.IsNullOrWhiteSpace(profile.CharacterName) || string.IsNullOrWhiteSpace(profile.World))
-                    {
-                        unmapped++;
-                    }
-                    else
-                    {
-                        failed++;
-                    }
-                }
-            }
-
-            PopulateLists();
-            status.Text = failed == 0 && unmapped == 0
-                ? $"Refreshed {refreshed} account icon{(refreshed == 1 ? "" : "s")}."
-                : $"Icons refreshed: {refreshed}. Failed: {failed}. Launch once to map: {unmapped}.";
-        }
-        finally
-        {
-            refreshAccountIconsButton.Enabled = true;
-        }
     }
 
     private void ShowAccountContextMenu(Account account, Control owner, Point location)
@@ -1810,21 +1764,15 @@ internal sealed class MainForm : Form
     private void ExportBands()
     {
         SaveCurrentBand();
-        using var dialog = new SaveFileDialog
-        {
-            Title = "Save bands",
-            Filter = "Potato bands (*.json)|*.json",
-            FileName = "band.json"
-        };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
-
         var transfer = new BandTransfer
         {
             LaunchMode = NormalizeLaunchMode(settings.LaunchMode),
             Bands = CurrentBands().Select(CloneBand).ToList()
         };
-        File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
-        status.Text = $"Saved {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")} to band.json.";
+        var path = BandExportPath();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
+        status.Text = $"Saved {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")} to {Path.GetFileName(path)}.";
     }
 
     private void ImportBands()
@@ -1897,6 +1845,8 @@ internal sealed class MainForm : Form
         }
         return $"{requestedName} ({DateTime.Now:HHmmss})";
     }
+
+    private static string BandExportPath() => Path.Combine(Path.GetDirectoryName(SettingsPath())!, "band.json");
 
     private async Task<bool> RefreshAccountIconAsync(Account account, bool quiet)
     {
@@ -3558,7 +3508,9 @@ internal sealed class MainForm : Form
                     if (ReferenceEquals(label, newsBannerTitle)) label.BackColor = Color.FromArgb(255, palette.Card);
                     break;
                 case FlowLayoutPanel flow:
-                    flow.BackColor = ReferenceEquals(flow, newsListPanel) ? palette.ListBack : Color.Transparent;
+                    flow.BackColor = ReferenceEquals(flow, newsListPanel)
+                        ? palette.ListBack
+                        : ReferenceEquals(flow, bandButtonPanel) ? Color.FromArgb(255, palette.Card) : Color.Transparent;
                     break;
                 case AccountRosterGrid roster:
                     roster.Palette = palette;
