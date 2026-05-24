@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.39 - 2026-05-24
+
+- Reworded missing roster portrait guidance so users are asked to link Lodestone profiles instead of refreshing or launching accounts.
+- Added a Lodestone character search helper link when setting account profile URLs.
+- Reduced noisy account reorder status updates.
+- Added startup cleanup for stale `settings.json` values and persisted account-list state.
+- Added a `?` help button beside `What's new?` with a user-friendly feature guide.
+- Added focused tests for app text and persisted settings cleanup.
+
 ## 1.0.38 - 2026-05-24
 
 - Smoothed Accounts/Band Manager splitter resizing by repainting the moved panel region during drag.

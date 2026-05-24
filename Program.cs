@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Windows.Forms.Integration;
 using System.Windows.Interop;
@@ -20,6 +21,8 @@ using WpfMediaPlayer = System.Windows.Media.MediaPlayer;
 using WpfStretch = System.Windows.Media.Stretch;
 using WpfThickness = System.Windows.Thickness;
 using WpfVerticalAlignment = System.Windows.VerticalAlignment;
+
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("PotatoLauncher.Tests")]
 
 namespace PotatoLauncher;
 
@@ -78,6 +81,121 @@ internal sealed class AccountListState
     public List<string> SharedAccountOrder { get; set; } = [];
     public List<string> InstancedAccountOrder { get; set; } = [];
     public Dictionary<string, DateTime> LastConnectedUtc { get; set; } = [];
+}
+
+internal static class AppText
+{
+    public const string LodestoneCharacterSearchUrl = "https://na.finalfantasyxiv.com/lodestone/character/";
+
+    public static string MissingAccountIconStatus(int missingCount)
+    {
+        return missingCount == 1
+            ? "1 account needs a linked Lodestone profile."
+            : $"{missingCount} accounts need linked Lodestone profiles.";
+    }
+}
+
+internal static class SettingsMigration
+{
+    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
+
+    public static string CleanSettingsJson(string json, out bool changed)
+    {
+        var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+        CleanSettings(settings);
+        var cleanedJson = JsonSerializer.Serialize(settings, WriteOptions);
+        changed = !JsonEquivalent(json, cleanedJson);
+        return cleanedJson;
+    }
+
+    public static bool CleanSettings(AppSettings settings)
+    {
+        var before = JsonSerializer.Serialize(settings, WriteOptions);
+        settings.DalamudFolder ??= "";
+        settings.LaunchMode = NormalizeLaunchModeValue(settings.LaunchMode);
+        settings.SharedProfileFolder ??= "";
+        settings.Theme = string.IsNullOrWhiteSpace(settings.Theme) ? "Pink" : settings.Theme.Trim();
+        settings.MusicVolume = Math.Clamp(settings.MusicVolume, 0, 100);
+        settings.LaunchCooldownSeconds = Math.Clamp(settings.LaunchCooldownSeconds, 0, 300);
+        settings.AccountDisplayMode = NormalizeAccountDisplayModeValue(settings.AccountDisplayMode);
+        settings.LastShownChangelogVersion ??= "";
+        settings.AccountIcons ??= [];
+        settings.Bands ??= [];
+        settings.InstancedBands ??= [];
+        settings.SharedBands ??= [];
+        CleanAccountIcons(settings.AccountIcons);
+        CleanBands(settings.Bands);
+        CleanBands(settings.InstancedBands);
+        CleanBands(settings.SharedBands);
+        return !JsonEquivalent(before, JsonSerializer.Serialize(settings, WriteOptions));
+    }
+
+    public static bool CleanAccountListState(AccountListState state)
+    {
+        var changed = false;
+        changed |= CleanOrder(state.SharedAccountOrder);
+        changed |= CleanOrder(state.InstancedAccountOrder);
+        foreach (var key in state.LastConnectedUtc.Keys.Where(string.IsNullOrWhiteSpace).ToList())
+        {
+            state.LastConnectedUtc.Remove(key);
+            changed = true;
+        }
+        return changed;
+    }
+
+    private static void CleanAccountIcons(Dictionary<string, AccountIconProfile> profiles)
+    {
+        foreach (var key in profiles.Keys.Where(string.IsNullOrWhiteSpace).ToList())
+        {
+            profiles.Remove(key);
+        }
+    }
+
+    private static void CleanBands(List<BandConfig> bands)
+    {
+        foreach (var band in bands)
+        {
+            band.Name = string.IsNullOrWhiteSpace(band.Name) ? "New Band" : band.Name.Trim();
+            CleanOrder(band.BatchFiles);
+        }
+    }
+
+    private static bool CleanOrder(List<string> order)
+    {
+        var cleaned = order
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (cleaned.SequenceEqual(order, StringComparer.OrdinalIgnoreCase)) return false;
+        order.Clear();
+        order.AddRange(cleaned);
+        return true;
+    }
+
+    private static string NormalizeLaunchModeValue(string? launchMode)
+    {
+        return launchMode is "Shared" or "Shared XIVLauncher" ? "Shared" : "Instanced";
+    }
+
+    private static string NormalizeAccountDisplayModeValue(string? displayMode)
+    {
+        return displayMode is not null && (displayMode.Equals("Icons", StringComparison.OrdinalIgnoreCase) || displayMode.Equals("Roster", StringComparison.OrdinalIgnoreCase))
+            ? "Roster"
+            : "Text";
+    }
+
+    private static bool JsonEquivalent(string left, string right)
+    {
+        try
+        {
+            return JsonNode.DeepEquals(JsonNode.Parse(left), JsonNode.Parse(right));
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
 
 internal sealed class AccountIconProfile
@@ -263,7 +381,9 @@ internal sealed class MainForm : Form
     private Button settingsButton = null!;
     private Button killGameButton = null!;
     private Button whatsNewButton = null!;
+    private Button helpButton = null!;
     private Button muteMusicButton = null!;
+    private readonly ToolTip toolTip = new();
     private MascotOverlayForm? mascotOverlay;
     private RoundedPanel statusPill = null!;
     private Label status = null!;
@@ -364,6 +484,10 @@ internal sealed class MainForm : Form
         whatsNewButton = Button("What's new?", 394, 24, 122, 34, "Secondary");
         whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
         background.Controls.Add(whatsNewButton);
+        helpButton = Button("?", 524, 24, 34, 34, "Secondary");
+        toolTip.SetToolTip(helpButton, "Open Potato Launcher help");
+        helpButton.Click += (_, _) => ShowHelpWindow();
+        background.Controls.Add(helpButton);
         mascotOverlay = CreateMascotOverlay();
         Shown += (_, _) => UpdateMascotOverlay();
         Move += (_, _) => UpdateMascotOverlay();
@@ -377,6 +501,7 @@ internal sealed class MainForm : Form
         {
             themeMusic.Stop();
             themeMusic.Close();
+            toolTip.Dispose();
             mascotOverlay?.Close();
         };
         BuildLauncherTab(background);
@@ -1445,7 +1570,6 @@ internal sealed class MainForm : Form
         SaveCurrentAccountOrder(ordered);
         PopulateLists();
         SelectAccount(moved);
-        status.Text = $"Moved {AccountDisplayName(moved)}.";
     }
 
     private void SortAccountsByName()
@@ -1525,7 +1649,7 @@ internal sealed class MainForm : Form
     private AccountRosterItem CreateRosterItem(Account account)
     {
         var displayName = AccountDisplayName(account);
-        var tooltip = "This character has no data yet. Please link it's Lodestone.";
+        var tooltip = "This account has no Lodestone profile linked yet.";
         string? facePath = null;
         string? fullPath = null;
         if (settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile))
@@ -1543,7 +1667,7 @@ internal sealed class MainForm : Form
             }
             else if (!string.IsNullOrWhiteSpace(profile.CharacterName) && !string.IsNullOrWhiteSpace(profile.World))
             {
-                tooltip = $"No downloaded icon yet for {profile.CharacterName}@{profile.World}. Right-click and refresh this account.";
+                tooltip = $"No downloaded portrait yet for {profile.CharacterName}@{profile.World}. Right-click to refresh from Lodestone.";
             }
 
             var bodyPath = AccountFullImagePath(profile);
@@ -1585,7 +1709,7 @@ internal sealed class MainForm : Form
             var missingIcons = accounts.Count(account => !HasAccountIcon(account));
             if (missingIcons > 0)
             {
-                status.Text = $"{missingIcons} account icon{(missingIcons == 1 ? "" : "s")} need refresh or first launch.";
+                status.Text = AppText.MissingAccountIconStatus(missingIcons);
             }
         }
     }
@@ -1656,7 +1780,11 @@ internal sealed class MainForm : Form
         var setProfile = new ToolStripMenuItem("Set Lodestone profile URL...");
         setProfile.Click += async (_, _) =>
         {
-            var enteredUrl = ShowTextPrompt("Set Lodestone profile URL", "Paste the Lodestone character profile URL for this account:", AccountProfileUrl(profile));
+            var enteredUrl = ShowTextPrompt(
+                "Set Lodestone profile URL",
+                "Paste the Lodestone character profile URL for this account:",
+                AccountProfileUrl(profile),
+                AppText.LodestoneCharacterSearchUrl);
             if (string.IsNullOrWhiteSpace(enteredUrl)) return;
             var lodestoneId = ExtractLodestoneId(enteredUrl);
             if (string.IsNullOrWhiteSpace(lodestoneId))
@@ -1719,7 +1847,7 @@ internal sealed class MainForm : Form
         return Regex.IsMatch(text.Trim(), @"^\d+$") ? text.Trim() : "";
     }
 
-    private static string ShowTextPrompt(string title, string prompt, string defaultValue)
+    private static string ShowTextPrompt(string title, string prompt, string defaultValue, string helperUrl = "")
     {
         using var form = new Form
         {
@@ -1728,13 +1856,30 @@ internal sealed class MainForm : Form
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MinimizeBox = false,
             MaximizeBox = false,
-            ClientSize = new Size(520, 150)
+            ClientSize = string.IsNullOrWhiteSpace(helperUrl) ? new Size(520, 150) : new Size(520, 178)
         };
         var label = new Label { Text = prompt, Bounds = new Rectangle(14, 14, 492, 24) };
         var input = new TextBox { Text = defaultValue, Bounds = new Rectangle(14, 44, 492, 29) };
-        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Bounds = new Rectangle(326, 98, 86, 32) };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(420, 98, 86, 32) };
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Bounds = new Rectangle(326, form.ClientSize.Height - 52, 86, 32) };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(420, form.ClientSize.Height - 52, 86, 32) };
         form.Controls.AddRange([label, input, ok, cancel]);
+        if (!string.IsNullOrWhiteSpace(helperUrl))
+        {
+            var helper = new LinkLabel
+            {
+                Text = $"Search Lodestone characters: {helperUrl}",
+                Bounds = new Rectangle(14, 78, 492, 24),
+                LinkColor = Color.RoyalBlue,
+                ActiveLinkColor = Color.DeepPink,
+                VisitedLinkColor = Color.MediumPurple
+            };
+            helper.LinkClicked += (_, _) => OpenUrl(helperUrl);
+            form.Controls.Add(helper);
+            var helperTip = new ToolTip();
+            helperTip.SetToolTip(input, $"Paste a character URL from {helperUrl}");
+            helperTip.SetToolTip(helper, "Open Lodestone character search in your browser");
+            form.Disposed += (_, _) => helperTip.Dispose();
+        }
         form.AcceptButton = ok;
         form.CancelButton = cancel;
         return form.ShowDialog() == DialogResult.OK ? input.Text.Trim() : "";
@@ -3379,6 +3524,75 @@ internal sealed class MainForm : Form
         oldImage?.Dispose();
     }
 
+    private void ShowHelpWindow()
+    {
+        using var form = new Form
+        {
+            Text = "Potato Launcher Help",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MinimizeBox = false,
+            MaximizeBox = false,
+            ClientSize = new Size(680, 560),
+            Font = new Font("Segoe UI", 10F)
+        };
+
+        var title = new Label
+        {
+            Text = "Potato Launcher Help",
+            Bounds = new Rectangle(18, 16, 520, 30),
+            Font = new Font("Segoe UI", 15F, FontStyle.Bold)
+        };
+        var helpText = new TextBox
+        {
+            Text = HelpWindowText(),
+            Bounds = new Rectangle(18, 58, 644, 432),
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical,
+            BorderStyle = BorderStyle.FixedSingle
+        };
+        var close = new Button { Text = "OK", DialogResult = DialogResult.OK, Bounds = new Rectangle(552, 510, 110, 34) };
+
+        form.Controls.AddRange([title, helpText, close]);
+        form.AcceptButton = close;
+        form.CancelButton = close;
+        form.ShowDialog(this);
+    }
+
+    private static string HelpWindowText()
+    {
+        return """
+        Launch modes
+        Instanced mode loads one account per XIVLauncher BAT file from your selected folder.
+        Shared mode reads XIVLauncher's accountsList.json from the selected profile folder.
+
+        Accounts
+        Double-click an account to launch it. Drag accounts to reorder them. Right-click an account to open Lodestone options, sort accounts, or delete an account from Potato Launcher.
+
+        Lodestone profiles and portraits
+        Link each account to a Lodestone character profile URL to show character names and portraits. Use the Lodestone search link in the profile prompt if you need to find the character page.
+
+        Bands
+        Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence.
+
+        Launching
+        OTP-enabled accounts launch with autologin disabled so you can finish login manually. The launch cooldown setting adds a delay between band launches.
+
+        Display and themes
+        Switch the account list between Text and Roster display in Settings. Themes can change colors, backgrounds, and music. Music can be muted, randomized, or stopped when a launch queue finishes.
+
+        Import and export
+        Export accounts or bands when sharing setup data with friends. Import modes let you append, merge, replace, or overwrite existing data.
+
+        News and updates
+        What's new? shows recent FFXIV launcher news. Check for updates downloads the latest Potato Launcher release from GitHub.
+
+        Safety tools
+        Kill FFXIV closes running FFXIV game processes. Use it only when a game client is stuck or you intentionally want to close all running clients.
+        """;
+    }
+
     private void KillGameInstances()
     {
         var killed = 0;
@@ -4144,10 +4358,22 @@ internal sealed class MainForm : Form
 
     private static AppSettings LoadSettings()
     {
+        var path = SettingsPath();
         try
         {
-            var path = SettingsPath();
-            if (File.Exists(path)) return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path)) ?? new AppSettings();
+            if (File.Exists(path))
+            {
+                var json = File.ReadAllText(path);
+                SaveMigratedAccountListStateFromSettings(json);
+                var cleanedJson = SettingsMigration.CleanSettingsJson(json, out var changed);
+                if (changed)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    File.WriteAllText(path, cleanedJson);
+                }
+
+                return JsonSerializer.Deserialize<AppSettings>(cleanedJson) ?? new AppSettings();
+            }
         }
         catch { }
         var settings = new AppSettings();
@@ -4159,6 +4385,7 @@ internal sealed class MainForm : Form
     {
         try
         {
+            SettingsMigration.CleanSettings(settings);
             var path = SettingsPath();
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
@@ -4171,22 +4398,60 @@ internal sealed class MainForm : Form
         try
         {
             var path = AccountListStatePath();
-            if (File.Exists(path)) return JsonSerializer.Deserialize<AccountListState>(File.ReadAllText(path)) ?? new AccountListState();
+            if (File.Exists(path))
+            {
+                var loadedState = JsonSerializer.Deserialize<AccountListState>(File.ReadAllText(path)) ?? new AccountListState();
+                if (SettingsMigration.CleanAccountListState(loadedState)) SaveAccountListState(loadedState);
+                return loadedState;
+            }
         }
         catch { }
         var state = MigrateAccountListStateFromSettings();
+        SettingsMigration.CleanAccountListState(state);
         SaveAccountListState(state);
         return state;
     }
 
+    private static void SaveMigratedAccountListStateFromSettings(string settingsJson)
+    {
+        try
+        {
+            if (File.Exists(AccountListStatePath())) return;
+            var state = MigrateAccountListStateFromSettings(settingsJson);
+            if (state.SharedAccountOrder.Count == 0 &&
+                state.InstancedAccountOrder.Count == 0 &&
+                state.LastConnectedUtc.Count == 0)
+            {
+                return;
+            }
+
+            SettingsMigration.CleanAccountListState(state);
+            SaveAccountListState(state);
+        }
+        catch { }
+    }
+
     private static AccountListState MigrateAccountListStateFromSettings()
+    {
+        try
+        {
+            var path = SettingsPath();
+            return File.Exists(path)
+                ? MigrateAccountListStateFromSettings(File.ReadAllText(path))
+                : new AccountListState();
+        }
+        catch
+        {
+            return new AccountListState();
+        }
+    }
+
+    private static AccountListState MigrateAccountListStateFromSettings(string settingsJson)
     {
         var state = new AccountListState();
         try
         {
-            var path = SettingsPath();
-            if (!File.Exists(path)) return state;
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            using var document = JsonDocument.Parse(settingsJson);
             if (document.RootElement.ValueKind != JsonValueKind.Object) return state;
 
             state.SharedAccountOrder = ReadStringList(document.RootElement, "SharedAccountOrder");
@@ -4205,6 +4470,7 @@ internal sealed class MainForm : Form
             }
         }
         catch { }
+        SettingsMigration.CleanAccountListState(state);
         return state;
     }
 
@@ -4231,7 +4497,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.38 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.39 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 

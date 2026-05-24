@@ -7,10 +7,10 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AssemblyName>Potato Launcher</AssemblyName>
     <RootNamespace>PotatoLauncher</RootNamespace>
-    <Version>1.0.38</Version>
-    <AssemblyVersion>1.0.38.0</AssemblyVersion>
-    <FileVersion>1.0.38.0</FileVersion>
-    <InformationalVersion>1.0.38</InformationalVersion>
+    <Version>1.0.39</Version>
+    <AssemblyVersion>1.0.39.0</AssemblyVersion>
+    <FileVersion>1.0.39.0</FileVersion>
+    <InformationalVersion>1.0.39</InformationalVersion>
     <ApplicationHighDpiMode>DpiUnawareGdiScaled</ApplicationHighDpiMode>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -21,6 +21,11 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+    <EmbeddedResource Remove="tests\**\*" />
+    <None Remove="tests\**\*" />
+  </ItemGroup>
   <ItemGroup>
     <Content Include="Potato Launcher Assets\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

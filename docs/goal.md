@@ -1,6 +1,6 @@
 # Potato Launcher Goal
 
-**Current version:** `1.0.38`
+**Current version:** `1.0.39`
 
 Potato Launcher is a cute, portable Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
 
