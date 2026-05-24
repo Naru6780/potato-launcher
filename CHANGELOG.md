@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.49 - 2026-05-25
+
+- Replaced the Band Manager member `CheckedListBox` with a theme-aware vertical-scrolling checklist so the account list no longer uses a horizontal scrollbar.
+- Kept Band Manager members in compact responsive columns while preserving clean checkbox and account-name alignment.
+- Made startup portrait refresh nearly instant when cached portraits are fresh by loading cached icons immediately and only refreshing stale or missing images.
+- Refreshed stale or missing portraits concurrently with one settings save at the end instead of refreshing every mapped account one-by-one.
+- Added a right-click `Refresh portrait now` action for manually updating a single linked Lodestone profile.
+- Added tests for vertical checklist layout and portrait refresh cache policy.
+
 ## 1.0.48 - 2026-05-25
 
 - Tightened the Band Manager list spacing so the account checklist gets more usable width.

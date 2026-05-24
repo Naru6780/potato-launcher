@@ -46,4 +46,24 @@ public class LayoutTests
         Assert.True(metrics.MemberColumnWidth > 220);
         Assert.True(metrics.ListGap < 20);
     }
+
+    [Theory]
+    [InlineData(320, 44, 1)]
+    [InlineData(540, 44, 2)]
+    [InlineData(780, 44, 3)]
+    public void BandChecklistLayoutMetrics_UsesVerticalScrollingColumns(int width, int itemCount, int expectedColumns)
+    {
+        var metrics = BandChecklistLayoutMetrics.Calculate(width, itemCount);
+
+        Assert.Equal(expectedColumns, metrics.ColumnCount);
+        Assert.True(metrics.ContentWidth <= width);
+        Assert.True(metrics.ScrollHeight > 0);
+    }
+
+    [Fact]
+    public void BandChecklistLayoutMetrics_KeepsRowsTallEnoughForCheckboxAndText()
+    {
+        Assert.True(BandChecklistLayoutMetrics.RowHeight >= 26);
+        Assert.True(BandChecklistLayoutMetrics.CheckSize <= BandChecklistLayoutMetrics.RowHeight - 6);
+    }
 }

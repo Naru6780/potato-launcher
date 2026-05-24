@@ -201,6 +201,42 @@ internal readonly record struct BandMemberListMetrics(int BandListWidth, int Mem
     }
 }
 
+internal readonly record struct BandChecklistLayoutMetrics(int ColumnCount, int ColumnWidth, int RowCount, int ContentWidth, int ScrollHeight)
+{
+    public const int RowHeight = 28;
+    public const int CheckSize = 16;
+    public const int MinimumColumnWidth = 220;
+    public const int ColumnGap = 10;
+    public const int Padding = 6;
+
+    public static BandChecklistLayoutMetrics Calculate(int width, int itemCount)
+    {
+        var usableWidth = Math.Max(MinimumColumnWidth, width - Padding * 2 - SystemInformation.VerticalScrollBarWidth);
+        var columnCount = Math.Max(1, (usableWidth + ColumnGap) / (MinimumColumnWidth + ColumnGap));
+        var columnWidth = Math.Max(MinimumColumnWidth, (usableWidth - (columnCount - 1) * ColumnGap) / columnCount);
+        var rowCount = itemCount == 0 ? 0 : (int)Math.Ceiling(itemCount / (double)columnCount);
+        var contentWidth = Padding * 2 + columnCount * columnWidth + (columnCount - 1) * ColumnGap;
+        var scrollHeight = Padding * 2 + rowCount * RowHeight;
+        return new BandChecklistLayoutMetrics(columnCount, columnWidth, rowCount, contentWidth, scrollHeight);
+    }
+}
+
+internal static class AccountIconRefreshPolicy
+{
+    public static readonly TimeSpan FreshCacheLifetime = TimeSpan.FromHours(12);
+    public const int StartupRefreshConcurrency = 8;
+
+    public static bool NeedsStartupRefresh(AccountIconProfile profile, DateTime nowUtc, bool faceExists, bool fullImageExists)
+    {
+        if (!faceExists || !fullImageExists) return true;
+        if (profile.LastUpdatedUtc == default) return true;
+        var lastUpdatedUtc = profile.LastUpdatedUtc.Kind == DateTimeKind.Utc
+            ? profile.LastUpdatedUtc
+            : profile.LastUpdatedUtc.ToUniversalTime();
+        return nowUtc - lastUpdatedUtc >= FreshCacheLifetime;
+    }
+}
+
 internal static class SettingsMigration
 {
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
@@ -509,7 +545,7 @@ internal sealed class MainForm : Form
     private AccountRosterGrid accountRosterGrid = null!;
     private Panel accountResizeHandle = null!;
     private ListBox bandList = null!;
-    private CheckedListBox memberList = null!;
+    private BandMemberChecklist memberList = null!;
     private Label folderLabel = null!;
     private Label sharedProfileLabel = null!;
     private Label themeLabel = null!;
@@ -943,16 +979,12 @@ internal sealed class MainForm : Form
             ShowBandContextMenu(bandList, e.Location);
         };
         bandCard.Controls.Add(bandList);
-        memberList = new CheckedListBox
+        memberList = new BandMemberChecklist
         {
             Bounds = new Rectangle(initialBandMembers.MemberLeft, 58, initialBandMembers.MemberWidth, 306),
-            CheckOnClick = true,
-            MultiColumn = true,
-            ColumnWidth = initialBandMembers.MemberColumnWidth,
-            HorizontalScrollbar = false,
-            IntegralHeight = false
+            Palette = palette
         };
-        memberList.ItemCheck += (_, _) => { if (!loadingBand) BeginInvoke(() => SaveCurrentBand()); };
+        memberList.CheckedChanged += (_, _) => { if (!loadingBand) BeginInvoke(() => SaveCurrentBand()); };
         bandCard.Controls.Add(memberList);
 
         newBandButton = Button("Add Band", 18, 384, 104, 36, "Secondary");
@@ -1038,7 +1070,6 @@ internal sealed class MainForm : Form
         var listHeight = Math.Max(220, bandCard.Height - 144);
         bandList.Bounds = new Rectangle(BandMemberListMetrics.LeftPadding, 58, memberLayout.BandListWidth, listHeight);
         memberList.Bounds = new Rectangle(memberLayout.MemberLeft, 58, memberLayout.MemberWidth, Math.Max(240, bandCard.Height - 144));
-        memberList.ColumnWidth = memberLayout.MemberColumnWidth;
         bandButtonPanel.Bounds = new Rectangle(18, bandCard.Height - 66, bandCard.Width - 36, 54);
         if (loadingOverlay is not null)
         {
@@ -2021,6 +2052,18 @@ internal sealed class MainForm : Form
         };
         menu.Items.Add(setProfile);
 
+        var refreshProfile = new ToolStripMenuItem("Refresh portrait now");
+        refreshProfile.Enabled = !string.IsNullOrWhiteSpace(profileUrl);
+        refreshProfile.Click += async (_, _) =>
+        {
+            SetStatus($"Refreshing {AccountDisplayName(account)} portrait...");
+            if (await RefreshAccountIconAsync(account, quiet: false))
+            {
+                RefreshAccountRosterOnly();
+            }
+        };
+        menu.Items.Add(refreshProfile);
+
         menu.Items.Add(new ToolStripSeparator());
 
         var sortMenu = new ToolStripMenuItem("Sort accounts");
@@ -2798,31 +2841,54 @@ internal sealed class MainForm : Form
     {
         if (refreshingStartupPortraits || accounts.Count == 0) return;
         refreshingStartupPortraits = true;
-        var refreshed = 0;
-        var failed = 0;
         try
         {
-            foreach (var account in OrderedAccounts())
-            {
-                if (!settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile)) continue;
-                var profileUrl = AccountProfileUrl(profile);
-                if (string.IsNullOrWhiteSpace(profileUrl)) continue;
+            var nowUtc = DateTime.UtcNow;
+            var mappedAccounts = OrderedAccounts()
+                .Select(account => new { account, key = AccountIconKey(account) })
+                .Where(item => settings.AccountIcons.ContainsKey(item.key))
+                .Select(item => new { item.account, profile = settings.AccountIcons[item.key] })
+                .Where(item => !string.IsNullOrWhiteSpace(AccountProfileUrl(item.profile)))
+                .ToList();
 
-                SetStatus($"Refreshing {AccountDisplayName(account)} portrait...");
-                if (await RefreshAccountIconAsync(account, quiet: true))
-                {
-                    refreshed++;
-                }
-                else
-                {
-                    failed++;
-                }
+            var refreshTargets = mappedAccounts
+                .Where(item => AccountIconRefreshPolicy.NeedsStartupRefresh(
+                    item.profile,
+                    nowUtc,
+                    File.Exists(AccountIconPath(item.profile)),
+                    File.Exists(AccountFullImagePath(item.profile))))
+                .ToList();
+
+            if (refreshTargets.Count == 0)
+            {
+                RefreshAccountRosterOnly();
+                SetStatus($"Loaded {mappedAccounts.Count} cached portrait{(mappedAccounts.Count == 1 ? "" : "s")}.", force: true);
+                return;
             }
 
+            SetStatus($"Refreshing {refreshTargets.Count} stale or missing portrait{(refreshTargets.Count == 1 ? "" : "s")}...");
+            using var semaphore = new SemaphoreSlim(AccountIconRefreshPolicy.StartupRefreshConcurrency);
+            var results = await Task.WhenAll(refreshTargets.Select(async item =>
+            {
+                await semaphore.WaitAsync();
+                try
+                {
+                    return await RefreshAccountIconAsync(item.account, quiet: true, saveSettings: false);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            }));
+
+            var refreshed = results.Count(result => result);
+            var failed = results.Length - refreshed;
+            if (refreshed > 0) SaveSettings(settings);
             RefreshAccountRosterOnly();
+            var cached = mappedAccounts.Count - refreshTargets.Count;
             SetStatus(failed == 0
-                ? $"Updated {refreshed} mapped portrait{(refreshed == 1 ? "" : "s")}."
-                : $"Updated {refreshed} mapped portrait{(refreshed == 1 ? "" : "s")}; {failed} failed.", force: true);
+                ? $"Portraits ready: {cached} cached, {refreshed} refreshed."
+                : $"Portraits ready: {cached} cached, {refreshed} refreshed, {failed} failed.", force: true);
         }
         finally
         {
@@ -2830,7 +2896,7 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task<bool> RefreshAccountIconAsync(Account account, bool quiet)
+    private async Task<bool> RefreshAccountIconAsync(Account account, bool quiet, bool saveSettings = true)
     {
         var key = AccountIconKey(account);
         if (!settings.AccountIcons.TryGetValue(key, out var profile))
@@ -2855,7 +2921,7 @@ internal sealed class MainForm : Form
 
             await DownloadAccountImageAsync(result.IconUrl, AccountIconPath(profile));
             await DownloadAccountImageAsync(result.FullImageUrl, AccountFullImagePath(profile));
-            SaveSettings(settings);
+            if (saveSettings) SaveSettings(settings);
 
             if (!quiet && status is not null)
             {
@@ -2984,21 +3050,13 @@ internal sealed class MainForm : Form
         memberList.BeginUpdate();
         try
         {
-            memberList.Items.Clear();
             var orderedAccounts = OrderedAccounts().ToList();
             if (band is not null)
             {
                 NormalizeBand(band);
             }
 
-            foreach (var account in orderedAccounts)
-            {
-                var index = memberList.Items.Add(account);
-                if (band is not null && band.BatchFiles.Contains(account.BatchFile, StringComparer.OrdinalIgnoreCase))
-                {
-                    memberList.SetItemChecked(index, true);
-                }
-            }
+            memberList.SetAccounts(orderedAccounts, band?.BatchFiles ?? []);
         }
         finally
         {
@@ -3015,7 +3073,7 @@ internal sealed class MainForm : Form
     private void SaveCurrentBand(bool refreshListItem)
     {
         if (bandList.SelectedItem is not BandConfig band) return;
-        band.BatchFiles = memberList.CheckedItems.Cast<Account>().Select(account => account.BatchFile).ToList();
+        band.BatchFiles = memberList.CheckedAccounts.Select(account => account.BatchFile).ToList();
         var index = bandList.SelectedIndex;
         SaveSettingsFromInputs();
         if (refreshListItem && index >= 0)
@@ -4583,9 +4641,8 @@ internal sealed class MainForm : Form
                 case ThemeSlider slider:
                     slider.Palette = palette;
                     break;
-                case CheckedListBox checkedList:
-                    checkedList.BackColor = palette.ListBack;
-                    checkedList.ForeColor = palette.Text;
+                case BandMemberChecklist checklist:
+                    checklist.Palette = palette;
                     break;
                 case ListBox list:
                     list.BackColor = palette.ListBack;
@@ -4779,7 +4836,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.48 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.49 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -5485,6 +5542,268 @@ internal sealed class BufferedFlowLayoutPanel : FlowLayoutPanel
     {
         base.OnScroll(se);
         Invalidate();
+    }
+}
+
+internal sealed class BandMemberChecklist : ScrollableControl
+{
+    private readonly List<Account> items = [];
+    private readonly HashSet<string> checkedBatchFiles = new(StringComparer.OrdinalIgnoreCase);
+    private int selectedIndex = -1;
+    private int updateDepth;
+    private ThemePalette palette = MainForm.Palettes["Pink"];
+
+    public event EventHandler? CheckedChanged;
+
+    public IEnumerable<Account> CheckedAccounts => items.Where(item => checkedBatchFiles.Contains(item.BatchFile)).ToList();
+
+    public ThemePalette Palette
+    {
+        get => palette;
+        set
+        {
+            palette = value;
+            BackColor = palette.ListBack;
+            ForeColor = palette.Text;
+            Invalidate();
+        }
+    }
+
+    public BandMemberChecklist()
+    {
+        AutoScroll = true;
+        DoubleBuffered = true;
+        TabStop = true;
+        BackColor = palette.ListBack;
+        ForeColor = palette.Text;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+        UpdateStyles();
+    }
+
+    public void BeginUpdate()
+    {
+        updateDepth++;
+    }
+
+    public void EndUpdate()
+    {
+        if (updateDepth <= 0) return;
+        updateDepth--;
+        if (updateDepth == 0)
+        {
+            UpdateScrollSize();
+            Invalidate();
+        }
+    }
+
+    public void SetAccounts(IEnumerable<Account> accounts, IEnumerable<string> checkedFiles)
+    {
+        BeginUpdate();
+        try
+        {
+            items.Clear();
+            items.AddRange(accounts);
+            checkedBatchFiles.Clear();
+            foreach (var file in checkedFiles.Where(file => !string.IsNullOrWhiteSpace(file)))
+            {
+                checkedBatchFiles.Add(file);
+            }
+
+            if (selectedIndex >= items.Count) selectedIndex = items.Count - 1;
+            if (items.Count == 0) selectedIndex = -1;
+        }
+        finally
+        {
+            EndUpdate();
+        }
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        UpdateScrollSize();
+    }
+
+    protected override void OnScroll(ScrollEventArgs se)
+    {
+        base.OnScroll(se);
+        Invalidate();
+    }
+
+    protected override bool IsInputKey(Keys keyData)
+    {
+        return keyData is Keys.Up or Keys.Down or Keys.Left or Keys.Right or Keys.Space || base.IsInputKey(keyData);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (items.Count == 0) return;
+
+        var layout = CurrentLayout();
+        switch (e.KeyCode)
+        {
+            case Keys.Left:
+                selectedIndex = Math.Max(0, selectedIndex - 1);
+                e.Handled = true;
+                Invalidate();
+                break;
+            case Keys.Right:
+                selectedIndex = Math.Min(items.Count - 1, selectedIndex + 1);
+                e.Handled = true;
+                Invalidate();
+                break;
+            case Keys.Up:
+                selectedIndex = Math.Max(0, selectedIndex - layout.ColumnCount);
+                e.Handled = true;
+                Invalidate();
+                break;
+            case Keys.Down:
+                selectedIndex = Math.Min(items.Count - 1, selectedIndex + layout.ColumnCount);
+                e.Handled = true;
+                Invalidate();
+                break;
+            case Keys.Space:
+                ToggleSelected();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        Focus();
+        var hit = HitTest(e.Location);
+        if (hit < 0) return;
+        selectedIndex = hit;
+        if (e.Button == MouseButtons.Left)
+        {
+            ToggleChecked(hit);
+        }
+        else
+        {
+            Invalidate();
+        }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var background = new SolidBrush(palette.ListBack);
+        e.Graphics.FillRectangle(background, ClientRectangle);
+        if (items.Count == 0) return;
+
+        var origin = AutoScrollPosition;
+        for (var index = 0; index < items.Count; index++)
+        {
+            var bounds = ItemBounds(index);
+            bounds.Offset(origin);
+            if (bounds.Bottom < 0 || bounds.Top > ClientSize.Height) continue;
+            DrawItem(e.Graphics, index, bounds);
+        }
+    }
+
+    private void ToggleSelected()
+    {
+        if (selectedIndex < 0 || selectedIndex >= items.Count) return;
+        ToggleChecked(selectedIndex);
+    }
+
+    private void ToggleChecked(int index)
+    {
+        var account = items[index];
+        if (!checkedBatchFiles.Remove(account.BatchFile))
+        {
+            checkedBatchFiles.Add(account.BatchFile);
+        }
+        Invalidate();
+        CheckedChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void DrawItem(Graphics graphics, int index, Rectangle bounds)
+    {
+        var account = items[index];
+        var isChecked = checkedBatchFiles.Contains(account.BatchFile);
+        var isSelected = index == selectedIndex;
+        if (isSelected)
+        {
+            using var selectedBrush = new SolidBrush(Color.FromArgb(42, palette.Primary));
+            graphics.FillRectangle(selectedBrush, bounds);
+        }
+
+        var checkTop = bounds.Top + (bounds.Height - BandChecklistLayoutMetrics.CheckSize) / 2;
+        var checkBounds = new Rectangle(bounds.Left + 4, checkTop, BandChecklistLayoutMetrics.CheckSize, BandChecklistLayoutMetrics.CheckSize);
+        using var checkBack = new SolidBrush(isChecked ? palette.Primary : Color.FromArgb(245, palette.ListBack));
+        using var checkBorder = new Pen(isChecked ? palette.Primary : palette.Border, 1.4F);
+        graphics.FillRectangle(checkBack, checkBounds);
+        graphics.DrawRectangle(checkBorder, checkBounds);
+        if (isChecked)
+        {
+            using var checkPen = new Pen(Color.White, 2F)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+            graphics.DrawLines(checkPen, new[]
+            {
+                new Point(checkBounds.Left + 3, checkBounds.Top + 8),
+                new Point(checkBounds.Left + 7, checkBounds.Bottom - 4),
+                new Point(checkBounds.Right - 3, checkBounds.Top + 4)
+            });
+        }
+
+        var textBounds = new Rectangle(checkBounds.Right + 8, bounds.Top + 2, bounds.Width - checkBounds.Width - 16, bounds.Height - 4);
+        using var textBrush = new SolidBrush(palette.Text);
+        using var format = new StringFormat
+        {
+            Alignment = StringAlignment.Near,
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.EllipsisCharacter,
+            FormatFlags = StringFormatFlags.NoWrap
+        };
+        graphics.DrawString(account.ToString(), Font, textBrush, textBounds, format);
+
+        if (Focused && isSelected)
+        {
+            using var focusPen = new Pen(Color.FromArgb(150, palette.Secondary), 1F) { DashStyle = DashStyle.Dot };
+            graphics.DrawRectangle(focusPen, new Rectangle(bounds.Left + 1, bounds.Top + 1, bounds.Width - 3, bounds.Height - 3));
+        }
+    }
+
+    private int HitTest(Point point)
+    {
+        var scrolledPoint = new Point(point.X - AutoScrollPosition.X, point.Y - AutoScrollPosition.Y);
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (ItemBounds(index).Contains(scrolledPoint)) return index;
+        }
+        return -1;
+    }
+
+    private Rectangle ItemBounds(int index)
+    {
+        var layout = CurrentLayout();
+        var row = index / layout.ColumnCount;
+        var column = index % layout.ColumnCount;
+        return new Rectangle(
+            BandChecklistLayoutMetrics.Padding + column * (layout.ColumnWidth + BandChecklistLayoutMetrics.ColumnGap),
+            BandChecklistLayoutMetrics.Padding + row * BandChecklistLayoutMetrics.RowHeight,
+            layout.ColumnWidth,
+            BandChecklistLayoutMetrics.RowHeight);
+    }
+
+    private BandChecklistLayoutMetrics CurrentLayout()
+    {
+        return BandChecklistLayoutMetrics.Calculate(ClientSize.Width, items.Count);
+    }
+
+    private void UpdateScrollSize()
+    {
+        if (updateDepth > 0) return;
+        var layout = CurrentLayout();
+        AutoScrollMinSize = new Size(0, layout.ScrollHeight);
     }
 }
 

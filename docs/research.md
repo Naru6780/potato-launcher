@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.48`
+**Current version:** `1.0.49`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 
@@ -76,7 +76,7 @@ Potato Launcher Assets\Account Icons
 
 The cache is keyed by the launcher account key or BAT identity. Portraits are refreshed only from saved Lodestone profile IDs or URLs. The app caches both the face portrait (`fc0`) for roster tiles and the full-body portrait (`fl0`) for richer character-card UI. The app does not use placeholder icons or guessed profile matches in roster mode; missing icons stay visibly unmapped until the user assigns a profile URL or imports account metadata.
 
-On startup, mapped accounts with saved Lodestone profile URLs are refreshed so changed Lodestone portraits replace the local cache. Accounts without a profile mapping are skipped rather than guessed.
+On startup, mapped accounts with saved Lodestone profile URLs load from the local cache immediately. Missing, incomplete, or stale portrait caches are refreshed in parallel in the background; fresh complete caches are skipped so startup stays responsive. Accounts without a profile mapping are skipped rather than guessed.
 
 Manual Lodestone profile assignment in Shared mode can update XIVLauncher's `accountsList.json` for the matching `UserName`, `UseSteamServiceAccount`, and `UseOtp` entry. Potato Launcher only writes `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl`, and first creates a timestamped backup under `backups\PotatoLauncher`.
 
@@ -86,7 +86,7 @@ The Band Manager Save button and Settings export action write the current launch
 
 Band names are edited by right-clicking a band and choosing `Set name`; the old permanent rename text box was removed to keep the member list larger and the UI less cluttered.
 
-Account ordering is stored in portable `accountList.json` as `SharedAccountOrder` and `InstancedAccountOrder`, separate from `settings.json`. Dragging in the account list updates that order. Band Manager does not have a separate reorder model; it mirrors account order and saves checked band members in that order. `LastConnectedUtc` stores the timestamp when Potato Launcher observes a successful `Character@World` title, enabling sort-by-last-connected.
+Account ordering is stored in portable `accountList.json` as `SharedAccountOrder` and `InstancedAccountOrder`, separate from `settings.json`. Dragging in the account list updates that order. Band Manager does not have a separate reorder model; it mirrors account order and saves checked band members in that order. The Band Manager member checklist uses a custom vertical-scrolling multi-column control because WinForms `CheckedListBox.MultiColumn` scrolls horizontally by design. `LastConnectedUtc` stores the timestamp when Potato Launcher observes a successful `Character@World` title, enabling sort-by-last-connected.
 
 The Accounts panel width is a UI setting saved in `settings.json`. The splitter between Accounts and Band Manager clamps the account panel so Band Manager keeps enough room at small window sizes.
 
