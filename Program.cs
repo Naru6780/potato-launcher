@@ -1444,6 +1444,8 @@ internal sealed class MainForm : Form
             status.Text = $"Refreshing {AccountDisplayName(account)} from profile...";
             if (await RefreshAccountIconAsync(account, quiet: false))
             {
+                TryUpdateXivLauncherAccountMetadata(account, profile, showResult: true);
+                LoadAccounts();
                 PopulateLists();
             }
         };
@@ -1497,6 +1499,104 @@ internal sealed class MainForm : Form
         form.AcceptButton = ok;
         form.CancelButton = cancel;
         return form.ShowDialog() == DialogResult.OK ? input.Text.Trim() : "";
+    }
+
+    private bool TryUpdateXivLauncherAccountMetadata(Account account, AccountIconProfile profile, bool showResult)
+    {
+        if (!IsSharedLaunchMode()) return false;
+        if (string.IsNullOrWhiteSpace(profile.CharacterName) ||
+            string.IsNullOrWhiteSpace(profile.World) ||
+            string.IsNullOrWhiteSpace(profile.IconUrl))
+        {
+            return false;
+        }
+
+        var accountListPath = SharedAccountListPath();
+        if (!File.Exists(accountListPath)) return false;
+
+        try
+        {
+            var jsonText = File.ReadAllText(accountListPath);
+            var entries = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(jsonText);
+            if (entries is null) return false;
+
+            var userName = GetUserNameFromAccountKey(account.AccountKey);
+            var changed = false;
+            var updatedEntries = new List<Dictionary<string, object?>>();
+            foreach (var entry in entries)
+            {
+                var updated = entry.ToDictionary(pair => pair.Key, pair => JsonElementToObject(pair.Value), StringComparer.Ordinal);
+                if (IsMatchingXivLauncherAccountEntry(entry, userName, account.UseSteamServiceAccount, account.UseOtp))
+                {
+                    updated["ChosenCharacterName"] = profile.CharacterName;
+                    updated["ChosenCharacterWorld"] = profile.World;
+                    updated["ThumbnailUrl"] = profile.IconUrl;
+                    changed = true;
+                }
+                updatedEntries.Add(updated);
+            }
+
+            if (!changed) return false;
+
+            BackupXivLauncherAccountList(accountListPath);
+            File.WriteAllText(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
+            if (showResult)
+            {
+                status.Text = $"Updated XIVLauncher account metadata for {profile.CharacterName}.";
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (showResult)
+            {
+                MessageBox.Show($"Could not update XIVLauncher accountsList.json.\n\n{ex.Message}", "Account metadata update failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            return false;
+        }
+    }
+
+    private string SharedAccountListPath()
+    {
+        var folder = !string.IsNullOrWhiteSpace(settings.SharedProfileFolder)
+            ? settings.SharedProfileFolder
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XIVLauncher");
+        return Path.Combine(folder, "accountsList.json");
+    }
+
+    private static bool IsMatchingXivLauncherAccountEntry(Dictionary<string, JsonElement> entry, string userName, bool useSteam, bool useOtp)
+    {
+        return entry.TryGetValue("UserName", out var userNameElement) &&
+            (userNameElement.GetString() ?? "").Equals(userName, StringComparison.OrdinalIgnoreCase) &&
+            GetJsonElementBool(entry, "UseSteamServiceAccount") == useSteam &&
+            GetJsonElementBool(entry, "UseOtp") == useOtp;
+    }
+
+    private static bool GetJsonElementBool(Dictionary<string, JsonElement> entry, string propertyName)
+    {
+        return entry.TryGetValue(propertyName, out var value) && value.ValueKind == JsonValueKind.True;
+    }
+
+    private static object? JsonElementToObject(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number when element.TryGetInt64(out var longValue) => longValue,
+            JsonValueKind.Number when element.TryGetDouble(out var doubleValue) => doubleValue,
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            _ => JsonSerializer.Deserialize<object>(element.GetRawText())
+        };
+    }
+
+    private static void BackupXivLauncherAccountList(string accountListPath)
+    {
+        var backupFolder = Path.Combine(Path.GetDirectoryName(accountListPath)!, "backups", "PotatoLauncher");
+        Directory.CreateDirectory(backupFolder);
+        var backupPath = Path.Combine(backupFolder, $"accountsList-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+        File.Copy(accountListPath, backupPath, overwrite: false);
     }
 
     private async Task<bool> RefreshAccountIconAsync(Account account, bool quiet)

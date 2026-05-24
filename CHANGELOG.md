@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.31 - 2026-05-24
+
+- Backfilled XIVLauncher's Shared-mode account metadata when a Lodestone profile URL is manually assigned from the right-click menu.
+- Added timestamped `accountsList.json` backups before writing `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl`.
+
 ## 1.0.30 - 2026-05-24
 
 - Improved automatic Lodestone profile discovery by reusing known surnames and worlds from accounts that already have profile data.
