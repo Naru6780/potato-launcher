@@ -906,13 +906,10 @@ internal sealed class MainForm : Form
         var oldPanelBounds = Rectangle.Union(accountCard.Bounds, bandCard.Bounds);
         var layout = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, settings.AccountPanelWidth);
 
-        using var redraw = forceRepaint ? null : BeginRedrawScope(background);
-        if (!forceRepaint)
-        {
-            background.SuspendLayout();
-            accountCard.SuspendLayout();
-            bandCard.SuspendLayout();
-        }
+        using var redraw = forceRepaint ? BeginRedrawScope(accountCard, bandCard) : BeginRedrawScope(background);
+        background.SuspendLayout();
+        accountCard.SuspendLayout();
+        bandCard.SuspendLayout();
         accountCard.SetBounds(layout.Margin, layout.Top, layout.AccountWidth, layout.ContentHeight);
         bandCard.SetBounds(layout.Margin + layout.AccountWidth + layout.Gap, layout.Top, layout.BandWidth, layout.ContentHeight);
         if (accountResizeHandle is not null)
@@ -952,17 +949,17 @@ internal sealed class MainForm : Form
 
         statusPill.Bounds = new Rectangle(Math.Max(layout.Margin, (ClientSize.Width - 370) / 2), Math.Max(layout.Top + layout.ContentHeight + 24, ClientSize.Height - 56), 370, 30);
 
-        if (!forceRepaint)
-        {
-            bandCard.ResumeLayout(false);
-            accountCard.ResumeLayout(false);
-            background.ResumeLayout(false);
-        }
+        bandCard.ResumeLayout(false);
+        accountCard.ResumeLayout(false);
+        background.ResumeLayout(false);
         if (forceRepaint)
         {
             var dirty = Rectangle.Union(oldPanelBounds, Rectangle.Union(accountCard.Bounds, bandCard.Bounds));
             dirty.Inflate(32, 32);
             background.Invalidate(dirty, false);
+            accountCard.Invalidate(true);
+            bandCard.Invalidate(true);
+            accountResizeHandle?.Invalidate();
         }
     }
 
@@ -4567,7 +4564,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.42 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.43 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -4635,9 +4632,9 @@ internal sealed class MainForm : Form
         return button;
     }
 
-    private static IDisposable BeginRedrawScope(Control control)
+    private static IDisposable BeginRedrawScope(params Control[] controls)
     {
-        return new RedrawScope(control);
+        return new RedrawScope(controls);
     }
 
     private static void EnableSmoothRendering(Control root)
@@ -4664,25 +4661,29 @@ internal sealed class MainForm : Form
 
     private sealed class RedrawScope : IDisposable
     {
-        private readonly Control control;
-        private readonly bool redrawSuspended;
+        private readonly List<Control> controls = [];
         private bool disposed;
 
-        public RedrawScope(Control control)
+        public RedrawScope(IEnumerable<Control> controls)
         {
-            this.control = control;
-            if (!control.IsHandleCreated) return;
-            SendMessage(control.Handle, WmSetRedraw, IntPtr.Zero, IntPtr.Zero);
-            redrawSuspended = true;
+            foreach (var control in controls)
+            {
+                if (!control.IsHandleCreated) continue;
+                SendMessage(control.Handle, WmSetRedraw, IntPtr.Zero, IntPtr.Zero);
+                this.controls.Add(control);
+            }
         }
 
         public void Dispose()
         {
             if (disposed) return;
             disposed = true;
-            if (!redrawSuspended || control.IsDisposed) return;
-            SendMessage(control.Handle, WmSetRedraw, new IntPtr(1), IntPtr.Zero);
-            control.Invalidate(true);
+            foreach (var control in controls)
+            {
+                if (control.IsDisposed) continue;
+                SendMessage(control.Handle, WmSetRedraw, new IntPtr(1), IntPtr.Zero);
+                control.Invalidate(true);
+            }
         }
     }
 

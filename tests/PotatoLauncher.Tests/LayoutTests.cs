@@ -10,4 +10,17 @@ public class LayoutTests
         Assert.True(metrics.AccountWidth >= 1000);
         Assert.True(metrics.BandWidth >= 420);
     }
+
+    [Theory]
+    [InlineData(-500)]
+    [InlineData(0)]
+    [InlineData(5000)]
+    public void LauncherLayoutMetrics_ClampPanelsToUsableWidths(int requestedWidth)
+    {
+        var metrics = LauncherLayoutMetrics.Calculate(clientWidth: 990, clientHeight: 700, requestedAccountWidth: requestedWidth);
+
+        Assert.True(metrics.AccountWidth >= 300);
+        Assert.True(metrics.BandWidth >= 420);
+        Assert.Equal(20, metrics.Gap);
+    }
 }

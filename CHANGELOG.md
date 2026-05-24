@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.43 - 2026-05-24
+
+- Fixed splitter-drag rendering artifacts where panels could collapse into vertical striped stale-paint regions.
+- Kept live resize responsive while making each drag layout update atomic at the resized panel level.
+- Added layout clamp coverage for extreme splitter widths.
+
 ## 1.0.42 - 2026-05-24
 
 - Made the Accounts/Band Manager resize handle more responsive by removing heavy redraw suspension from live dragging.
