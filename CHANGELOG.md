@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.35 - 2026-05-24
+
+- Refreshed mapped Lodestone portraits automatically on every app launch.
+- Added account drag ordering in both text and roster account views; Band Manager mirrors that same order.
+- Added account right-click sorting by name and by last connected.
+- Added account right-click deletion with `accountsList.json` backup in Shared mode and safe BAT deletion in Instanced mode.
+- Removed obsolete Band Manager member drag code so account order is the single source of truth.
+
 ## 1.0.34 - 2026-05-24
 
 - Removed the permanent Band Manager rename text box.

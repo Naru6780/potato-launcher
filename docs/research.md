@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.34`
+**Current version:** `1.0.35`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 
@@ -74,7 +74,9 @@ Account portraits are cached in:
 Potato Launcher Assets\Account Icons
 ```
 
-The cache is keyed by the launcher account key or BAT identity. Portraits are refreshed directly from saved Lodestone profile IDs when available. If no profile ID is known, refresh uses exact Lodestone search matches with a known world and known surnames from prior profile/title mappings. The app caches both the face portrait (`fc0`) for roster tiles and the full-body portrait (`fl0`) for richer character-card UI. The app does not use placeholder/fallback icons in roster mode; missing icons stay visibly unmapped until the account has been launched once, inferred from known world/surname data, or assigned a profile URL from the right-click menu.
+The cache is keyed by the launcher account key or BAT identity. Portraits are refreshed only from saved Lodestone profile IDs or URLs. The app caches both the face portrait (`fc0`) for roster tiles and the full-body portrait (`fl0`) for richer character-card UI. The app does not use placeholder icons or guessed profile matches in roster mode; missing icons stay visibly unmapped until the user assigns a profile URL or imports account metadata.
+
+On startup, mapped accounts with saved Lodestone profile URLs are refreshed so changed Lodestone portraits replace the local cache. Accounts without a profile mapping are skipped rather than guessed.
 
 Manual Lodestone profile assignment in Shared mode can update XIVLauncher's `accountsList.json` for the matching `UserName`, `UseSteamServiceAccount`, and `UseOtp` entry. Potato Launcher only writes `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl`, and first creates a timestamped backup under `backups\PotatoLauncher`.
 
@@ -83,6 +85,8 @@ Settings account export writes a Potato Launcher transfer JSON with safe XIVLaun
 The Band Manager Save button and Settings export action write the current launch method's bands to `band.json` beside `settings.json`. Band import appends bands into the current launch method and uniquifies duplicate names instead of replacing the user's existing bands.
 
 Band names are edited by right-clicking a band and choosing `Set name`; the old permanent rename text box was removed to keep the member list larger and the UI less cluttered.
+
+Account ordering is stored in `SharedAccountOrder` and `InstancedAccountOrder` in portable settings. Dragging in the account list updates that order. Band Manager does not have a separate reorder model; it mirrors account order and saves checked band members in that order. `LastConnectedUtc` stores the timestamp when Potato Launcher observes a successful `Character@World` title, enabling sort-by-last-connected.
 
 ## News and Updates
 

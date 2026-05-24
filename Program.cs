@@ -66,6 +66,9 @@ internal sealed class AppSettings
     public bool RandomizeThemeAtLaunch { get; set; }
     public string LastShownChangelogVersion { get; set; } = "";
     public Dictionary<string, AccountIconProfile> AccountIcons { get; set; } = [];
+    public List<string> SharedAccountOrder { get; set; } = [];
+    public List<string> InstancedAccountOrder { get; set; } = [];
+    public Dictionary<string, DateTime> LastConnectedUtc { get; set; } = [];
     public List<BandConfig> Bands { get; set; } = [];
     public List<BandConfig> InstancedBands { get; set; } = [];
     public List<BandConfig> SharedBands { get; set; } = [];
@@ -123,6 +126,12 @@ internal sealed class AccountContextEventArgs(Account account, Point location) :
 {
     public Account Account { get; } = account;
     public Point Location { get; } = location;
+}
+
+internal sealed class AccountReorderEventArgs(Account account, int targetIndex) : EventArgs
+{
+    public Account Account { get; } = account;
+    public int TargetIndex { get; } = targetIndex;
 }
 
 internal sealed class MainForm : Form
@@ -283,6 +292,9 @@ internal sealed class MainForm : Form
     private readonly List<NewsBanner> newsBanners = [];
     private readonly List<NewsEntry> newsEntries = [];
     private int selectedNewsBannerIndex;
+    private int accountDragIndex = -1;
+    private Point accountDragStart;
+    private bool refreshingStartupPortraits;
 
     public MainForm()
     {
@@ -294,7 +306,11 @@ internal sealed class MainForm : Form
         MigrateLegacyBands();
         PopulateLists();
         ApplyTheme(settings.Theme);
-        Shown += async (_, _) => await ShowChangelogIfNewVersionAsync();
+        Shown += async (_, _) =>
+        {
+            await ShowChangelogIfNewVersionAsync();
+            await RefreshMappedAccountIconsOnStartupAsync();
+        };
         if (!settings.LaunchModeChosen) Shown += (_, _) => ShowLaunchChoiceOverlay();
     }
 
@@ -560,23 +576,49 @@ internal sealed class MainForm : Form
     {
         accountCard = Card(42, 118, 330, 450);
         accountCard.Controls.Add(Header("Accounts", 18, 12, 180, 32));
-        accountList = new ListBox { Bounds = new Rectangle(18, 58, 294, 320) };
+        accountList = new ListBox { Bounds = new Rectangle(18, 58, 294, 320), AllowDrop = true };
         accountList.DoubleClick += (_, _) => LaunchSelectedAccount();
         accountList.MouseDown += (_, e) =>
         {
-            if (e.Button != MouseButtons.Right) return;
             var index = accountList.IndexFromPoint(e.Location);
-            if (index < 0 || index >= accountList.Items.Count) return;
-            accountList.SelectedIndex = index;
-            if (accountList.Items[index] is Account account)
+            if (e.Button == MouseButtons.Left)
             {
-                ShowAccountContextMenu(account, accountList, e.Location);
+                accountDragIndex = index;
+                accountDragStart = e.Location;
+                return;
             }
+            if (e.Button == MouseButtons.Right)
+            {
+                if (index < 0 || index >= accountList.Items.Count) return;
+                accountList.SelectedIndex = index;
+                if (accountList.Items[index] is Account account)
+                {
+                    ShowAccountContextMenu(account, accountList, e.Location);
+                }
+            }
+        };
+        accountList.MouseMove += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left || accountDragIndex < 0 || accountDragIndex >= accountList.Items.Count) return;
+            if (!IsDragGesture(accountDragStart, e.Location)) return;
+            if (accountList.Items[accountDragIndex] is Account account)
+            {
+                accountList.DoDragDrop(account, DragDropEffects.Move);
+            }
+            accountDragIndex = -1;
+        };
+        accountList.DragOver += (_, e) => e.Effect = e.Data?.GetDataPresent(typeof(Account)) == true ? DragDropEffects.Move : DragDropEffects.None;
+        accountList.DragDrop += (_, e) =>
+        {
+            if (e.Data?.GetData(typeof(Account)) is not Account account) return;
+            var point = accountList.PointToClient(new Point(e.X, e.Y));
+            ReorderAccount(account, DropIndexFromListBox(accountList, point));
         };
         accountCard.Controls.Add(accountList);
         accountRosterGrid = new AccountRosterGrid { Bounds = new Rectangle(18, 58, 294, 320), Visible = false };
         accountRosterGrid.AccountActivated += (_, _) => LaunchSelectedAccount();
         accountRosterGrid.AccountContextRequested += (_, args) => ShowAccountContextMenu(args.Account, accountRosterGrid, args.Location);
+        accountRosterGrid.AccountReordered += (_, args) => ReorderAccount(args.Account, args.TargetIndex);
         accountCard.Controls.Add(accountRosterGrid);
 
         bandCard = Card(392, 118, 560, 450);
@@ -1255,15 +1297,10 @@ internal sealed class MainForm : Form
     private void PopulateLists()
     {
         accountList.Items.Clear();
-        memberList.Items.Clear();
-        IEnumerable<Account> orderedAccounts = IsSharedLaunchMode()
-            ? accounts
-            : accounts.OrderBy(account => account.SortOrder).ThenBy(account => account.Name);
-        var orderedAccountList = orderedAccounts.ToList();
+        var orderedAccountList = OrderedAccounts().ToList();
         foreach (var account in orderedAccountList)
         {
             accountList.Items.Add(account);
-            memberList.Items.Add(account);
         }
         accountRosterGrid.SetItems(orderedAccountList.Select(CreateRosterItem));
         bandList.Items.Clear();
@@ -1273,9 +1310,116 @@ internal sealed class MainForm : Form
             bandList.Items.Add(band);
         }
         bandList.SelectedIndex = bandList.Items.Count > 0 ? 0 : -1;
+        if (bandList.SelectedItem is not BandConfig)
+        {
+            PopulateMemberList(null);
+        }
         UpdateAccountStatus();
         UpdateAccountDisplayMode();
         ApplyTheme(settings.Theme);
+    }
+
+    private IEnumerable<Account> OrderedAccounts()
+    {
+        var accountList = IsSharedLaunchMode()
+            ? accounts.ToList()
+            : accounts.OrderBy(account => account.SortOrder).ThenBy(account => account.Name).ToList();
+        var savedOrder = CurrentAccountOrder();
+        if (savedOrder.Count == 0) return accountList;
+
+        var orderIndex = savedOrder
+            .Select((key, index) => new { key, index })
+            .GroupBy(pair => pair.key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.OrdinalIgnoreCase);
+        return accountList
+            .Select((account, index) => new { account, index })
+            .OrderBy(pair => orderIndex.TryGetValue(AccountIconKey(pair.account), out var savedIndex) ? savedIndex : int.MaxValue)
+            .ThenBy(pair => pair.index)
+            .Select(pair => pair.account)
+            .ToList();
+    }
+
+    private List<string> CurrentAccountOrder() => IsSharedLaunchMode() ? settings.SharedAccountOrder : settings.InstancedAccountOrder;
+
+    private void SaveCurrentAccountOrder(IEnumerable<Account> orderedAccounts)
+    {
+        var order = orderedAccounts.Select(AccountIconKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (IsSharedLaunchMode())
+        {
+            settings.SharedAccountOrder = order;
+        }
+        else
+        {
+            settings.InstancedAccountOrder = order;
+        }
+        SaveSettings(settings);
+    }
+
+    private void ReorderAccount(Account account, int targetIndex)
+    {
+        var ordered = OrderedAccounts().ToList();
+        var currentIndex = ordered.FindIndex(item => AccountIconKey(item).Equals(AccountIconKey(account), StringComparison.OrdinalIgnoreCase));
+        if (currentIndex < 0) return;
+
+        var moved = ordered[currentIndex];
+        ordered.RemoveAt(currentIndex);
+        targetIndex = Math.Clamp(targetIndex, 0, ordered.Count);
+        if (targetIndex > currentIndex) targetIndex--;
+        ordered.Insert(targetIndex, moved);
+        SaveCurrentAccountOrder(ordered);
+        PopulateLists();
+        SelectAccount(moved);
+        status.Text = $"Moved {AccountDisplayName(moved)}.";
+    }
+
+    private void SortAccountsByName()
+    {
+        var ordered = OrderedAccounts()
+            .OrderBy(AccountDisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(account => GetUserNameFromAccountKey(account.AccountKey), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        SaveCurrentAccountOrder(ordered);
+        PopulateLists();
+        status.Text = "Sorted accounts alphabetically.";
+    }
+
+    private void SortAccountsByLastConnected()
+    {
+        var ordered = OrderedAccounts()
+            .OrderByDescending(account => settings.LastConnectedUtc.TryGetValue(AccountIconKey(account), out var connectedAt) ? connectedAt : DateTime.MinValue)
+            .ThenBy(AccountDisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        SaveCurrentAccountOrder(ordered);
+        PopulateLists();
+        status.Text = "Sorted accounts by last connected.";
+    }
+
+    private void SelectAccount(Account account)
+    {
+        var key = AccountIconKey(account);
+        for (var index = 0; index < accountList.Items.Count; index++)
+        {
+            if (accountList.Items[index] is Account item && AccountIconKey(item).Equals(key, StringComparison.OrdinalIgnoreCase))
+            {
+                accountList.SelectedIndex = index;
+                accountRosterGrid.SelectAccount(account);
+                return;
+            }
+        }
+    }
+
+    private static bool IsDragGesture(Point start, Point current)
+    {
+        return Math.Abs(current.X - start.X) >= SystemInformation.DragSize.Width / 2 ||
+            Math.Abs(current.Y - start.Y) >= SystemInformation.DragSize.Height / 2;
+    }
+
+    private static int DropIndexFromListBox(ListBox list, Point point)
+    {
+        var index = list.IndexFromPoint(point);
+        if (index < 0) return list.Items.Count;
+        var bounds = list.GetItemRectangle(index);
+        return point.Y > bounds.Top + bounds.Height / 2 ? index + 1 : index;
     }
 
     private AccountRosterItem CreateRosterItem(Account account)
@@ -1366,45 +1510,6 @@ internal sealed class MainForm : Form
         return name;
     }
 
-    private IEnumerable<string> BuildLodestoneNameCandidates(Account account)
-    {
-        var displayName = AccountDisplayName(account);
-        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(displayName))
-        {
-            emitted.Add(displayName);
-            yield return displayName;
-        }
-
-        if (displayName.Contains(' ', StringComparison.Ordinal)) yield break;
-
-        foreach (var surname in GuessLodestoneSurnames(account).Concat(KnownLodestoneSurnames()))
-        {
-            var candidate = $"{displayName} {surname}";
-            if (emitted.Add(candidate)) yield return candidate;
-        }
-    }
-
-    private static IEnumerable<string> GuessLodestoneSurnames(Account account)
-    {
-        var source = $"{account.Name} {account.AccountKey} {account.BatchFile}".ToLowerInvariant();
-        if (source.Contains("potato", StringComparison.Ordinal)) yield return "Potato";
-        if (source.Contains("mangler", StringComparison.Ordinal)) yield return "Mangler";
-        if (source.Contains("garrison", StringComparison.Ordinal)) yield return "Garrison";
-        if (source.Contains("skye", StringComparison.Ordinal)) yield return "Skye";
-    }
-
-    private IEnumerable<string> KnownLodestoneSurnames()
-    {
-        return settings.AccountIcons.Values
-            .Select(icon => icon.CharacterName)
-            .Where(name => !string.IsNullOrWhiteSpace(name) && name.Contains(' ', StringComparison.Ordinal))
-            .Select(name => name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Last())
-            .Where(surname => !string.IsNullOrWhiteSpace(surname))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
     private void RememberAccountCharacterTitle(Account account, string title)
     {
         if (!TryParseCharacterTitle(title, out var characterName, out var world)) return;
@@ -1471,6 +1576,17 @@ internal sealed class MainForm : Form
             }
         };
         menu.Items.Add(setProfile);
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        var sortMenu = new ToolStripMenuItem("Sort accounts");
+        sortMenu.DropDownItems.Add("Alphabetically", null, (_, _) => SortAccountsByName());
+        sortMenu.DropDownItems.Add("By last connected", null, (_, _) => SortAccountsByLastConnected());
+        menu.Items.Add(sortMenu);
+
+        var delete = new ToolStripMenuItem("Delete account");
+        delete.Click += (_, _) => DeleteAccount(account);
+        menu.Items.Add(delete);
 
         menu.Show(owner, location);
     }
@@ -1618,6 +1734,94 @@ internal sealed class MainForm : Form
         Directory.CreateDirectory(backupFolder);
         var backupPath = Path.Combine(backupFolder, $"accountsList-{DateTime.Now:yyyyMMdd-HHmmss}.json");
         File.Copy(accountListPath, backupPath, overwrite: false);
+    }
+
+    private void DeleteAccount(Account account)
+    {
+        var displayName = AccountDisplayName(account);
+        var result = MessageBox.Show(
+            $"Delete {displayName} from Potato Launcher?\n\nShared mode removes the entry from accountsList.json after making a backup. Instanced mode deletes the selected BAT launcher file.",
+            "Delete account",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+        if (result != DialogResult.Yes) return;
+
+        try
+        {
+            if (IsSharedLaunchMode())
+            {
+                DeleteSharedAccount(account);
+            }
+            else
+            {
+                DeleteInstancedAccount(account);
+            }
+
+            RemoveAccountReferences(account);
+            SaveSettings(settings);
+            LoadAccounts();
+            PopulateLists();
+            status.Text = $"Deleted {displayName}.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not delete {displayName}.\n\n{ex.Message}", "Delete account failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void DeleteSharedAccount(Account account)
+    {
+        var accountListPath = SharedAccountListPath();
+        if (!File.Exists(accountListPath)) throw new FileNotFoundException("Missing accountsList.json.", accountListPath);
+
+        var entries = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(File.ReadAllText(accountListPath))
+            ?? throw new InvalidOperationException("accountsList.json could not be read.");
+        var userName = GetUserNameFromAccountKey(account.AccountKey);
+        var updatedEntries = entries
+            .Where(entry => !IsMatchingXivLauncherAccountEntry(entry, userName, account.UseSteamServiceAccount, account.UseOtp))
+            .Select(entry => entry.ToDictionary(pair => pair.Key, pair => JsonElementToObject(pair.Value), StringComparer.Ordinal))
+            .ToList();
+
+        if (updatedEntries.Count == entries.Count) throw new InvalidOperationException("No matching XIVLauncher account entry was found.");
+
+        BackupXivLauncherAccountList(accountListPath);
+        File.WriteAllText(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private void DeleteInstancedAccount(Account account)
+    {
+        if (string.IsNullOrWhiteSpace(settings.DalamudFolder)) throw new InvalidOperationException("No Instanced folder is selected.");
+        var root = Path.GetFullPath(settings.DalamudFolder);
+        var target = Path.GetFullPath(Path.Combine(root, account.BatchFile));
+        if (!target.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("The BAT file is outside the selected Instanced folder.");
+        }
+        if (!File.Exists(target)) throw new FileNotFoundException("Missing BAT launcher file.", target);
+        File.Delete(target);
+    }
+
+    private void RemoveAccountReferences(Account account)
+    {
+        var key = AccountIconKey(account);
+        if (settings.AccountIcons.TryGetValue(key, out var profile))
+        {
+            DeleteIfExists(AccountIconPath(profile));
+            DeleteIfExists(AccountFullImagePath(profile));
+            settings.AccountIcons.Remove(key);
+        }
+        settings.LastConnectedUtc.Remove(key);
+        settings.SharedAccountOrder.RemoveAll(value => value.Equals(key, StringComparison.OrdinalIgnoreCase));
+        settings.InstancedAccountOrder.RemoveAll(value => value.Equals(key, StringComparison.OrdinalIgnoreCase));
+        foreach (var band in settings.Bands.Concat(settings.SharedBands).Concat(settings.InstancedBands))
+        {
+            band.BatchFiles.RemoveAll(file => file.Equals(account.BatchFile, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) File.Delete(path);
     }
 
     private void ExportAccountList()
@@ -1850,6 +2054,42 @@ internal sealed class MainForm : Form
 
     private static string BandExportPath() => Path.Combine(Path.GetDirectoryName(SettingsPath())!, "band.json");
 
+    private async Task RefreshMappedAccountIconsOnStartupAsync()
+    {
+        if (refreshingStartupPortraits || accounts.Count == 0) return;
+        refreshingStartupPortraits = true;
+        var refreshed = 0;
+        var failed = 0;
+        try
+        {
+            foreach (var account in OrderedAccounts())
+            {
+                if (!settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile)) continue;
+                var profileUrl = AccountProfileUrl(profile);
+                if (string.IsNullOrWhiteSpace(profileUrl)) continue;
+
+                status.Text = $"Refreshing {AccountDisplayName(account)} portrait...";
+                if (await RefreshAccountIconAsync(account, quiet: true))
+                {
+                    refreshed++;
+                }
+                else
+                {
+                    failed++;
+                }
+            }
+
+            PopulateLists();
+            status.Text = failed == 0
+                ? $"Updated {refreshed} mapped portrait{(refreshed == 1 ? "" : "s")}."
+                : $"Updated {refreshed} mapped portrait{(refreshed == 1 ? "" : "s")}; {failed} failed.";
+        }
+        finally
+        {
+            refreshingStartupPortraits = false;
+        }
+    }
+
     private async Task<bool> RefreshAccountIconAsync(Account account, bool quiet)
     {
         var key = AccountIconKey(account);
@@ -1861,7 +2101,7 @@ internal sealed class MainForm : Form
 
         try
         {
-            var result = await FindLodestoneIconAsync(account, profile, KnownLodestoneWorlds(), BuildLodestoneNameCandidates(account));
+            var result = await FindLodestoneIconAsync(account, profile);
             Directory.CreateDirectory(AccountIconsFolder());
             profile.LodestoneId = result.LodestoneId;
             profile.CharacterName = result.CharacterName;
@@ -1897,16 +2137,7 @@ internal sealed class MainForm : Form
         }
     }
 
-    private IEnumerable<string> KnownLodestoneWorlds()
-    {
-        return settings.AccountIcons.Values
-            .Select(icon => icon.World)
-            .Where(world => !string.IsNullOrWhiteSpace(world))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    private static async Task<LodestoneIconResult> FindLodestoneIconAsync(Account account, AccountIconProfile profile, IEnumerable<string> knownWorlds, IEnumerable<string> candidateNames)
+    private static async Task<LodestoneIconResult> FindLodestoneIconAsync(Account account, AccountIconProfile profile)
     {
         if (!string.IsNullOrWhiteSpace(profile.LodestoneId))
         {
@@ -1919,77 +2150,7 @@ internal sealed class MainForm : Form
             return await FetchLodestoneProfileAsync(profileId);
         }
 
-        if (!string.IsNullOrWhiteSpace(profile.CharacterName))
-        {
-            if (!string.IsNullOrWhiteSpace(profile.World))
-            {
-                return await FindLodestoneBySearchAsync(profile.CharacterName, profile.World);
-            }
-            foreach (var candidateWorld in knownWorlds.Where(world => !string.IsNullOrWhiteSpace(world)).Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    return await FindLodestoneBySearchAsync(profile.CharacterName, candidateWorld);
-                }
-                catch
-                {
-                    // Try the next known world before reporting failure.
-                }
-            }
-        }
-
-        foreach (var candidateName in candidateNames)
-        {
-            foreach (var candidateWorld in knownWorlds.Append(profile.World).Where(world => !string.IsNullOrWhiteSpace(world)).Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    return await FindLodestoneBySearchAsync(candidateName, candidateWorld);
-                }
-                catch
-                {
-                    // Try the next strict name/world candidate before reporting failure.
-                }
-            }
-        }
-
-        throw new InvalidOperationException($"No unique Lodestone profile found for {AccountDisplayName(account)}. Launch once or right-click the tile to set the profile URL.");
-    }
-
-    private static async Task<LodestoneIconResult> FindLodestoneBySearchAsync(string characterName, string world)
-    {
-        var url = $"https://eu.finalfantasyxiv.com/lodestone/character/?q={Uri.EscapeDataString(characterName)}";
-        if (!string.IsNullOrWhiteSpace(world))
-        {
-            url += $"&worldname={Uri.EscapeDataString(world)}";
-        }
-
-        var html = await LodestoneClient.GetStringAsync(url);
-        var matches = Regex.Matches(html, @"<a\s+href=""/lodestone/character/(?<id>\d+)/""[^>]*class=""entry__link"">.*?<div\s+class=""entry__chara__face""><img\s+src=""(?<icon>[^""]+)""[^>]*>.*?<p\s+class=""entry__name"">(?<name>[^<]+)</p><p\s+class=""entry__world"">.*?(?<world>[A-Za-z'\-]+)\s*\[", RegexOptions.Singleline | RegexOptions.IgnoreCase)
-            .Cast<Match>()
-            .Select(match => new
-            {
-                Id = match.Groups["id"].Value,
-                Name = WebUtility.HtmlDecode(match.Groups["name"].Value).Trim(),
-                World = WebUtility.HtmlDecode(match.Groups["world"].Value).Trim()
-            })
-            .Where(match => match.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase) &&
-                (string.IsNullOrWhiteSpace(world) || match.World.Equals(world, StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-
-        if (matches.Count == 1)
-        {
-            return await FetchLodestoneProfileAsync(matches[0].Id);
-        }
-
-        if (matches.Count > 1)
-        {
-            throw new InvalidOperationException($"Multiple exact Lodestone matches for {characterName}. Set the profile URL from the tile menu.");
-        }
-
-        throw new InvalidOperationException(string.IsNullOrWhiteSpace(world)
-            ? $"No exact Lodestone match for {characterName}."
-            : $"No exact Lodestone match for {characterName}@{world}.");
+        throw new InvalidOperationException($"No Lodestone profile URL is set for {AccountDisplayName(account)}. Right-click the account and set the profile URL.");
     }
 
     private static async Task<LodestoneIconResult> FetchLodestoneProfileAsync(string lodestoneId)
@@ -2078,11 +2239,26 @@ internal sealed class MainForm : Form
     private void LoadSelectedBand()
     {
         if (bandList.SelectedItem is not BandConfig band) return;
+        PopulateMemberList(band);
+    }
+
+    private void PopulateMemberList(BandConfig? band)
+    {
         loadingBand = true;
-        for (var index = 0; index < memberList.Items.Count; index++)
+        memberList.Items.Clear();
+        var orderedAccounts = OrderedAccounts().ToList();
+        if (band is not null)
         {
-            var account = (Account)memberList.Items[index];
-            memberList.SetItemChecked(index, band.BatchFiles.Contains(account.BatchFile, StringComparer.OrdinalIgnoreCase));
+            NormalizeBand(band);
+        }
+
+        foreach (var account in orderedAccounts)
+        {
+            var index = memberList.Items.Add(account);
+            if (band is not null && band.BatchFiles.Contains(account.BatchFile, StringComparer.OrdinalIgnoreCase))
+            {
+                memberList.SetItemChecked(index, true);
+            }
         }
         loadingBand = false;
     }
@@ -2226,6 +2402,7 @@ internal sealed class MainForm : Form
                 loadingTitle.Text = $"Waiting for {client.Account.Name}";
                 UpdateLoadingOverlay($"{band.Name}: waiting {client.Account.Name} to connect ({index + 1}/{launchedClients.Count}).");
                 await WaitForGameClientCharacterTitleAsync(client, cancellation.Token);
+                RememberAccountConnected(client.Account);
             }
             status.Text = $"{band.Name} queue complete.";
             UpdateLoadingOverlay($"{band.Name} queue complete.");
@@ -2256,6 +2433,7 @@ internal sealed class MainForm : Form
         {
             var client = await StartAccountAndWaitForClientAsync(account, token);
             await WaitForGameClientCharacterTitleAsync(new StartedGameClient(account, client.ProcessId), token);
+            RememberAccountConnected(account);
             if (!quiet)
             {
                 status.Text = $"{account.Name} reached the character window title.";
@@ -2268,6 +2446,12 @@ internal sealed class MainForm : Form
             status.Text = $"Could not launch {account.Name}: {ex.Message}";
             return false;
         }
+    }
+
+    private void RememberAccountConnected(Account account)
+    {
+        settings.LastConnectedUtc[AccountIconKey(account)] = DateTime.UtcNow;
+        SaveSettings(settings);
     }
 
     private async Task<GameClientWindow> StartAccountAndWaitForClientAsync(Account account, CancellationToken token)
@@ -3620,7 +3804,7 @@ internal sealed class MainForm : Form
         return client;
     }
 
-    private static string AccountIconKey(Account account)
+    internal static string AccountIconKey(Account account)
     {
         return string.IsNullOrWhiteSpace(account.AccountKey) ? account.BatchFile : account.AccountKey;
     }
@@ -3911,8 +4095,11 @@ internal sealed class AccountRosterGrid : ScrollableControl
 
     public event EventHandler? AccountActivated;
     public event EventHandler<AccountContextEventArgs>? AccountContextRequested;
+    public event EventHandler<AccountReorderEventArgs>? AccountReordered;
 
     public Account? SelectedAccount => selectedIndex >= 0 && selectedIndex < items.Count ? items[selectedIndex].Account : null;
+    private int dragIndex = -1;
+    private Point dragStart;
 
     public ThemePalette Palette
     {
@@ -3929,6 +4116,7 @@ internal sealed class AccountRosterGrid : ScrollableControl
     {
         DoubleBuffered = true;
         AutoScroll = true;
+        AllowDrop = true;
         BackColor = palette.ListBack;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
         UpdateStyles();
@@ -3946,6 +4134,13 @@ internal sealed class AccountRosterGrid : ScrollableControl
         if (selectedIndex >= items.Count) selectedIndex = items.Count - 1;
         if (items.Count == 0) selectedIndex = -1;
         UpdateScrollSize();
+        Invalidate();
+    }
+
+    public void SelectAccount(Account account)
+    {
+        var key = MainForm.AccountIconKey(account);
+        selectedIndex = items.FindIndex(item => MainForm.AccountIconKey(item.Account).Equals(key, StringComparison.OrdinalIgnoreCase));
         Invalidate();
     }
 
@@ -3981,6 +4176,11 @@ internal sealed class AccountRosterGrid : ScrollableControl
         var hit = HitTest(e.Location);
         if (hit < 0) return;
         selectedIndex = hit;
+        if (e.Button == MouseButtons.Left)
+        {
+            dragIndex = hit;
+            dragStart = e.Location;
+        }
         Invalidate();
         if (e.Button == MouseButtons.Right)
         {
@@ -4000,8 +4200,28 @@ internal sealed class AccountRosterGrid : ScrollableControl
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        if (e.Button == MouseButtons.Left && dragIndex >= 0 && dragIndex < items.Count && IsDragGesture(dragStart, e.Location))
+        {
+            DoDragDrop(items[dragIndex].Account, DragDropEffects.Move);
+            dragIndex = -1;
+            return;
+        }
         var hit = HitTest(e.Location);
         tooltip.SetToolTip(this, hit >= 0 ? items[hit].Tooltip : "");
+    }
+
+    protected override void OnDragOver(DragEventArgs drgevent)
+    {
+        base.OnDragOver(drgevent);
+        drgevent.Effect = drgevent.Data?.GetDataPresent(typeof(Account)) == true ? DragDropEffects.Move : DragDropEffects.None;
+    }
+
+    protected override void OnDragDrop(DragEventArgs drgevent)
+    {
+        base.OnDragDrop(drgevent);
+        if (drgevent.Data?.GetData(typeof(Account)) is not Account account) return;
+        var point = PointToClient(new Point(drgevent.X, drgevent.Y));
+        AccountReordered?.Invoke(this, new AccountReorderEventArgs(account, DropIndex(point)));
     }
 
     private void DrawTile(Graphics graphics, int index, Rectangle bounds)
@@ -4079,6 +4299,21 @@ internal sealed class AccountRosterGrid : ScrollableControl
             if (TileBounds(index).Contains(scrolledPoint)) return index;
         }
         return -1;
+    }
+
+    private int DropIndex(Point point)
+    {
+        var hit = HitTest(point);
+        if (hit < 0) return items.Count;
+        var bounds = TileBounds(hit);
+        bounds.Offset(AutoScrollPosition);
+        return point.Y > bounds.Top + bounds.Height / 2 ? hit + 1 : hit;
+    }
+
+    private static bool IsDragGesture(Point start, Point current)
+    {
+        return Math.Abs(current.X - start.X) >= SystemInformation.DragSize.Width / 2 ||
+            Math.Abs(current.Y - start.Y) >= SystemInformation.DragSize.Height / 2;
     }
 
     private Rectangle TileBounds(int index)

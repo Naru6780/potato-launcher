@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.34`
+**Version:** `1.0.35`
 
 Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
@@ -15,7 +15,9 @@ Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 - Band Manager loading screen with theme music, mute, volume, and stop-when-loaded controls.
 - Main-window music mute toggle.
 - Text or compact Lodestone portrait roster account display.
-- Right-click account roster options for refreshing, setting, and opening Lodestone profiles.
+- Startup Lodestone portrait refresh for mapped accounts.
+- Right-click account roster options for refreshing, setting, opening, sorting, and deleting accounts.
+- Drag account ordering that also drives Band Manager display and launch order.
 - Manual Lodestone profile assignment can backfill XIVLauncher character metadata with a backup.
 - Account metadata export/import for sharing Lodestone mappings without overwriting existing accounts.
 - Band `band.json` save/export/import support for sharing named launch groups.
