@@ -350,7 +350,6 @@ internal sealed class MainForm : Form
     private const int AfInet = 2;
     private const uint TcpStateEstablished = 5;
     private const int WmSetRedraw = 0x000B;
-    private const int WsExComposited = 0x02000000;
 
     private enum TcpTableClass
     {
@@ -585,16 +584,6 @@ internal sealed class MainForm : Form
         settingsDrawer.BringToFront();
         ConfigureSettingsDrawerAnimation();
         EnableSmoothRendering(this);
-    }
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            var createParams = base.CreateParams;
-            createParams.ExStyle |= WsExComposited;
-            return createParams;
-        }
     }
 
     private void BuildVideoBackground()
@@ -917,10 +906,13 @@ internal sealed class MainForm : Form
         var oldPanelBounds = Rectangle.Union(accountCard.Bounds, bandCard.Bounds);
         var layout = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, settings.AccountPanelWidth);
 
-        using var redraw = BeginRedrawScope(background);
-        background.SuspendLayout();
-        accountCard.SuspendLayout();
-        bandCard.SuspendLayout();
+        using var redraw = forceRepaint ? null : BeginRedrawScope(background);
+        if (!forceRepaint)
+        {
+            background.SuspendLayout();
+            accountCard.SuspendLayout();
+            bandCard.SuspendLayout();
+        }
         accountCard.SetBounds(layout.Margin, layout.Top, layout.AccountWidth, layout.ContentHeight);
         bandCard.SetBounds(layout.Margin + layout.AccountWidth + layout.Gap, layout.Top, layout.BandWidth, layout.ContentHeight);
         if (accountResizeHandle is not null)
@@ -960,14 +952,17 @@ internal sealed class MainForm : Form
 
         statusPill.Bounds = new Rectangle(Math.Max(layout.Margin, (ClientSize.Width - 370) / 2), Math.Max(layout.Top + layout.ContentHeight + 24, ClientSize.Height - 56), 370, 30);
 
-        bandCard.ResumeLayout(false);
-        accountCard.ResumeLayout(false);
-        background.ResumeLayout(false);
+        if (!forceRepaint)
+        {
+            bandCard.ResumeLayout(false);
+            accountCard.ResumeLayout(false);
+            background.ResumeLayout(false);
+        }
         if (forceRepaint)
         {
             var dirty = Rectangle.Union(oldPanelBounds, Rectangle.Union(accountCard.Bounds, bandCard.Bounds));
             dirty.Inflate(32, 32);
-            background.Invalidate(dirty, true);
+            background.Invalidate(dirty, false);
         }
     }
 
@@ -4572,7 +4567,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.41 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.42 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 

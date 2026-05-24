@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.42 - 2026-05-24
+
+- Made the Accounts/Band Manager resize handle more responsive by removing heavy redraw suspension from live dragging.
+- Removed whole-window composited painting because it made nested WinForms resizing feel delayed.
+- Limited drag repainting to the affected panel area instead of invalidating child controls during every resize step.
+
 ## 1.0.41 - 2026-05-24
 
 - Reduced flicker across themes and state changes by batching redraws during layout, list refreshes, and theme updates.
