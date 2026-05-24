@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.37 - 2026-05-24
+
+- Account list export/import now carries custom account order and last-connected timestamps.
+- Added a horizontal splitter between Accounts and Band Manager so the Accounts panel can be stretched with the mouse.
+- Saved the custom Accounts panel width as a UI setting while keeping Band Manager responsive.
+
 ## 1.0.36 - 2026-05-24
 
 - Added import mode prompts for account and band imports: `AppendAll`, `AppendNew`, `Merge`, `ReplaceExisting`, and `OverwriteAll`.

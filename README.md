@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.36`
+**Version:** `1.0.37`
 
 Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
@@ -23,6 +23,8 @@ Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 - Account metadata export/import with append, merge, replace, and overwrite modes.
 - Band `band.json` save/export/import with append, merge, replace, and overwrite modes.
 - Account order and last-connected state live in portable `accountList.json`, separate from `settings.json`.
+- Account export/import carries custom account order and last-connected state.
+- The Accounts panel can be resized with the splitter between Accounts and Band Manager.
 - Configurable launch cooldown for band queues.
 - Theme folders with background images and per-theme music playlists.
 - Built-in FFXIV news panel and emergency `Kill FFXIV` button.

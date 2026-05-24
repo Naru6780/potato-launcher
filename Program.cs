@@ -63,6 +63,7 @@ internal sealed class AppSettings
     public int MusicVolume { get; set; } = 45;
     public int LaunchCooldownSeconds { get; set; } = 0;
     public string AccountDisplayMode { get; set; } = "Text";
+    public int AccountPanelWidth { get; set; }
     public bool RandomizeThemeAtLaunch { get; set; }
     public string LastShownChangelogVersion { get; set; } = "";
     public Dictionary<string, AccountIconProfile> AccountIcons { get; set; } = [];
@@ -97,6 +98,8 @@ internal sealed class AccountListTransfer
     public int Version { get; set; } = 1;
     public List<AccountListTransferEntry> Accounts { get; set; } = [];
     public Dictionary<string, AccountIconProfile> AccountIcons { get; set; } = [];
+    public List<string> AccountOrder { get; set; } = [];
+    public Dictionary<string, DateTime> LastConnectedUtc { get; set; } = [];
 }
 
 internal sealed class AccountListTransferEntry
@@ -235,6 +238,7 @@ internal sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer settingsDrawerTimer = new();
     private ListBox accountList = null!;
     private AccountRosterGrid accountRosterGrid = null!;
+    private Panel accountResizeHandle = null!;
     private ListBox bandList = null!;
     private CheckedListBox memberList = null!;
     private Label folderLabel = null!;
@@ -308,6 +312,9 @@ internal sealed class MainForm : Form
     private int selectedNewsBannerIndex;
     private int accountDragIndex = -1;
     private Point accountDragStart;
+    private bool resizingAccountPanel;
+    private int accountResizeStartX;
+    private int accountResizeStartWidth;
     private bool refreshingStartupPortraits;
 
     public MainForm()
@@ -678,6 +685,28 @@ internal sealed class MainForm : Form
         bandCard.Controls.Add(bandButtonPanel);
         tab.Controls.Add(accountCard);
         tab.Controls.Add(bandCard);
+        accountResizeHandle = new Panel { Cursor = Cursors.VSplit, BackColor = Color.Transparent };
+        accountResizeHandle.MouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left) return;
+            resizingAccountPanel = true;
+            accountResizeStartX = Cursor.Position.X;
+            accountResizeStartWidth = accountCard.Width;
+            accountResizeHandle.Capture = true;
+        };
+        accountResizeHandle.MouseMove += (_, _) =>
+        {
+            if (!resizingAccountPanel) return;
+            ResizeAccountPanel(Cursor.Position.X);
+        };
+        accountResizeHandle.MouseUp += (_, _) =>
+        {
+            if (!resizingAccountPanel) return;
+            resizingAccountPanel = false;
+            accountResizeHandle.Capture = false;
+            SaveSettings(settings);
+        };
+        tab.Controls.Add(accountResizeHandle);
     }
 
     private void ApplyLauncherLayout()
@@ -690,11 +719,16 @@ internal sealed class MainForm : Form
         var gap = 20;
         var contentWidth = ClientSize.Width - margin * 2;
         var contentHeight = Math.Max(390, ClientSize.Height - top - bottomReserved);
-        var accountWidth = Math.Clamp((int)(contentWidth * 0.34), 300, 390);
+        var maxAccountWidth = Math.Max(300, Math.Min(760, contentWidth - gap - 420));
+        var defaultAccountWidth = Math.Clamp((int)(contentWidth * 0.34), 300, Math.Min(390, maxAccountWidth));
+        var requestedAccountWidth = settings.AccountPanelWidth > 0 ? settings.AccountPanelWidth : defaultAccountWidth;
+        var accountWidth = Math.Clamp(requestedAccountWidth, 300, maxAccountWidth);
         var bandWidth = Math.Max(420, contentWidth - accountWidth - gap);
 
         accountCard.Bounds = new Rectangle(margin, top, accountWidth, contentHeight);
         bandCard.Bounds = new Rectangle(margin + accountWidth + gap, top, bandWidth, contentHeight);
+        accountResizeHandle.Bounds = new Rectangle(accountCard.Right + 3, top + 8, Math.Max(8, gap - 6), contentHeight - 16);
+        accountResizeHandle.BringToFront();
 
         accountList.Bounds = new Rectangle(18, 58, accountCard.Width - 36, accountCard.Height - 82);
         accountRosterGrid.Bounds = accountList.Bounds;
@@ -730,6 +764,16 @@ internal sealed class MainForm : Form
         accountCard.Invalidate();
         bandCard.Invalidate();
         statusPill.Invalidate();
+    }
+
+    private void ResizeAccountPanel(int screenX)
+    {
+        var margin = Math.Max(24, ClientSize.Width / 24);
+        var gap = 20;
+        var contentWidth = ClientSize.Width - margin * 2;
+        var maxAccountWidth = Math.Max(300, Math.Min(760, contentWidth - gap - 420));
+        settings.AccountPanelWidth = Math.Clamp(accountResizeStartWidth + screenX - accountResizeStartX, 300, maxAccountWidth);
+        ApplyLauncherLayout();
     }
 
     private void ApplyResponsiveLayout()
@@ -1969,6 +2013,21 @@ internal sealed class MainForm : Form
                     transfer.AccountIcons[accountKey] = profile;
                 }
             }
+            var exportedKeys = transfer.Accounts
+                .Select(AccountTransferKey)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            transfer.AccountOrder = OrderedAccounts()
+                .Select(AccountIconKey)
+                .Where(exportedKeys.Contains)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            foreach (var key in transfer.AccountOrder)
+            {
+                if (accountState.LastConnectedUtc.TryGetValue(key, out var connectedAt))
+                {
+                    transfer.LastConnectedUtc[key] = connectedAt;
+                }
+            }
 
             using var dialog = new SaveFileDialog
             {
@@ -2060,13 +2119,15 @@ internal sealed class MainForm : Form
             }
 
             var importedProfiles = ApplyImportedProfiles(transfer.AccountIcons ?? [], mode.Value);
+            var importedOrder = ApplyImportedAccountState(transfer, mode.Value);
 
             if (File.Exists(accountListPath)) BackupXivLauncherAccountList(accountListPath);
             File.WriteAllText(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
             SaveSettings(settings);
+            SaveAccountListState(accountState);
             LoadAccounts();
             PopulateLists();
-            status.Text = $"Imported accounts: {added} added, {replaced} updated, {skipped} skipped, {importedProfiles} profiles linked.";
+            status.Text = $"Imported accounts: {added} added, {replaced} updated, {skipped} skipped, {importedProfiles} profiles linked, {importedOrder} order entries.";
         }
         catch (Exception ex)
         {
@@ -2143,6 +2204,57 @@ internal sealed class MainForm : Form
         return linked;
     }
 
+    private int ApplyImportedAccountState(AccountListTransfer transfer, ImportMode mode)
+    {
+        var importedKeys = transfer.Accounts
+            .Select(AccountTransferKey)
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var importedKeySet = importedKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var importedOrder = transfer.AccountOrder
+            .Where(importedKeySet.Contains)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        importedOrder.AddRange(importedKeys.Where(key => !importedOrder.Contains(key, StringComparer.OrdinalIgnoreCase)));
+
+        var currentOrder = accountState.SharedAccountOrder;
+        var importedOrderSet = importedOrder.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        accountState.SharedAccountOrder = mode switch
+        {
+            ImportMode.AppendAll or ImportMode.AppendNew => currentOrder
+                .Concat(importedOrder.Where(key => !currentOrder.Contains(key, StringComparer.OrdinalIgnoreCase)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            ImportMode.Merge => importedOrder
+                .Concat(currentOrder.Where(key => !importedOrderSet.Contains(key)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            ImportMode.ReplaceExisting => importedOrder
+                .Where(key => currentOrder.Contains(key, StringComparer.OrdinalIgnoreCase))
+                .Concat(currentOrder.Where(key => !importedOrderSet.Contains(key)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            ImportMode.OverwriteAll => importedOrder,
+            _ => currentOrder
+        };
+
+        foreach (var pair in transfer.LastConnectedUtc.Where(pair => importedKeySet.Contains(pair.Key)))
+        {
+            var hasExisting = accountState.LastConnectedUtc.ContainsKey(pair.Key);
+            var shouldApply = mode switch
+            {
+                ImportMode.AppendAll or ImportMode.AppendNew => !hasExisting,
+                ImportMode.Merge or ImportMode.OverwriteAll => true,
+                ImportMode.ReplaceExisting => hasExisting,
+                _ => false
+            };
+            if (shouldApply) accountState.LastConnectedUtc[pair.Key] = pair.Value;
+        }
+
+        return importedOrder.Count;
+    }
+
     private (int added, int replaced, int skipped) ApplyImportedBands(List<BandConfig> importedBands, ImportMode mode)
     {
         var target = CurrentBands();
@@ -2200,6 +2312,13 @@ internal sealed class MainForm : Form
             string.Equals(storedUserName?.ToString() ?? "", userName, StringComparison.OrdinalIgnoreCase) &&
             Convert.ToBoolean(entry.GetValueOrDefault("UseSteamServiceAccount") ?? false) == useSteam &&
             Convert.ToBoolean(entry.GetValueOrDefault("UseOtp") ?? false) == useOtp;
+    }
+
+    private static string AccountTransferKey(AccountListTransferEntry account)
+    {
+        return string.IsNullOrWhiteSpace(account.UserName)
+            ? ""
+            : BuildAccountKey(account.UserName, account.UseSteamServiceAccount, account.UseOtp);
     }
 
     private static Dictionary<string, object?> CreateAccountListEntry(AccountListTransferEntry imported)
@@ -4079,7 +4198,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.36 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.37 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
