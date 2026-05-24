@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.45`
+**Version:** `1.0.46`
 
 Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 

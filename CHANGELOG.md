@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.46 - 2026-05-24
+
+- Fixed a startup crash caused by the custom music volume slider using an unsupported transparent control background.
+- Added regression coverage for theme slider palette assignment so the settings drawer can open safely across themes.
+
 ## 1.0.45 - 2026-05-24
 
 - Restored animated background bubbles on the main app background.

@@ -4609,7 +4609,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.45 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.46 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -5082,7 +5082,7 @@ internal sealed class ThemeSlider : Control
         set
         {
             palette = value;
-            BackColor = Color.Transparent;
+            BackColor = Color.FromArgb(255, palette.Card);
             Invalidate();
         }
     }
@@ -5093,6 +5093,7 @@ internal sealed class ThemeSlider : Control
         Height = ThemeSliderMetrics.Height;
         TabStop = true;
         Cursor = Cursors.Hand;
+        BackColor = Color.FromArgb(255, palette.Card);
     }
 
     protected override bool IsInputKey(Keys keyData)
@@ -5168,7 +5169,7 @@ internal sealed class ThemeSlider : Control
     {
         base.OnPaint(e);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.Clear(Parent?.BackColor ?? Color.Transparent);
+        e.Graphics.Clear(BackColor);
 
         var track = TrackBounds();
         using var trackPath = Rounded(track, ThemeSliderMetrics.TrackHeight / 2);
