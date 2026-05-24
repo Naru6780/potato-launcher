@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.40 - 2026-05-24
+
+- Fixed the help window so feature sections render with proper spacing instead of one compressed paragraph.
+- Added a regression test for help text line breaks.
+
 ## 1.0.39 - 2026-05-24
 
 - Reworded missing roster portrait guidance so users are asked to link Lodestone profiles instead of refreshing or launching accounts.

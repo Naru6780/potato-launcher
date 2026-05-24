@@ -93,6 +93,44 @@ internal static class AppText
             ? "1 account needs a linked Lodestone profile."
             : $"{missingCount} accounts need linked Lodestone profiles.";
     }
+
+    public static string HelpWindowText()
+    {
+        return NormalizeLineBreaks("""
+        Launch modes
+        Instanced mode loads one account per XIVLauncher BAT file from your selected folder.
+        Shared mode reads XIVLauncher's accountsList.json from the selected profile folder.
+
+        Accounts
+        Double-click an account to launch it. Drag accounts to reorder them. Right-click an account to open Lodestone options, sort accounts, or delete an account from Potato Launcher.
+
+        Lodestone profiles and portraits
+        Link each account to a Lodestone character profile URL to show character names and portraits. Use the Lodestone search link in the profile prompt if you need to find the character page.
+
+        Bands
+        Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence.
+
+        Launching
+        OTP-enabled accounts launch with autologin disabled so you can finish login manually. The launch cooldown setting adds a delay between band launches.
+
+        Display and themes
+        Switch the account list between Text and Roster display in Settings. Themes can change colors, backgrounds, and music. Music can be muted, randomized, or stopped when a launch queue finishes.
+
+        Import and export
+        Export accounts or bands when sharing setup data with friends. Import modes let you append, merge, replace, or overwrite existing data.
+
+        News and updates
+        What's new? shows recent FFXIV launcher news. Check for updates downloads the latest Potato Launcher release from GitHub.
+
+        Safety tools
+        Kill FFXIV closes running FFXIV game processes. Use it only when a game client is stuck or you intentionally want to close all running clients.
+        """);
+    }
+
+    private static string NormalizeLineBreaks(string text)
+    {
+        return Regex.Replace(text.Trim(), @"\r?\n", Environment.NewLine);
+    }
 }
 
 internal static class SettingsMigration
@@ -3543,14 +3581,16 @@ internal sealed class MainForm : Form
             Bounds = new Rectangle(18, 16, 520, 30),
             Font = new Font("Segoe UI", 15F, FontStyle.Bold)
         };
-        var helpText = new TextBox
+        var helpText = new RichTextBox
         {
-            Text = HelpWindowText(),
+            Text = AppText.HelpWindowText(),
             Bounds = new Rectangle(18, 58, 644, 432),
-            Multiline = true,
             ReadOnly = true,
-            ScrollBars = ScrollBars.Vertical,
-            BorderStyle = BorderStyle.FixedSingle
+            ScrollBars = RichTextBoxScrollBars.Vertical,
+            BorderStyle = BorderStyle.FixedSingle,
+            DetectUrls = false,
+            WordWrap = true,
+            BackColor = Color.White
         };
         var close = new Button { Text = "OK", DialogResult = DialogResult.OK, Bounds = new Rectangle(552, 510, 110, 34) };
 
@@ -3558,39 +3598,6 @@ internal sealed class MainForm : Form
         form.AcceptButton = close;
         form.CancelButton = close;
         form.ShowDialog(this);
-    }
-
-    private static string HelpWindowText()
-    {
-        return """
-        Launch modes
-        Instanced mode loads one account per XIVLauncher BAT file from your selected folder.
-        Shared mode reads XIVLauncher's accountsList.json from the selected profile folder.
-
-        Accounts
-        Double-click an account to launch it. Drag accounts to reorder them. Right-click an account to open Lodestone options, sort accounts, or delete an account from Potato Launcher.
-
-        Lodestone profiles and portraits
-        Link each account to a Lodestone character profile URL to show character names and portraits. Use the Lodestone search link in the profile prompt if you need to find the character page.
-
-        Bands
-        Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence.
-
-        Launching
-        OTP-enabled accounts launch with autologin disabled so you can finish login manually. The launch cooldown setting adds a delay between band launches.
-
-        Display and themes
-        Switch the account list between Text and Roster display in Settings. Themes can change colors, backgrounds, and music. Music can be muted, randomized, or stopped when a launch queue finishes.
-
-        Import and export
-        Export accounts or bands when sharing setup data with friends. Import modes let you append, merge, replace, or overwrite existing data.
-
-        News and updates
-        What's new? shows recent FFXIV launcher news. Check for updates downloads the latest Potato Launcher release from GitHub.
-
-        Safety tools
-        Kill FFXIV closes running FFXIV game processes. Use it only when a game client is stuck or you intentionally want to close all running clients.
-        """;
     }
 
     private void KillGameInstances()
@@ -4497,7 +4504,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.39 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.40 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 

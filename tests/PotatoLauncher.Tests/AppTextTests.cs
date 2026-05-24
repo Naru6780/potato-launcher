@@ -15,4 +15,14 @@ public class AppTextTests
     {
         Assert.Equal("https://na.finalfantasyxiv.com/lodestone/character/", AppText.LodestoneCharacterSearchUrl);
     }
+
+    [Fact]
+    public void HelpWindowText_UsesWindowsLineBreaksBetweenSections()
+    {
+        var text = AppText.HelpWindowText();
+
+        Assert.Contains($"Launch modes{Environment.NewLine}", text);
+        Assert.Contains($"{Environment.NewLine}{Environment.NewLine}Accounts", text);
+        Assert.DoesNotContain("\nAccounts", text.Replace(Environment.NewLine, ""));
+    }
 }

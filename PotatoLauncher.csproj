@@ -7,10 +7,10 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AssemblyName>Potato Launcher</AssemblyName>
     <RootNamespace>PotatoLauncher</RootNamespace>
-    <Version>1.0.39</Version>
-    <AssemblyVersion>1.0.39.0</AssemblyVersion>
-    <FileVersion>1.0.39.0</FileVersion>
-    <InformationalVersion>1.0.39</InformationalVersion>
+    <Version>1.0.40</Version>
+    <AssemblyVersion>1.0.40.0</AssemblyVersion>
+    <FileVersion>1.0.40.0</FileVersion>
+    <InformationalVersion>1.0.40</InformationalVersion>
     <ApplicationHighDpiMode>DpiUnawareGdiScaled</ApplicationHighDpiMode>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
