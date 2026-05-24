@@ -17,6 +17,12 @@ public class AppTextTests
     }
 
     [Fact]
+    public void LodestoneHelperLinkText_IsShortEnoughForPrompt()
+    {
+        Assert.Equal("Open Lodestone character search", AppText.LodestoneHelperLinkText);
+    }
+
+    [Fact]
     public void HelpWindowText_UsesWindowsLineBreaksBetweenSections()
     {
         var text = AppText.HelpWindowText();

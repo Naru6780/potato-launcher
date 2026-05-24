@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.41 - 2026-05-24
+
+- Reduced flicker across themes and state changes by batching redraws during layout, list refreshes, and theme updates.
+- Stopped the decorative background from continuously repainting the entire window.
+- Enabled smoother double-buffered rendering across the main form and nested controls.
+- Increased the maximized account-panel resize range so wide screens can meaningfully expand the Accounts section.
+- Replaced the rough native help tooltip with a styled in-app tooltip and cleaned up the Lodestone helper link prompt.
+
 ## 1.0.40 - 2026-05-24
 
 - Fixed the help window so feature sections render with proper spacing instead of one compressed paragraph.

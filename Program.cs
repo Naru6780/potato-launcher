@@ -86,6 +86,7 @@ internal sealed class AccountListState
 internal static class AppText
 {
     public const string LodestoneCharacterSearchUrl = "https://na.finalfantasyxiv.com/lodestone/character/";
+    public const string LodestoneHelperLinkText = "Open Lodestone character search";
 
     public static string MissingAccountIconStatus(int missingCount)
     {
@@ -130,6 +131,24 @@ internal static class AppText
     private static string NormalizeLineBreaks(string text)
     {
         return Regex.Replace(text.Trim(), @"\r?\n", Environment.NewLine);
+    }
+}
+
+internal readonly record struct LauncherLayoutMetrics(int Margin, int Top, int Gap, int ContentHeight, int AccountWidth, int BandWidth)
+{
+    public static LauncherLayoutMetrics Calculate(int clientWidth, int clientHeight, int requestedAccountWidth)
+    {
+        var margin = Math.Max(24, clientWidth / 24);
+        var top = 118;
+        var bottomReserved = 76;
+        var gap = 20;
+        var contentWidth = clientWidth - margin * 2;
+        var contentHeight = Math.Max(390, clientHeight - top - bottomReserved);
+        var maxAccountWidth = Math.Max(300, contentWidth - gap - 420);
+        var defaultAccountWidth = Math.Clamp((int)(contentWidth * 0.30), 330, Math.Min(760, maxAccountWidth));
+        var accountWidth = Math.Clamp(requestedAccountWidth > 0 ? requestedAccountWidth : defaultAccountWidth, 300, maxAccountWidth);
+        var bandWidth = Math.Max(420, contentWidth - accountWidth - gap);
+        return new LauncherLayoutMetrics(margin, top, gap, contentHeight, accountWidth, bandWidth);
     }
 }
 
@@ -322,11 +341,16 @@ internal sealed class MainForm : Form
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect lpRect);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
     [DllImport("iphlpapi.dll", SetLastError = true)]
     private static extern uint GetExtendedTcpTable(IntPtr pTcpTable, ref int dwOutBufLen, bool sort, int ipVersion, TcpTableClass tblClass, uint reserved = 0);
 
     private const int AfInet = 2;
     private const uint TcpStateEstablished = 5;
+    private const int WmSetRedraw = 0x000B;
+    private const int WsExComposited = 0x02000000;
 
     private enum TcpTableClass
     {
@@ -355,7 +379,7 @@ internal sealed class MainForm : Form
         public int Height => Bottom - Top;
     }
 
-    private static readonly Dictionary<string, ThemePalette> Palettes = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly Dictionary<string, ThemePalette> Palettes = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Pink"] = new(Color.FromArgb(255,226,242), Color.FromArgb(210,236,255), Color.FromArgb(250,255,250,255), Color.FromArgb(238,182,226), Color.FromArgb(92,48,104), Color.FromArgb(137,82,139), Color.FromArgb(239,111,166), Color.FromArgb(124,150,224), Color.FromArgb(222,104,130), Color.FromArgb(255,250,255)),
         ["Fuchsia"] = new(Color.FromArgb(74,20,86), Color.FromArgb(255,97,187), Color.FromArgb(242,255,241,252), Color.FromArgb(245,160,230), Color.FromArgb(84,27,96), Color.FromArgb(139,63,145), Color.FromArgb(217,42,154), Color.FromArgb(139,88,232), Color.FromArgb(224,76,112), Color.FromArgb(255,247,253)),
@@ -421,7 +445,7 @@ internal sealed class MainForm : Form
     private Button whatsNewButton = null!;
     private Button helpButton = null!;
     private Button muteMusicButton = null!;
-    private readonly ToolTip toolTip = new();
+    private AppToolTip? appToolTip;
     private MascotOverlayForm? mascotOverlay;
     private RoundedPanel statusPill = null!;
     private Label status = null!;
@@ -477,6 +501,8 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        UpdateStyles();
         EnsureThemeAssetFolders();
         RandomizeThemeForLaunch();
         RemoveOldDefaultBands();
@@ -523,7 +549,8 @@ internal sealed class MainForm : Form
         whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
         background.Controls.Add(whatsNewButton);
         helpButton = Button("?", 524, 24, 34, 34, "Secondary");
-        toolTip.SetToolTip(helpButton, "Open Potato Launcher help");
+        appToolTip = new AppToolTip(this);
+        appToolTip.Attach(helpButton, "Help", "Open the Potato Launcher feature guide.");
         helpButton.Click += (_, _) => ShowHelpWindow();
         background.Controls.Add(helpButton);
         mascotOverlay = CreateMascotOverlay();
@@ -539,7 +566,7 @@ internal sealed class MainForm : Form
         {
             themeMusic.Stop();
             themeMusic.Close();
-            toolTip.Dispose();
+            appToolTip?.Dispose();
             mascotOverlay?.Close();
         };
         BuildLauncherTab(background);
@@ -557,6 +584,17 @@ internal sealed class MainForm : Form
         ApplyResponsiveLayout();
         settingsDrawer.BringToFront();
         ConfigureSettingsDrawerAnimation();
+        EnableSmoothRendering(this);
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var createParams = base.CreateParams;
+            createParams.ExStyle |= WsExComposited;
+            return createParams;
+        }
     }
 
     private void BuildVideoBackground()
@@ -877,24 +915,17 @@ internal sealed class MainForm : Form
         if (accountCard is null || bandCard is null || statusPill is null) return;
 
         var oldPanelBounds = Rectangle.Union(accountCard.Bounds, bandCard.Bounds);
-        var margin = Math.Max(24, ClientSize.Width / 24);
-        var top = 118;
-        var bottomReserved = 76;
-        var gap = 20;
-        var contentWidth = ClientSize.Width - margin * 2;
-        var contentHeight = Math.Max(390, ClientSize.Height - top - bottomReserved);
-        var maxAccountWidth = Math.Max(300, Math.Min(760, contentWidth - gap - 420));
-        var defaultAccountWidth = Math.Clamp((int)(contentWidth * 0.26), 330, Math.Min(620, maxAccountWidth));
-        var requestedAccountWidth = settings.AccountPanelWidth > 0 ? settings.AccountPanelWidth : defaultAccountWidth;
-        var accountWidth = Math.Clamp(requestedAccountWidth, 300, maxAccountWidth);
-        var bandWidth = Math.Max(420, contentWidth - accountWidth - gap);
+        var layout = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, settings.AccountPanelWidth);
 
+        using var redraw = BeginRedrawScope(background);
         background.SuspendLayout();
-        accountCard.SetBounds(margin, top, accountWidth, contentHeight);
-        bandCard.SetBounds(margin + accountWidth + gap, top, bandWidth, contentHeight);
+        accountCard.SuspendLayout();
+        bandCard.SuspendLayout();
+        accountCard.SetBounds(layout.Margin, layout.Top, layout.AccountWidth, layout.ContentHeight);
+        bandCard.SetBounds(layout.Margin + layout.AccountWidth + layout.Gap, layout.Top, layout.BandWidth, layout.ContentHeight);
         if (accountResizeHandle is not null)
         {
-            accountResizeHandle.SetBounds(accountCard.Right + 3, top + 8, Math.Max(8, gap - 6), contentHeight - 16);
+            accountResizeHandle.SetBounds(accountCard.Right + 3, layout.Top + 8, Math.Max(8, layout.Gap - 6), layout.ContentHeight - 16);
             accountResizeHandle.BringToFront();
         }
 
@@ -927,28 +958,25 @@ internal sealed class MainForm : Form
             loadingCancel.Location = new Point(Math.Max(20, (loadingCard.Width - loadingCancel.Width) / 2), cancelTop);
         }
 
-        statusPill.Bounds = new Rectangle(Math.Max(margin, (ClientSize.Width - 370) / 2), Math.Max(top + contentHeight + 24, ClientSize.Height - 56), 370, 30);
+        statusPill.Bounds = new Rectangle(Math.Max(layout.Margin, (ClientSize.Width - 370) / 2), Math.Max(layout.Top + layout.ContentHeight + 24, ClientSize.Height - 56), 370, 30);
 
-        accountCard.Invalidate();
-        bandCard.Invalidate();
-        statusPill.Invalidate();
+        bandCard.ResumeLayout(false);
+        accountCard.ResumeLayout(false);
         background.ResumeLayout(false);
         if (forceRepaint)
         {
             var dirty = Rectangle.Union(oldPanelBounds, Rectangle.Union(accountCard.Bounds, bandCard.Bounds));
             dirty.Inflate(32, 32);
             background.Invalidate(dirty, true);
-            background.Update();
         }
     }
 
     private void ResizeAccountPanel(int screenX)
     {
-        var margin = Math.Max(24, ClientSize.Width / 24);
-        var gap = 20;
-        var contentWidth = ClientSize.Width - margin * 2;
-        var maxAccountWidth = Math.Max(300, Math.Min(760, contentWidth - gap - 420));
-        settings.AccountPanelWidth = Math.Clamp(accountResizeStartWidth + screenX - accountResizeStartX, 300, maxAccountWidth);
+        var maxAccountWidth = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, int.MaxValue).AccountWidth;
+        var nextWidth = Math.Clamp(accountResizeStartWidth + screenX - accountResizeStartX, 300, maxAccountWidth);
+        if (nextWidth == settings.AccountPanelWidth) return;
+        settings.AccountPanelWidth = nextWidth;
         ApplyLauncherLayout(forceRepaint: true);
     }
 
@@ -1535,27 +1563,41 @@ internal sealed class MainForm : Form
 
     private void PopulateLists()
     {
-        accountList.Items.Clear();
-        var orderedAccountList = OrderedAccounts().ToList();
-        foreach (var account in orderedAccountList)
+        using var redraw = BeginRedrawScope(background);
+        accountCard.SuspendLayout();
+        bandCard.SuspendLayout();
+        accountList.BeginUpdate();
+        bandList.BeginUpdate();
+        try
         {
-            accountList.Items.Add(account);
+            accountList.Items.Clear();
+            var orderedAccountList = OrderedAccounts().ToList();
+            foreach (var account in orderedAccountList)
+            {
+                accountList.Items.Add(account);
+            }
+            accountRosterGrid.SetItems(orderedAccountList.Select(CreateRosterItem));
+            bandList.Items.Clear();
+            foreach (var band in CurrentBands())
+            {
+                NormalizeBand(band);
+                bandList.Items.Add(band);
+            }
+            bandList.SelectedIndex = bandList.Items.Count > 0 ? 0 : -1;
+            if (bandList.SelectedItem is not BandConfig)
+            {
+                PopulateMemberList(null);
+            }
+            UpdateAccountStatus();
+            UpdateAccountDisplayMode();
         }
-        accountRosterGrid.SetItems(orderedAccountList.Select(CreateRosterItem));
-        bandList.Items.Clear();
-        foreach (var band in CurrentBands())
+        finally
         {
-            NormalizeBand(band);
-            bandList.Items.Add(band);
+            bandList.EndUpdate();
+            accountList.EndUpdate();
+            bandCard.ResumeLayout(false);
+            accountCard.ResumeLayout(false);
         }
-        bandList.SelectedIndex = bandList.Items.Count > 0 ? 0 : -1;
-        if (bandList.SelectedItem is not BandConfig)
-        {
-            PopulateMemberList(null);
-        }
-        UpdateAccountStatus();
-        UpdateAccountDisplayMode();
-        ApplyTheme(settings.Theme);
     }
 
     private IEnumerable<Account> OrderedAccounts()
@@ -1905,18 +1947,20 @@ internal sealed class MainForm : Form
         {
             var helper = new LinkLabel
             {
-                Text = $"Search Lodestone characters: {helperUrl}",
-                Bounds = new Rectangle(14, 78, 492, 24),
+                Text = AppText.LodestoneHelperLinkText,
+                Bounds = new Rectangle(14, 78, 230, 24),
                 LinkColor = Color.RoyalBlue,
                 ActiveLinkColor = Color.DeepPink,
                 VisitedLinkColor = Color.MediumPurple
             };
             helper.LinkClicked += (_, _) => OpenUrl(helperUrl);
-            form.Controls.Add(helper);
-            var helperTip = new ToolTip();
-            helperTip.SetToolTip(input, $"Paste a character URL from {helperUrl}");
-            helperTip.SetToolTip(helper, "Open Lodestone character search in your browser");
-            form.Disposed += (_, _) => helperTip.Dispose();
+            var helperUrlLabel = new Label
+            {
+                Text = helperUrl,
+                Bounds = new Rectangle(14, 102, 492, 20),
+                ForeColor = Color.DimGray
+            };
+            form.Controls.AddRange([helper, helperUrlLabel]);
         }
         form.AcceptButton = ok;
         form.CancelButton = cancel;
@@ -2797,22 +2841,30 @@ internal sealed class MainForm : Form
     private void PopulateMemberList(BandConfig? band)
     {
         loadingBand = true;
-        memberList.Items.Clear();
-        var orderedAccounts = OrderedAccounts().ToList();
-        if (band is not null)
+        memberList.BeginUpdate();
+        try
         {
-            NormalizeBand(band);
-        }
-
-        foreach (var account in orderedAccounts)
-        {
-            var index = memberList.Items.Add(account);
-            if (band is not null && band.BatchFiles.Contains(account.BatchFile, StringComparer.OrdinalIgnoreCase))
+            memberList.Items.Clear();
+            var orderedAccounts = OrderedAccounts().ToList();
+            if (band is not null)
             {
-                memberList.SetItemChecked(index, true);
+                NormalizeBand(band);
+            }
+
+            foreach (var account in orderedAccounts)
+            {
+                var index = memberList.Items.Add(account);
+                if (band is not null && band.BatchFiles.Contains(account.BatchFile, StringComparer.OrdinalIgnoreCase))
+                {
+                    memberList.SetItemChecked(index, true);
+                }
             }
         }
-        loadingBand = false;
+        finally
+        {
+            memberList.EndUpdate();
+            loadingBand = false;
+        }
     }
 
     private void SaveCurrentBand()
@@ -4110,17 +4162,27 @@ internal sealed class MainForm : Form
 
     private void ApplyTheme(string themeName)
     {
-        themeName = NormalizeThemeName(themeName);
-        palette = Palettes.TryGetValue(themeName, out var chosen) ? chosen : Palettes["Pink"];
-        background.Palette = palette;
-        loadingOverlay.Palette = palette;
-        launchChoiceOverlay.Palette = palette;
-        ApplyThemeAssets(themeName);
-        ApplyThemeMusic(themeName);
-        background.Invalidate();
-        loadingOverlay.Invalidate();
-        launchChoiceOverlay.Invalidate();
-        ApplyThemeRecursive(this);
+        using var redraw = BeginRedrawScope(this);
+        SuspendLayout();
+        try
+        {
+            themeName = NormalizeThemeName(themeName);
+            palette = Palettes.TryGetValue(themeName, out var chosen) ? chosen : Palettes["Pink"];
+            background.Palette = palette;
+            loadingOverlay.Palette = palette;
+            launchChoiceOverlay.Palette = palette;
+            if (appToolTip is not null) appToolTip.Palette = palette;
+            ApplyThemeAssets(themeName);
+            ApplyThemeMusic(themeName);
+            ApplyThemeRecursive(this);
+            background.Invalidate();
+            loadingOverlay.Invalidate();
+            launchChoiceOverlay.Invalidate();
+        }
+        finally
+        {
+            ResumeLayout(false);
+        }
     }
 
     private void RandomizeThemeForLaunch()
@@ -4149,6 +4211,7 @@ internal sealed class MainForm : Form
             settingsButton.BringToFront();
             killGameButton.BringToFront();
             whatsNewButton.BringToFront();
+            helpButton.BringToFront();
             muteMusicButton.BringToFront();
             backgroundVideo.Stop();
             backgroundVideo.Source = new Uri(video, UriKind.Absolute);
@@ -4174,6 +4237,7 @@ internal sealed class MainForm : Form
         settingsButton.BringToFront();
         killGameButton.BringToFront();
         whatsNewButton.BringToFront();
+        helpButton.BringToFront();
         muteMusicButton.BringToFront();
         statusPill.BringToFront();
         if (newsOverlay.Visible) newsOverlay.BringToFront();
@@ -4327,6 +4391,10 @@ internal sealed class MainForm : Form
                 case TextBox text:
                     text.BackColor = palette.ListBack;
                     text.ForeColor = palette.Text;
+                    break;
+                case RichTextBox richText:
+                    richText.BackColor = palette.ListBack;
+                    richText.ForeColor = palette.Text;
                     break;
                 case ComboBox combo:
                     combo.BackColor = palette.ListBack;
@@ -4504,7 +4572,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.40 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.41 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -4572,6 +4640,57 @@ internal sealed class MainForm : Form
         return button;
     }
 
+    private static IDisposable BeginRedrawScope(Control control)
+    {
+        return new RedrawScope(control);
+    }
+
+    private static void EnableSmoothRendering(Control root)
+    {
+        TrySetDoubleBuffered(root);
+        foreach (Control child in root.Controls)
+        {
+            EnableSmoothRendering(child);
+        }
+    }
+
+    private static void TrySetDoubleBuffered(Control control)
+    {
+        if (control is TextBoxBase or ComboBox or TrackBar) return;
+        try
+        {
+            var property = typeof(Control).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            property?.SetValue(control, true);
+        }
+        catch
+        {
+        }
+    }
+
+    private sealed class RedrawScope : IDisposable
+    {
+        private readonly Control control;
+        private readonly bool redrawSuspended;
+        private bool disposed;
+
+        public RedrawScope(Control control)
+        {
+            this.control = control;
+            if (!control.IsHandleCreated) return;
+            SendMessage(control.Handle, WmSetRedraw, IntPtr.Zero, IntPtr.Zero);
+            redrawSuspended = true;
+        }
+
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            if (!redrawSuspended || control.IsDisposed) return;
+            SendMessage(control.Handle, WmSetRedraw, new IntPtr(1), IntPtr.Zero);
+            control.Invalidate(true);
+        }
+    }
+
 }
 
 internal sealed class CuteBackgroundPanel : Panel
@@ -4579,7 +4698,21 @@ internal sealed class CuteBackgroundPanel : Panel
     private readonly System.Windows.Forms.Timer timer = new();
     private Image? backgroundArt;
     private float tick;
+    private bool animateBubbles;
     public ThemePalette Palette { get; set; } = new(Color.FromArgb(255,226,242), Color.FromArgb(210,236,255), Color.White, Color.White, Color.Black, Color.Gray, Color.HotPink, Color.CornflowerBlue, Color.IndianRed, Color.White);
+    public bool AnimateBubbles
+    {
+        get => animateBubbles;
+        set
+        {
+            if (animateBubbles == value) return;
+            animateBubbles = value;
+            if (animateBubbles) timer.Start();
+            else timer.Stop();
+            Invalidate();
+        }
+    }
+
     public Image? BackgroundArt
     {
         get => backgroundArt;
@@ -4599,7 +4732,16 @@ internal sealed class CuteBackgroundPanel : Panel
         DoubleBuffered = true;
         timer.Interval = 33;
         timer.Tick += (_, _) => { tick += 0.018f; Invalidate(); };
-        timer.Start();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            timer.Dispose();
+            backgroundArt?.Dispose();
+        }
+        base.Dispose(disposing);
     }
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -4716,6 +4858,130 @@ internal sealed class MascotOverlayForm : Form
     }
 }
 
+internal sealed class AppToolTip : Form
+{
+    private readonly Form owner;
+    private readonly Label titleLabel;
+    private readonly Label bodyLabel;
+    private ThemePalette palette = MainForm.Palettes["Pink"];
+
+    public ThemePalette Palette
+    {
+        get => palette;
+        set
+        {
+            palette = value;
+            ApplyPalette();
+        }
+    }
+
+    public AppToolTip(Form owner)
+    {
+        this.owner = owner;
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        Size = new Size(258, 82);
+        DoubleBuffered = true;
+        Padding = new Padding(14, 10, 14, 10);
+
+        titleLabel = new Label
+        {
+            Bounds = new Rectangle(14, 9, 230, 22),
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+            BackColor = Color.Transparent
+        };
+        bodyLabel = new Label
+        {
+            Bounds = new Rectangle(14, 32, 230, 38),
+            Font = new Font("Segoe UI", 9F),
+            BackColor = Color.Transparent
+        };
+        Controls.AddRange([titleLabel, bodyLabel]);
+        ApplyPalette();
+    }
+
+    protected override bool ShowWithoutActivation => true;
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            const int wsExToolWindow = 0x00000080;
+            const int wsExNoActivate = 0x08000000;
+            var createParams = base.CreateParams;
+            createParams.ExStyle |= wsExToolWindow | wsExNoActivate;
+            return createParams;
+        }
+    }
+
+    public void Attach(Control control, string title, string body)
+    {
+        control.MouseEnter += (_, _) => ShowFor(control, title, body);
+        control.MouseMove += (_, _) => PositionNear(control);
+        control.MouseLeave += (_, _) => Hide();
+        control.Disposed += (_, _) => Hide();
+    }
+
+    private void ShowFor(Control control, string title, string body)
+    {
+        titleLabel.Text = title;
+        bodyLabel.Text = body;
+        PositionNear(control);
+        if (!Visible) Show(owner);
+        BringToFront();
+    }
+
+    private void PositionNear(Control control)
+    {
+        if (owner.IsDisposed || !control.IsHandleCreated) return;
+        var screenPoint = control.PointToScreen(new Point(0, control.Height + 8));
+        var workingArea = Screen.FromControl(control).WorkingArea;
+        var x = Math.Min(screenPoint.X, workingArea.Right - Width - 8);
+        var y = screenPoint.Y + Height > workingArea.Bottom
+            ? control.PointToScreen(new Point(0, -Height - 8)).Y
+            : screenPoint.Y;
+        Location = new Point(Math.Max(workingArea.Left + 8, x), Math.Max(workingArea.Top + 8, y));
+    }
+
+    private void ApplyPalette()
+    {
+        BackColor = Color.FromArgb(255, palette.Card);
+        titleLabel.ForeColor = palette.Text;
+        bodyLabel.ForeColor = palette.Muted;
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var path = Rounded(new Rectangle(0, 0, Width - 1, Height - 1), 12);
+        using var fill = new SolidBrush(Color.FromArgb(255, palette.Card));
+        using var border = new Pen(palette.Border, 1.4F);
+        e.Graphics.FillPath(fill, path);
+        e.Graphics.DrawPath(border, path);
+    }
+
+    private static GraphicsPath Rounded(Rectangle bounds, int radius)
+    {
+        var path = new GraphicsPath();
+        if (bounds.Width <= 0 || bounds.Height <= 0) return path;
+        radius = Math.Min(radius, Math.Max(1, Math.Min(bounds.Width, bounds.Height) / 2));
+        var diameter = radius * 2;
+        var rect = new Rectangle(bounds.Location, new Size(diameter, diameter));
+        path.AddArc(rect, 180, 90);
+        rect.X = bounds.Right - diameter - 1;
+        path.AddArc(rect, 270, 90);
+        rect.Y = bounds.Bottom - diameter - 1;
+        path.AddArc(rect, 0, 90);
+        rect.X = bounds.Left;
+        path.AddArc(rect, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+}
+
 internal sealed class RoundedPanel : Panel
 {
     public int Radius { get; set; } = 18;
@@ -4795,6 +5061,7 @@ internal sealed class AccountRosterGrid : ScrollableControl
     private readonly List<AccountRosterItem> items = [];
     private readonly Dictionary<string, Image> imageCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ToolTip tooltip = new();
+    private string currentTooltip = "";
     private int selectedIndex = -1;
     private ThemePalette palette = new(Color.White, Color.White, Color.White, Color.LightGray, Color.Black, Color.Gray, Color.HotPink, Color.CornflowerBlue, Color.IndianRed, Color.White);
 
@@ -4825,6 +5092,11 @@ internal sealed class AccountRosterGrid : ScrollableControl
         AutoScroll = true;
         AllowDrop = true;
         BackColor = palette.ListBack;
+        tooltip.BackColor = Color.FromArgb(255, 252, 255);
+        tooltip.ForeColor = Color.FromArgb(92, 48, 104);
+        tooltip.InitialDelay = 450;
+        tooltip.ReshowDelay = 120;
+        tooltip.AutoPopDelay = 8000;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
         UpdateStyles();
     }
@@ -4935,7 +5207,12 @@ internal sealed class AccountRosterGrid : ScrollableControl
             return;
         }
         var hit = HitTest(e.Location);
-        tooltip.SetToolTip(this, hit >= 0 ? items[hit].Tooltip : "");
+        var nextTooltip = hit >= 0 ? items[hit].Tooltip.Replace("\n", Environment.NewLine) : "";
+        if (!nextTooltip.Equals(currentTooltip, StringComparison.Ordinal))
+        {
+            currentTooltip = nextTooltip;
+            tooltip.SetToolTip(this, currentTooltip);
+        }
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -5114,6 +5391,19 @@ internal sealed class AccountRosterGrid : ScrollableControl
         path.AddArc(rect, 90, 90);
         path.CloseFigure();
         return path;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            tooltip.Dispose();
+            foreach (var image in imageCache.Values)
+            {
+                image.Dispose();
+            }
+        }
+        base.Dispose(disposing);
     }
 }
 
