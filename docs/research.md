@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.33`
+**Current version:** `1.0.34`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 
@@ -81,6 +81,8 @@ Manual Lodestone profile assignment in Shared mode can update XIVLauncher's `acc
 Settings account export writes a Potato Launcher transfer JSON with safe XIVLauncher account metadata plus portable Lodestone profile links from `settings.json`. Importing merges by `UserName`, `UseSteamServiceAccount`, and `UseOtp`, adds missing accounts with password saving disabled, fills only blank `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl` fields for existing accounts, and backs up `accountsList.json` before writing.
 
 The Band Manager Save button and Settings export action write the current launch method's bands to `band.json` beside `settings.json`. Band import appends bands into the current launch method and uniquifies duplicate names instead of replacing the user's existing bands.
+
+Band names are edited by right-clicking a band and choosing `Set name`; the old permanent rename text box was removed to keep the member list larger and the UI less cluttered.
 
 ## News and Updates
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.34 - 2026-05-24
+
+- Removed the permanent Band Manager rename text box.
+- Added a band right-click `Set name` action that opens a small naming prompt.
+- Expanded the Band Manager member list into the freed rename-field space.
+
 ## 1.0.33 - 2026-05-24
 
 - Removed the Settings `Refresh account icons` button; per-account refresh remains in the account right-click menu.

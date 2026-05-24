@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.33`
+**Version:** `1.0.34`
 
 Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
@@ -10,6 +10,7 @@ Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 - Instanced mode for per-profile BAT launchers.
 - Shared mode for the default XIVLauncher account list from `accountsList.json`.
 - Separate autosaved band manager per launch method.
+- Right-click band naming so the manager stays compact.
 - Client-aware band queueing that waits for the new FFXIV window title to switch to `Character@World` before launching the next account.
 - Band Manager loading screen with theme music, mute, volume, and stop-when-loaded controls.
 - Main-window music mute toggle.

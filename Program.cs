@@ -214,7 +214,6 @@ internal sealed class MainForm : Form
     private AccountRosterGrid accountRosterGrid = null!;
     private ListBox bandList = null!;
     private CheckedListBox memberList = null!;
-    private TextBox bandName = null!;
     private Label folderLabel = null!;
     private Label sharedProfileLabel = null!;
     private Label themeLabel = null!;
@@ -584,12 +583,16 @@ internal sealed class MainForm : Form
         bandCard.Controls.Add(Header("Band Manager", 18, 12, 180, 32));
         bandList = new ListBox { Bounds = new Rectangle(18, 58, 180, 306) };
         bandList.SelectedIndexChanged += (_, _) => LoadSelectedBand();
+        bandList.MouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Right) return;
+            var index = bandList.IndexFromPoint(e.Location);
+            if (index < 0 || index >= bandList.Items.Count) return;
+            bandList.SelectedIndex = index;
+            ShowBandContextMenu(bandList, e.Location);
+        };
         bandCard.Controls.Add(bandList);
-        bandName = new TextBox { Bounds = new Rectangle(218, 58, 250, 29), PlaceholderText = "Band name" };
-        bandName.Leave += (_, _) => SaveCurrentBand();
-        bandName.TextChanged += (_, _) => { if (!loadingBand) SaveCurrentBand(false); };
-        bandCard.Controls.Add(bandName);
-        memberList = new CheckedListBox { Bounds = new Rectangle(218, 98, 318, 266), CheckOnClick = true };
+        memberList = new CheckedListBox { Bounds = new Rectangle(218, 58, 318, 306), CheckOnClick = true };
         memberList.ItemCheck += (_, _) => { if (!loadingBand) BeginInvoke(() => SaveCurrentBand()); };
         bandCard.Controls.Add(memberList);
 
@@ -645,8 +648,7 @@ internal sealed class MainForm : Form
         var editorWidth = Math.Max(220, bandCard.Width - editorLeft - 24);
         var listHeight = Math.Max(220, bandCard.Height - 144);
         bandList.Bounds = new Rectangle(18, 58, bandListWidth, listHeight);
-        bandName.Bounds = new Rectangle(editorLeft, 58, Math.Min(250, editorWidth), 29);
-        memberList.Bounds = new Rectangle(editorLeft, 98, editorWidth, Math.Max(200, bandCard.Height - 184));
+        memberList.Bounds = new Rectangle(editorLeft, 58, editorWidth, Math.Max(240, bandCard.Height - 144));
         bandButtonPanel.Bounds = new Rectangle(18, bandCard.Height - 66, bandCard.Width - 36, 54);
         if (loadingOverlay is not null)
         {
@@ -2077,7 +2079,6 @@ internal sealed class MainForm : Form
     {
         if (bandList.SelectedItem is not BandConfig band) return;
         loadingBand = true;
-        bandName.Text = band.Name;
         for (var index = 0; index < memberList.Items.Count; index++)
         {
             var account = (Account)memberList.Items[index];
@@ -2094,7 +2095,6 @@ internal sealed class MainForm : Form
     private void SaveCurrentBand(bool refreshListItem)
     {
         if (bandList.SelectedItem is not BandConfig band) return;
-        band.Name = string.IsNullOrWhiteSpace(bandName.Text) ? "Unnamed Band" : bandName.Text.Trim();
         band.BatchFiles = memberList.CheckedItems.Cast<Account>().Select(account => account.BatchFile).ToList();
         var index = bandList.SelectedIndex;
         SaveSettingsFromInputs();
@@ -2123,6 +2123,29 @@ internal sealed class MainForm : Form
         bandList.Items.RemoveAt(index);
         bandList.SelectedIndex = bandList.Items.Count == 0 ? -1 : Math.Min(index, bandList.Items.Count - 1);
         SaveSettingsFromInputs();
+    }
+
+    private void ShowBandContextMenu(Control owner, Point location)
+    {
+        if (bandList.SelectedItem is not BandConfig band) return;
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Set name", null, (_, _) => SetSelectedBandName(band));
+        menu.Show(owner, location);
+    }
+
+    private void SetSelectedBandName(BandConfig band)
+    {
+        var name = ShowTextPrompt("Set band name", "Type the name of this band:", band.Name);
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        band.Name = name.Trim();
+        var index = bandList.SelectedIndex;
+        SaveSettingsFromInputs();
+        if (index >= 0)
+        {
+            bandList.Items[index] = band;
+            bandList.SelectedIndex = index;
+        }
     }
 
     private void LaunchSelectedAccount()
