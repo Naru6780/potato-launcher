@@ -432,7 +432,7 @@ internal sealed class MainForm : Form
     private Button updateButton = null!;
     private CheckBox muteMusicInput = null!;
     private CheckBox stopMusicWhenLoadedInput = null!;
-    private TrackBar musicVolumeInput = null!;
+    private ThemeSlider musicVolumeInput = null!;
     private Label musicVolumeLabel = null!;
     private Label accountDisplayLabel = null!;
     private ComboBox accountDisplayInput = null!;
@@ -532,7 +532,7 @@ internal sealed class MainForm : Form
         Font = new Font("Segoe UI", 10F);
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
-        background = new CuteBackgroundPanel { Dock = DockStyle.Fill };
+        background = new CuteBackgroundPanel { Dock = DockStyle.Fill, AnimateBubbles = true };
         Controls.Add(background);
         BuildVideoBackground();
         themeMusic.MediaEnded += (_, _) =>
@@ -1131,13 +1131,13 @@ internal sealed class MainForm : Form
         settingsDrawer.Controls.Add(stopMusicWhenLoadedInput);
 
         musicVolumeLabel = Label($"Music volume: {Math.Clamp(settings.MusicVolume, 0, 100)}%", 24, 488, 180, 24);
-        musicVolumeInput = new TrackBar
+        musicVolumeInput = new ThemeSlider
         {
             Minimum = 0,
             Maximum = 100,
-            TickFrequency = 10,
             Value = Math.Clamp(settings.MusicVolume, 0, 100),
-            Bounds = new Rectangle(22, 512, 260, 42)
+            Bounds = new Rectangle(24, 512, 260, ThemeSliderMetrics.Height),
+            Palette = palette
         };
         musicVolumeInput.ValueChanged += (_, _) =>
         {
@@ -4410,6 +4410,9 @@ internal sealed class MainForm : Form
                 case AccountRosterGrid roster:
                     roster.Palette = palette;
                     break;
+                case ThemeSlider slider:
+                    slider.Palette = palette;
+                    break;
                 case CheckedListBox checkedList:
                     checkedList.BackColor = palette.ListBack;
                     checkedList.ForeColor = palette.Text;
@@ -4606,7 +4609,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.44 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.45 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -4690,7 +4693,7 @@ internal sealed class MainForm : Form
 
     private static void TrySetDoubleBuffered(Control control)
     {
-        if (control is TextBoxBase or ComboBox or TrackBar) return;
+        if (control is TextBoxBase or ComboBox) return;
         try
         {
             var property = typeof(Control).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
@@ -4999,6 +5002,224 @@ internal sealed class AppToolTip : Form
         using var border = new Pen(palette.Border, 1.4F);
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
+    }
+
+    private static GraphicsPath Rounded(Rectangle bounds, int radius)
+    {
+        var path = new GraphicsPath();
+        if (bounds.Width <= 0 || bounds.Height <= 0) return path;
+        radius = Math.Min(radius, Math.Max(1, Math.Min(bounds.Width, bounds.Height) / 2));
+        var diameter = radius * 2;
+        var rect = new Rectangle(bounds.Location, new Size(diameter, diameter));
+        path.AddArc(rect, 180, 90);
+        rect.X = bounds.Right - diameter - 1;
+        path.AddArc(rect, 270, 90);
+        rect.Y = bounds.Bottom - diameter - 1;
+        path.AddArc(rect, 0, 90);
+        rect.X = bounds.Left;
+        path.AddArc(rect, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+}
+
+internal static class ThemeSliderMetrics
+{
+    public const int Height = 30;
+    public const int TrackHeight = 6;
+    public const int ThumbRadius = 8;
+}
+
+internal sealed class ThemeSlider : Control
+{
+    private int minimum;
+    private int maximum = 100;
+    private int value = 45;
+    private bool dragging;
+    private ThemePalette palette = MainForm.Palettes["Pink"];
+
+    public event EventHandler? ValueChanged;
+
+    public int Minimum
+    {
+        get => minimum;
+        set
+        {
+            minimum = value;
+            if (maximum < minimum) maximum = minimum;
+            Value = Math.Clamp(this.value, minimum, maximum);
+            Invalidate();
+        }
+    }
+
+    public int Maximum
+    {
+        get => maximum;
+        set
+        {
+            maximum = Math.Max(minimum, value);
+            Value = Math.Clamp(this.value, minimum, maximum);
+            Invalidate();
+        }
+    }
+
+    public int Value
+    {
+        get => value;
+        set
+        {
+            var clamped = Math.Clamp(value, minimum, maximum);
+            if (this.value == clamped) return;
+            this.value = clamped;
+            Invalidate();
+            ValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public ThemePalette Palette
+    {
+        get => palette;
+        set
+        {
+            palette = value;
+            BackColor = Color.Transparent;
+            Invalidate();
+        }
+    }
+
+    public ThemeSlider()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+        Height = ThemeSliderMetrics.Height;
+        TabStop = true;
+        Cursor = Cursors.Hand;
+    }
+
+    protected override bool IsInputKey(Keys keyData)
+    {
+        return keyData is Keys.Left or Keys.Right or Keys.Up or Keys.Down or Keys.Home or Keys.End || base.IsInputKey(keyData);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        switch (e.KeyCode)
+        {
+            case Keys.Left:
+            case Keys.Down:
+                Value -= e.Shift ? 10 : 1;
+                e.Handled = true;
+                break;
+            case Keys.Right:
+            case Keys.Up:
+                Value += e.Shift ? 10 : 1;
+                e.Handled = true;
+                break;
+            case Keys.Home:
+                Value = Minimum;
+                e.Handled = true;
+                break;
+            case Keys.End:
+                Value = Maximum;
+                e.Handled = true;
+                break;
+        }
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button != MouseButtons.Left) return;
+        Focus();
+        dragging = true;
+        Capture = true;
+        SetValueFromPoint(e.X);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (dragging) SetValueFromPoint(e.X);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button != MouseButtons.Left) return;
+        dragging = false;
+        Capture = false;
+        SetValueFromPoint(e.X);
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        Value += e.Delta > 0 ? 2 : -2;
+    }
+
+    private void SetValueFromPoint(int x)
+    {
+        var track = TrackBounds();
+        var ratio = track.Width <= 0 ? 0 : Math.Clamp((x - track.Left) / (float)track.Width, 0, 1);
+        Value = minimum + (int)Math.Round((maximum - minimum) * ratio);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        e.Graphics.Clear(Parent?.BackColor ?? Color.Transparent);
+
+        var track = TrackBounds();
+        using var trackPath = Rounded(track, ThemeSliderMetrics.TrackHeight / 2);
+        using var trackBrush = new SolidBrush(Color.FromArgb(110, palette.Border));
+        e.Graphics.FillPath(trackBrush, trackPath);
+
+        var fillWidth = ThumbCenterX() - track.Left;
+        if (fillWidth > 0)
+        {
+            using var fillPath = Rounded(new Rectangle(track.Left, track.Top, fillWidth, track.Height), ThemeSliderMetrics.TrackHeight / 2);
+            using var fillBrush = new LinearGradientBrush(track, palette.Primary, palette.Secondary, 0F);
+            e.Graphics.FillPath(fillBrush, fillPath);
+        }
+
+        using var tickPen = new Pen(Color.FromArgb(150, palette.Muted), 1F);
+        for (var tick = minimum; tick <= maximum; tick += 10)
+        {
+            var x = ValueToX(tick);
+            e.Graphics.DrawLine(tickPen, x, track.Bottom + 4, x, track.Bottom + 7);
+        }
+
+        var thumbCenter = new Point(ThumbCenterX(), track.Top + track.Height / 2);
+        var thumbRect = new Rectangle(thumbCenter.X - ThemeSliderMetrics.ThumbRadius, thumbCenter.Y - ThemeSliderMetrics.ThumbRadius, ThemeSliderMetrics.ThumbRadius * 2, ThemeSliderMetrics.ThumbRadius * 2);
+        using var shadow = new SolidBrush(Color.FromArgb(50, Color.Black));
+        e.Graphics.FillEllipse(shadow, thumbRect.X + 1, thumbRect.Y + 2, thumbRect.Width, thumbRect.Height);
+        using var thumbBrush = new SolidBrush(palette.Primary);
+        using var thumbPen = new Pen(Color.FromArgb(230, Color.White), 2F);
+        e.Graphics.FillEllipse(thumbBrush, thumbRect);
+        e.Graphics.DrawEllipse(thumbPen, thumbRect);
+
+        if (Focused)
+        {
+            using var focusPen = new Pen(Color.FromArgb(170, palette.Secondary), 1F) { DashStyle = DashStyle.Dash };
+            e.Graphics.DrawRectangle(focusPen, new Rectangle(1, 1, Width - 3, Height - 3));
+        }
+    }
+
+    private Rectangle TrackBounds()
+    {
+        var horizontalPadding = ThemeSliderMetrics.ThumbRadius + 2;
+        return new Rectangle(horizontalPadding, (Height - ThemeSliderMetrics.TrackHeight) / 2 - 1, Math.Max(1, Width - horizontalPadding * 2), ThemeSliderMetrics.TrackHeight);
+    }
+
+    private int ThumbCenterX() => ValueToX(value);
+
+    private int ValueToX(int sliderValue)
+    {
+        var track = TrackBounds();
+        var range = Math.Max(1, maximum - minimum);
+        var ratio = Math.Clamp((sliderValue - minimum) / (float)range, 0, 1);
+        return track.Left + (int)Math.Round(track.Width * ratio);
     }
 
     private static GraphicsPath Rounded(Rectangle bounds, int radius)

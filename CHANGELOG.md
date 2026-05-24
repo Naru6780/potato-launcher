@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.45 - 2026-05-24
+
+- Restored animated background bubbles on the main app background.
+- Replaced the default music volume trackbar with a compact custom themed slider.
+- Styled the volume slider track, fill, thumb, ticks, and focus state from the active theme so dark mode no longer shows a white block.
+- Added compact slider metric coverage.
+
 ## 1.0.44 - 2026-05-24
 
 - Smoothed splitter dragging by coalescing raw mouse-move events to the latest pending width.
