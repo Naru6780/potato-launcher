@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.48 - 2026-05-25
+
+- Tightened the Band Manager list spacing so the account checklist gets more usable width.
+- Made Band Manager checklist columns responsive to the available panel width instead of using a fixed column size.
+- Removed the unnecessary horizontal scrollbar from the Band Manager account checklist.
+- Added layout coverage to keep member-list columns fitted during resize.
+
 ## 1.0.47 - 2026-05-24
 
 - Added deeper persisted settings cleanup for stale or empty Lodestone profile data.

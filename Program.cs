@@ -179,6 +179,28 @@ internal readonly record struct LauncherLayoutMetrics(int Margin, int Top, int G
     }
 }
 
+internal readonly record struct BandMemberListMetrics(int BandListWidth, int MemberLeft, int MemberWidth, int MemberColumnWidth, int ColumnCount, int ListGap)
+{
+    public const int LeftPadding = 18;
+    public const int RightPadding = 18;
+    public const int MinimumColumnWidth = 220;
+    private const int MinimumBandListWidth = 160;
+    private const int MaximumBandListWidth = 220;
+    private const int PreferredGap = 14;
+    private const int MaximumColumnCount = 4;
+
+    public static BandMemberListMetrics Calculate(int bandCardWidth)
+    {
+        var safeWidth = Math.Max(420, bandCardWidth);
+        var bandListWidth = Math.Clamp((int)(safeWidth * 0.28), MinimumBandListWidth, MaximumBandListWidth);
+        var memberLeft = LeftPadding + bandListWidth + PreferredGap;
+        var memberWidth = Math.Max(MinimumColumnWidth, safeWidth - memberLeft - RightPadding);
+        var columnCount = Math.Clamp(memberWidth / MinimumColumnWidth, 1, MaximumColumnCount);
+        var columnWidth = Math.Max(MinimumColumnWidth, memberWidth / columnCount);
+        return new BandMemberListMetrics(bandListWidth, memberLeft, memberWidth, columnWidth, columnCount, PreferredGap);
+    }
+}
+
 internal static class SettingsMigration
 {
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
@@ -909,7 +931,8 @@ internal sealed class MainForm : Form
 
         bandCard = Card(392, 118, 560, 450);
         bandCard.Controls.Add(Header("Band Manager", 18, 12, 180, 32));
-        bandList = new ListBox { Bounds = new Rectangle(18, 58, 180, 306) };
+        var initialBandMembers = BandMemberListMetrics.Calculate(bandCard.Width);
+        bandList = new ListBox { Bounds = new Rectangle(BandMemberListMetrics.LeftPadding, 58, initialBandMembers.BandListWidth, 306) };
         bandList.SelectedIndexChanged += (_, _) => LoadSelectedBand();
         bandList.MouseDown += (_, e) =>
         {
@@ -920,7 +943,15 @@ internal sealed class MainForm : Form
             ShowBandContextMenu(bandList, e.Location);
         };
         bandCard.Controls.Add(bandList);
-        memberList = new CheckedListBox { Bounds = new Rectangle(218, 58, 318, 306), CheckOnClick = true, MultiColumn = true, ColumnWidth = 220, HorizontalScrollbar = true };
+        memberList = new CheckedListBox
+        {
+            Bounds = new Rectangle(initialBandMembers.MemberLeft, 58, initialBandMembers.MemberWidth, 306),
+            CheckOnClick = true,
+            MultiColumn = true,
+            ColumnWidth = initialBandMembers.MemberColumnWidth,
+            HorizontalScrollbar = false,
+            IntegralHeight = false
+        };
         memberList.ItemCheck += (_, _) => { if (!loadingBand) BeginInvoke(() => SaveCurrentBand()); };
         bandCard.Controls.Add(memberList);
 
@@ -1003,12 +1034,11 @@ internal sealed class MainForm : Form
         accountList.Bounds = new Rectangle(18, 58, accountCard.Width - 36, accountCard.Height - 82);
         accountRosterGrid.Bounds = accountList.Bounds;
 
-        var bandListWidth = Math.Clamp((int)(bandCard.Width * 0.34), 170, 230);
-        var editorLeft = bandListWidth + 38;
-        var editorWidth = Math.Max(220, bandCard.Width - editorLeft - 24);
+        var memberLayout = BandMemberListMetrics.Calculate(bandCard.Width);
         var listHeight = Math.Max(220, bandCard.Height - 144);
-        bandList.Bounds = new Rectangle(18, 58, bandListWidth, listHeight);
-        memberList.Bounds = new Rectangle(editorLeft, 58, editorWidth, Math.Max(240, bandCard.Height - 144));
+        bandList.Bounds = new Rectangle(BandMemberListMetrics.LeftPadding, 58, memberLayout.BandListWidth, listHeight);
+        memberList.Bounds = new Rectangle(memberLayout.MemberLeft, 58, memberLayout.MemberWidth, Math.Max(240, bandCard.Height - 144));
+        memberList.ColumnWidth = memberLayout.MemberColumnWidth;
         bandButtonPanel.Bounds = new Rectangle(18, bandCard.Height - 66, bandCard.Width - 36, 54);
         if (loadingOverlay is not null)
         {
@@ -4749,7 +4779,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.47 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.48 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
