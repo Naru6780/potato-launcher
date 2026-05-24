@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.31`
+**Current version:** `1.0.32`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 
@@ -77,6 +77,10 @@ Potato Launcher Assets\Account Icons
 The cache is keyed by the launcher account key or BAT identity. Portraits are refreshed directly from saved Lodestone profile IDs when available. If no profile ID is known, refresh uses exact Lodestone search matches with a known world and known surnames from prior profile/title mappings. The app caches both the face portrait (`fc0`) for roster tiles and the full-body portrait (`fl0`) for richer character-card UI. The app does not use placeholder/fallback icons in roster mode; missing icons stay visibly unmapped until the account has been launched once, inferred from known world/surname data, or assigned a profile URL from the right-click menu.
 
 Manual Lodestone profile assignment in Shared mode can update XIVLauncher's `accountsList.json` for the matching `UserName`, `UseSteamServiceAccount`, and `UseOtp` entry. Potato Launcher only writes `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl`, and first creates a timestamped backup under `backups\PotatoLauncher`.
+
+Settings account export writes a Potato Launcher transfer JSON with safe XIVLauncher account metadata plus portable Lodestone profile links from `settings.json`. Importing merges by `UserName`, `UseSteamServiceAccount`, and `UseOtp`, adds missing accounts with password saving disabled, fills only blank `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl` fields for existing accounts, and backs up `accountsList.json` before writing.
+
+The Band Manager Save button exports the current launch method's bands to `band.json`. Band import appends bands into the current launch method and uniquifies duplicate names instead of replacing the user's existing bands.
 
 ## News and Updates
 

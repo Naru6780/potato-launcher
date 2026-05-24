@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.32 - 2026-05-24
+
+- Removed the obsolete `Launch selected` button now that roster double-click launches individual accounts.
+- Moved the loading screen into the Band Manager area so the account roster stays visible during launches.
+- Improved small-window Band Manager button spacing with a wrapping button row.
+- Changed Band Manager account rows to show character names instead of `account id - character` labels.
+- Added Shared account metadata export/import that merges Lodestone mappings without wiping existing `accountsList.json` entries.
+- Renamed `New band` to `Add Band` and added `band.json` band save/import support.
+
 ## 1.0.31 - 2026-05-24
 
 - Backfilled XIVLauncher's Shared-mode account metadata when a Lodestone profile URL is manually assigned from the right-click menu.

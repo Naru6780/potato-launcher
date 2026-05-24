@@ -35,7 +35,13 @@ internal static class Program
 
 internal sealed record Account(string Name, string BatchFile, int SortOrder, string AccountKey, bool UseSteamServiceAccount = false, bool UseOtp = false)
 {
-    public override string ToString() => Name;
+    public override string ToString()
+    {
+        var separator = Name.LastIndexOf(" - ", StringComparison.Ordinal);
+        return separator >= 0 && separator < Name.Length - 3
+            ? Name[(separator + 3)..].Trim()
+            : Name;
+    }
 }
 
 internal sealed class BandConfig
@@ -77,6 +83,30 @@ internal sealed class AccountIconProfile
     public string FullImageUrl { get; set; } = "";
     public string FullImageFileName { get; set; } = "";
     public DateTime LastUpdatedUtc { get; set; }
+}
+
+internal sealed class AccountListTransfer
+{
+    public int Version { get; set; } = 1;
+    public List<AccountListTransferEntry> Accounts { get; set; } = [];
+    public Dictionary<string, AccountIconProfile> AccountIcons { get; set; } = [];
+}
+
+internal sealed class AccountListTransferEntry
+{
+    public string UserName { get; set; } = "";
+    public bool UseSteamServiceAccount { get; set; }
+    public bool UseOtp { get; set; }
+    public string ChosenCharacterName { get; set; } = "";
+    public string ChosenCharacterWorld { get; set; } = "";
+    public string ThumbnailUrl { get; set; } = "";
+}
+
+internal sealed class BandTransfer
+{
+    public int Version { get; set; } = 1;
+    public string LaunchMode { get; set; } = "Shared";
+    public List<BandConfig> Bands { get; set; } = [];
 }
 
 internal sealed record ThemePalette(Color Back1, Color Back2, Color Card, Color Border, Color Text, Color Muted, Color Primary, Color Secondary, Color Danger, Color ListBack);
@@ -214,9 +244,13 @@ internal sealed class MainForm : Form
     private Label status = null!;
     private Button launchBandButton = null!;
     private Button cancelButton = null!;
-    private Button launchAccountButton = null!;
     private Button newBandButton = null!;
+    private Button saveBandsButton = null!;
     private Button deleteBandButton = null!;
+    private FlowLayoutPanel bandButtonPanel = null!;
+    private Button importAccountsButton = null!;
+    private Button exportAccountsButton = null!;
+    private Button importBandsButton = null!;
     private CuteBackgroundPanel loadingOverlay = null!;
     private CuteBackgroundPanel launchChoiceOverlay = null!;
     private RoundedPanel loadingCard = null!;
@@ -545,9 +579,6 @@ internal sealed class MainForm : Form
         accountRosterGrid.AccountActivated += (_, _) => LaunchSelectedAccount();
         accountRosterGrid.AccountContextRequested += (_, args) => ShowAccountContextMenu(args.Account, accountRosterGrid, args.Location);
         accountCard.Controls.Add(accountRosterGrid);
-        launchAccountButton = Button("Launch selected", 18, 394, 150, 36, "Primary");
-        launchAccountButton.Click += (_, _) => LaunchSelectedAccount();
-        accountCard.Controls.Add(launchAccountButton);
 
         bandCard = Card(392, 118, 560, 450);
         bandCard.Controls.Add(Header("Band Manager", 18, 12, 180, 32));
@@ -562,16 +593,30 @@ internal sealed class MainForm : Form
         memberList.ItemCheck += (_, _) => { if (!loadingBand) BeginInvoke(() => SaveCurrentBand()); };
         bandCard.Controls.Add(memberList);
 
-        newBandButton = Button("New band", 18, 384, 104, 36, "Secondary");
+        newBandButton = Button("Add Band", 18, 384, 104, 36, "Secondary");
         newBandButton.Click += (_, _) => AddBand();
-        deleteBandButton = Button("Delete", 132, 384, 76, 36, "Danger");
+        saveBandsButton = Button("Save", 132, 384, 76, 36, "Secondary");
+        saveBandsButton.Click += (_, _) => ExportBands();
+        deleteBandButton = Button("Delete", 218, 384, 76, 36, "Danger");
         deleteBandButton.Click += (_, _) => DeleteBand();
-        launchBandButton = Button("Launch band", 218, 384, 136, 36, "Primary");
+        launchBandButton = Button("Launch band", 304, 384, 136, 36, "Primary");
         launchBandButton.Click += async (_, _) => await LaunchSelectedBandAsync();
-        cancelButton = Button("Cancel", 366, 384, 74, 36, "Danger");
+        cancelButton = Button("Cancel", 450, 384, 74, 36, "Danger");
         cancelButton.Visible = false;
         cancelButton.Click += (_, _) => queueCancel?.Cancel();
-        bandCard.Controls.AddRange([newBandButton, deleteBandButton, launchBandButton, cancelButton]);
+        bandButtonPanel = new FlowLayoutPanel
+        {
+            Bounds = new Rectangle(18, 384, 520, 48),
+            BackColor = Color.Transparent,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true
+        };
+        foreach (var button in new[] { newBandButton, saveBandsButton, deleteBandButton, launchBandButton, cancelButton })
+        {
+            button.Margin = new Padding(0, 0, 10, 8);
+            bandButtonPanel.Controls.Add(button);
+        }
+        bandCard.Controls.Add(bandButtonPanel);
         tab.Controls.Add(accountCard);
         tab.Controls.Add(bandCard);
     }
@@ -592,9 +637,8 @@ internal sealed class MainForm : Form
         accountCard.Bounds = new Rectangle(margin, top, accountWidth, contentHeight);
         bandCard.Bounds = new Rectangle(margin + accountWidth + gap, top, bandWidth, contentHeight);
 
-        accountList.Bounds = new Rectangle(18, 58, accountCard.Width - 36, accountCard.Height - 130);
+        accountList.Bounds = new Rectangle(18, 58, accountCard.Width - 36, accountCard.Height - 82);
         accountRosterGrid.Bounds = accountList.Bounds;
-        launchAccountButton.Location = new Point(18, accountCard.Height - 56);
 
         var bandListWidth = Math.Clamp((int)(bandCard.Width * 0.34), 170, 230);
         var editorLeft = bandListWidth + 38;
@@ -603,10 +647,25 @@ internal sealed class MainForm : Form
         bandList.Bounds = new Rectangle(18, 58, bandListWidth, listHeight);
         bandName.Bounds = new Rectangle(editorLeft, 58, Math.Min(250, editorWidth), 29);
         memberList.Bounds = new Rectangle(editorLeft, 98, editorWidth, Math.Max(200, bandCard.Height - 184));
-        newBandButton.Location = new Point(18, bandCard.Height - 66);
-        deleteBandButton.Location = new Point(132, bandCard.Height - 66);
-        launchBandButton.Location = new Point(editorLeft, bandCard.Height - 66);
-        cancelButton.Location = new Point(editorLeft + 148, bandCard.Height - 66);
+        bandButtonPanel.Bounds = new Rectangle(18, bandCard.Height - 66, bandCard.Width - 36, 54);
+        if (loadingOverlay is not null)
+        {
+            loadingOverlay.Bounds = new Rectangle(12, 48, bandCard.Width - 24, bandCard.Height - 108);
+            loadingCard.Bounds = new Rectangle(
+                Math.Max(16, (loadingOverlay.Width - Math.Min(520, loadingOverlay.Width - 32)) / 2),
+                Math.Max(16, (loadingOverlay.Height - Math.Min(340, loadingOverlay.Height - 32)) / 2),
+                Math.Min(520, loadingOverlay.Width - 32),
+                Math.Min(340, loadingOverlay.Height - 32));
+            var pictureSize = Math.Clamp(loadingCard.Height / 3, 78, 120);
+            var pictureTop = 22;
+            var titleTop = pictureTop + pictureSize + 10;
+            var statusTop = titleTop + 44;
+            var cancelTop = loadingCard.Height - 54;
+            loadingPicture.Bounds = new Rectangle(Math.Max(20, (loadingCard.Width - pictureSize) / 2), pictureTop, pictureSize, pictureSize);
+            loadingTitle.Bounds = new Rectangle(24, titleTop, loadingCard.Width - 48, 42);
+            loadingStatus.Bounds = new Rectangle(34, statusTop, loadingCard.Width - 68, Math.Max(28, cancelTop - statusTop - 8));
+            loadingCancel.Location = new Point(Math.Max(20, (loadingCard.Width - loadingCancel.Width) / 2), cancelTop);
+        }
 
         statusPill.Bounds = new Rectangle(Math.Max(margin, (ClientSize.Width - 370) / 2), Math.Max(top + contentHeight + 24, ClientSize.Height - 56), 370, 30);
 
@@ -628,15 +687,7 @@ internal sealed class MainForm : Form
             settingsDrawer.Invalidate();
         }
 
-        if (loadingOverlay is not null)
-        {
-            loadingOverlay.Bounds = ClientRectangle;
-        }
-        if (loadingCard is not null)
-        {
-            loadingCard.Location = new Point(Math.Max(24, (ClientSize.Width - loadingCard.Width) / 2), Math.Max(44, (ClientSize.Height - loadingCard.Height) / 2));
-            loadingCard.Invalidate();
-        }
+        if (loadingCard is not null) loadingCard.Invalidate();
 
         if (launchChoiceOverlay is not null)
         {
@@ -664,7 +715,7 @@ internal sealed class MainForm : Form
 
     private void BuildSettingsDrawer()
     {
-        settingsDrawer = new RoundedPanel { Bounds = new Rectangle(ClientSize.Width + 4, 0, 380, ClientSize.Height), Radius = 24 };
+        settingsDrawer = new RoundedPanel { Bounds = new Rectangle(ClientSize.Width + 4, 0, 380, ClientSize.Height), Radius = 24, AutoScroll = true };
         settingsDrawer.Controls.Add(Header("Settings", 24, 24, 180, 38));
 
         settingsDrawer.Controls.Add(Label("Launch method", 24, 76, 170, 24));
@@ -706,6 +757,14 @@ internal sealed class MainForm : Form
         refreshAccountIconsButton = Button("Refresh account icons", 196, 298, 160, 29, "Secondary");
         refreshAccountIconsButton.Click += async (_, _) => await RefreshAccountIconsAsync();
         settingsDrawer.Controls.AddRange([accountDisplayLabel, accountDisplayInput, refreshAccountIconsButton]);
+
+        exportAccountsButton = Button("Export accounts", 24, 336, 154, 30, "Secondary");
+        exportAccountsButton.Click += (_, _) => ExportAccountList();
+        importAccountsButton = Button("Import accounts", 190, 336, 154, 30, "Secondary");
+        importAccountsButton.Click += (_, _) => ImportAccountList();
+        importBandsButton = Button("Import bands", 24, 374, 154, 30, "Secondary");
+        importBandsButton.Click += (_, _) => ImportBands();
+        settingsDrawer.Controls.AddRange([exportAccountsButton, importAccountsButton, importBandsButton]);
 
         themeLabel = Label("Theme", 24, 580, 120, 24);
         themeInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 608, 260, 29) };
@@ -790,32 +849,38 @@ internal sealed class MainForm : Form
             SetY(accountDisplayLabel, 270);
             SetY(accountDisplayInput, 298);
             SetY(refreshAccountIconsButton, 298);
-            SetY(themeLabel, 350);
-            SetY(themeInput, 378);
-            SetY(muteMusicInput, 426);
-            SetY(stopMusicWhenLoadedInput, 456);
-            SetY(musicVolumeLabel, 488);
-            SetY(musicVolumeInput, 510);
-            SetY(launchCooldownLabel, 558);
-            SetY(launchCooldownInput, 580);
-            SetY(randomizeThemeInput, 616);
-            SetY(updateButton, 648);
+            SetY(exportAccountsButton, 336);
+            SetY(importAccountsButton, 336);
+            SetY(importBandsButton, 374);
+            SetY(themeLabel, 420);
+            SetY(themeInput, 448);
+            SetY(muteMusicInput, 496);
+            SetY(stopMusicWhenLoadedInput, 526);
+            SetY(musicVolumeLabel, 558);
+            SetY(musicVolumeInput, 580);
+            SetY(launchCooldownLabel, 628);
+            SetY(launchCooldownInput, 650);
+            SetY(randomizeThemeInput, 686);
+            SetY(updateButton, 718);
         }
         else
         {
             SetY(accountDisplayLabel, 270);
             SetY(accountDisplayInput, 298);
             SetY(refreshAccountIconsButton, 298);
-            SetY(themeLabel, 350);
-            SetY(themeInput, 378);
-            SetY(muteMusicInput, 426);
-            SetY(stopMusicWhenLoadedInput, 456);
-            SetY(musicVolumeLabel, 488);
-            SetY(musicVolumeInput, 510);
-            SetY(launchCooldownLabel, 558);
-            SetY(launchCooldownInput, 580);
-            SetY(randomizeThemeInput, 616);
-            SetY(updateButton, 648);
+            SetY(exportAccountsButton, 336);
+            SetY(importAccountsButton, 336);
+            SetY(importBandsButton, 374);
+            SetY(themeLabel, 420);
+            SetY(themeInput, 448);
+            SetY(muteMusicInput, 496);
+            SetY(stopMusicWhenLoadedInput, 526);
+            SetY(musicVolumeLabel, 558);
+            SetY(musicVolumeInput, 580);
+            SetY(launchCooldownLabel, 628);
+            SetY(launchCooldownInput, 650);
+            SetY(randomizeThemeInput, 686);
+            SetY(updateButton, 718);
         }
     }
 
@@ -823,12 +888,12 @@ internal sealed class MainForm : Form
 
     private void BuildLoadingOverlay()
     {
-        loadingOverlay = new CuteBackgroundPanel { Bounds = new Rectangle(0, 0, 990, 700), Visible = false };
-        loadingCard = new RoundedPanel { Bounds = new Rectangle(120, 92, 750, 500), Radius = 28 };
+        loadingOverlay = new CuteBackgroundPanel { Bounds = new Rectangle(12, 48, 520, 336), Visible = false };
+        loadingCard = new RoundedPanel { Bounds = new Rectangle(28, 18, 464, 300), Radius = 24 };
 
         loadingPicture = new PictureBox
         {
-            Bounds = new Rectangle(275, 46, 200, 200),
+            Bounds = new Rectangle(172, 28, 120, 120),
             BackColor = Color.Transparent,
             SizeMode = PictureBoxSizeMode.Zoom
         };
@@ -837,8 +902,8 @@ internal sealed class MainForm : Form
             Text = "Now loading...",
             TextAlign = ContentAlignment.MiddleCenter,
             BackColor = Color.Transparent,
-            Font = new Font("Segoe UI", 24F, FontStyle.Bold),
-            Bounds = new Rectangle(40, 262, 670, 48)
+            Font = new Font("Segoe UI", 18F, FontStyle.Bold),
+            Bounds = new Rectangle(24, 162, 416, 46)
         };
         loadingStatus = new Label
         {
@@ -846,14 +911,14 @@ internal sealed class MainForm : Form
             TextAlign = ContentAlignment.MiddleCenter,
             BackColor = Color.Transparent,
             Font = new Font("Segoe UI", 11F, FontStyle.Bold),
-            Bounds = new Rectangle(70, 326, 610, 64)
+            Bounds = new Rectangle(34, 218, 396, 62)
         };
-        loadingCancel = Button("Cancel", 298, 410, 154, 42, "Danger");
+        loadingCancel = Button("Cancel", 155, 242, 154, 42, "Danger");
         loadingCancel.Click += (_, _) => queueCancel?.Cancel();
 
         loadingCard.Controls.AddRange([loadingPicture, loadingTitle, loadingStatus, loadingCancel]);
         loadingOverlay.Controls.Add(loadingCard);
-        background.Controls.Add(loadingOverlay);
+        bandCard.Controls.Add(loadingOverlay);
         loadingOverlay.BringToFront();
     }
 
@@ -1597,6 +1662,240 @@ internal sealed class MainForm : Form
         Directory.CreateDirectory(backupFolder);
         var backupPath = Path.Combine(backupFolder, $"accountsList-{DateTime.Now:yyyyMMdd-HHmmss}.json");
         File.Copy(accountListPath, backupPath, overwrite: false);
+    }
+
+    private void ExportAccountList()
+    {
+        if (!IsSharedLaunchMode())
+        {
+            MessageBox.Show("Account list export uses Shared mode accountsList.json.", "Export accounts", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var accountListPath = SharedAccountListPath();
+        if (!File.Exists(accountListPath))
+        {
+            MessageBox.Show("Choose a Shared folder with accountsList.json before exporting.", "Export accounts", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(accountListPath));
+            if (document.RootElement.ValueKind != JsonValueKind.Array) return;
+
+            var transfer = new AccountListTransfer();
+            foreach (var element in document.RootElement.EnumerateArray())
+            {
+                var userName = GetJsonString(element, "UserName");
+                if (string.IsNullOrWhiteSpace(userName)) continue;
+                var useSteam = GetJsonBool(element, "UseSteamServiceAccount");
+                var useOtp = GetJsonBool(element, "UseOtp");
+                var accountKey = BuildAccountKey(userName, useSteam, useOtp);
+                transfer.Accounts.Add(new AccountListTransferEntry
+                {
+                    UserName = userName,
+                    UseSteamServiceAccount = useSteam,
+                    UseOtp = useOtp,
+                    ChosenCharacterName = GetJsonString(element, "ChosenCharacterName"),
+                    ChosenCharacterWorld = GetJsonString(element, "ChosenCharacterWorld"),
+                    ThumbnailUrl = GetJsonString(element, "ThumbnailUrl")
+                });
+                if (settings.AccountIcons.TryGetValue(accountKey, out var profile))
+                {
+                    transfer.AccountIcons[accountKey] = profile;
+                }
+            }
+
+            using var dialog = new SaveFileDialog
+            {
+                Title = "Export account list",
+                Filter = "Potato account list (*.json)|*.json",
+                FileName = "potato-account-list.json"
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+            File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
+            status.Text = $"Exported {transfer.Accounts.Count} account entries.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not export account list.\n\n{ex.Message}", "Export accounts failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void ImportAccountList()
+    {
+        if (!IsSharedLaunchMode())
+        {
+            MessageBox.Show("Account list import uses Shared mode accountsList.json.", "Import accounts", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Import account list",
+            Filter = "Potato account list (*.json)|*.json|JSON files (*.json)|*.json"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            var transfer = JsonSerializer.Deserialize<AccountListTransfer>(File.ReadAllText(dialog.FileName));
+            if (transfer is null || transfer.Accounts.Count == 0)
+            {
+                MessageBox.Show("That file does not contain exported Potato Launcher accounts.", "Import accounts", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var accountListPath = SharedAccountListPath();
+            Directory.CreateDirectory(Path.GetDirectoryName(accountListPath)!);
+            var existingEntries = File.Exists(accountListPath)
+                ? JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(File.ReadAllText(accountListPath)) ?? []
+                : [];
+            var updatedEntries = existingEntries
+                .Select(entry => entry.ToDictionary(pair => pair.Key, pair => JsonElementToObject(pair.Value), StringComparer.Ordinal))
+                .ToList();
+
+            var added = 0;
+            var filled = 0;
+            foreach (var imported in transfer.Accounts.Where(account => !string.IsNullOrWhiteSpace(account.UserName)))
+            {
+                var existing = updatedEntries.FirstOrDefault(entry => IsMatchingAccountEntry(entry, imported.UserName, imported.UseSteamServiceAccount, imported.UseOtp));
+                if (existing is null)
+                {
+                    updatedEntries.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["UserName"] = imported.UserName,
+                        ["UseSteamServiceAccount"] = imported.UseSteamServiceAccount,
+                        ["UseOtp"] = imported.UseOtp,
+                        ["LastSuccessfulOtp"] = null,
+                        ["SavePassword"] = false,
+                        ["ChosenCharacterName"] = imported.ChosenCharacterName,
+                        ["ChosenCharacterWorld"] = imported.ChosenCharacterWorld,
+                        ["ThumbnailUrl"] = imported.ThumbnailUrl
+                    });
+                    added++;
+                    continue;
+                }
+
+                if (FillBlank(existing, "ChosenCharacterName", imported.ChosenCharacterName)) filled++;
+                if (FillBlank(existing, "ChosenCharacterWorld", imported.ChosenCharacterWorld)) filled++;
+                if (FillBlank(existing, "ThumbnailUrl", imported.ThumbnailUrl)) filled++;
+            }
+
+            var importedProfiles = 0;
+            foreach (var pair in (transfer.AccountIcons ?? []).Where(pair => !string.IsNullOrWhiteSpace(pair.Key)))
+            {
+                if (!settings.AccountIcons.TryGetValue(pair.Key, out var existingProfile) || string.IsNullOrWhiteSpace(existingProfile.LodestoneId))
+                {
+                    settings.AccountIcons[pair.Key] = pair.Value;
+                    importedProfiles++;
+                }
+            }
+
+            if (File.Exists(accountListPath)) BackupXivLauncherAccountList(accountListPath);
+            File.WriteAllText(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
+            SaveSettings(settings);
+            LoadAccounts();
+            PopulateLists();
+            status.Text = $"Imported accounts: {added} added, {filled} fields filled, {importedProfiles} profiles linked.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not import account list.\n\n{ex.Message}", "Import accounts failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void ExportBands()
+    {
+        SaveCurrentBand();
+        using var dialog = new SaveFileDialog
+        {
+            Title = "Save bands",
+            Filter = "Potato bands (*.json)|*.json",
+            FileName = "band.json"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        var transfer = new BandTransfer
+        {
+            LaunchMode = NormalizeLaunchMode(settings.LaunchMode),
+            Bands = CurrentBands().Select(CloneBand).ToList()
+        };
+        File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
+        status.Text = $"Saved {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")} to band.json.";
+    }
+
+    private void ImportBands()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Import bands",
+            Filter = "Potato bands (*.json)|*.json|JSON files (*.json)|*.json"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            var text = File.ReadAllText(dialog.FileName);
+            var importedBands = text.TrimStart().StartsWith("[", StringComparison.Ordinal)
+                ? JsonSerializer.Deserialize<List<BandConfig>>(text) ?? []
+                : JsonSerializer.Deserialize<BandTransfer>(text)?.Bands ?? [];
+            if (importedBands.Count == 0)
+            {
+                MessageBox.Show("That file does not contain any bands.", "Import bands", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var target = CurrentBands();
+            foreach (var imported in importedBands)
+            {
+                var band = CloneBand(imported);
+                band.Name = UniqueBandName(string.IsNullOrWhiteSpace(band.Name) ? "Imported Band" : band.Name, target);
+                target.Add(band);
+            }
+
+            SaveSettingsFromInputs();
+            PopulateLists();
+            status.Text = $"Imported {importedBands.Count} band{(importedBands.Count == 1 ? "" : "s")}.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not import bands.\n\n{ex.Message}", "Import bands failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private static bool IsMatchingAccountEntry(Dictionary<string, object?> entry, string userName, bool useSteam, bool useOtp)
+    {
+        return entry.TryGetValue("UserName", out var storedUserName) &&
+            string.Equals(storedUserName?.ToString() ?? "", userName, StringComparison.OrdinalIgnoreCase) &&
+            Convert.ToBoolean(entry.GetValueOrDefault("UseSteamServiceAccount") ?? false) == useSteam &&
+            Convert.ToBoolean(entry.GetValueOrDefault("UseOtp") ?? false) == useOtp;
+    }
+
+    private static bool FillBlank(Dictionary<string, object?> entry, string key, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        if (entry.TryGetValue(key, out var existing) && !string.IsNullOrWhiteSpace(existing?.ToString())) return false;
+        entry[key] = value;
+        return true;
+    }
+
+    private static BandConfig CloneBand(BandConfig band)
+    {
+        return new BandConfig { Name = band.Name, BatchFiles = band.BatchFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList() };
+    }
+
+    private static string UniqueBandName(string requestedName, List<BandConfig> bands)
+    {
+        if (!bands.Any(band => band.Name.Equals(requestedName, StringComparison.OrdinalIgnoreCase))) return requestedName;
+        for (var suffix = 2; suffix < 1000; suffix++)
+        {
+            var candidate = $"{requestedName} ({suffix})";
+            if (!bands.Any(band => band.Name.Equals(candidate, StringComparison.OrdinalIgnoreCase))) return candidate;
+        }
+        return $"{requestedName} ({DateTime.Now:HHmmss})";
     }
 
     private async Task<bool> RefreshAccountIconAsync(Account account, bool quiet)

@@ -1,6 +1,6 @@
 # Potato Launcher Goal
 
-**Current version:** `1.0.31`
+**Current version:** `1.0.32`
 
 Potato Launcher is a cute, portable Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
 
@@ -24,11 +24,12 @@ Bands are named account groups.
 - Instanced bands and Shared bands are separate.
 - Bands are created by the user; no default bands should be generated.
 - Band edits autosave.
-- Launching a band should queue accounts safely and visibly through the in-app loading screen.
+- Launching a band should queue accounts safely and visibly through the Band Manager loading screen while leaving the account roster visible.
+- Bands can be saved as `band.json` and imported on another portable copy.
 
 ## Loading Behavior
 
-The loading screen must stay inside the main app window and include a Cancel button.
+The loading screen must stay inside the Band Manager area and include a Cancel button.
 
 Band queues can pace client starts with a user-configurable cooldown. The loading screen remains visible until every launched `ffxiv` / `ffxiv_dx11` window title switches from `FINAL FANTASY XIV` to `Character@World`. This is a non-invasive window-title readiness signal, not a game-memory or plugin signal.
 
@@ -53,6 +54,8 @@ Users can switch the account list between text and compact roster display in Set
 Users can right-click an account to set or open the Lodestone profile URL. Manual profile URLs are treated as authoritative and are fetched directly from the character profile page.
 
 When the user manually assigns a Lodestone profile to a Shared-mode account, Potato Launcher may backfill XIVLauncher's `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl` fields for that account after creating a backup of `accountsList.json`.
+
+Users can export Shared-mode account metadata and Lodestone profile links, then import them on another machine. Importing should add missing accounts and fill blank metadata only; it must not wipe or replace a friend's existing account list.
 
 ## Guardrails
 
