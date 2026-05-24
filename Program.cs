@@ -71,6 +71,7 @@ internal sealed class AccountIconProfile
     public string CharacterName { get; set; } = "";
     public string World { get; set; } = "";
     public string LodestoneId { get; set; } = "";
+    public string ProfileUrl { get; set; } = "";
     public string IconUrl { get; set; } = "";
     public string IconFileName { get; set; } = "";
     public string FullImageUrl { get; set; } = "";
@@ -86,8 +87,13 @@ internal readonly record struct BatchLaunchInfo(string AccountKey, string Roamin
 internal readonly record struct StartedGameClient(Account Account, int ProcessId);
 internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
 internal sealed record NewsEntry(string Title, string Url, DateTimeOffset Date, string Tag);
-internal sealed record LodestoneIconResult(string LodestoneId, string IconUrl, string FullImageUrl);
+internal sealed record LodestoneIconResult(string LodestoneId, string CharacterName, string World, string ProfileUrl, string IconUrl, string FullImageUrl);
 internal sealed record AccountRosterItem(Account Account, string DisplayName, string? FacePath, string? FullPath, string Tooltip);
+internal sealed class AccountContextEventArgs(Account account, Point location) : EventArgs
+{
+    public Account Account { get; } = account;
+    public Point Location { get; } = location;
+}
 
 internal sealed class MainForm : Form
 {
@@ -523,9 +529,21 @@ internal sealed class MainForm : Form
         accountCard.Controls.Add(Header("Accounts", 18, 12, 180, 32));
         accountList = new ListBox { Bounds = new Rectangle(18, 58, 294, 320) };
         accountList.DoubleClick += (_, _) => LaunchSelectedAccount();
+        accountList.MouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Right) return;
+            var index = accountList.IndexFromPoint(e.Location);
+            if (index < 0 || index >= accountList.Items.Count) return;
+            accountList.SelectedIndex = index;
+            if (accountList.Items[index] is Account account)
+            {
+                ShowAccountContextMenu(account, accountList, e.Location);
+            }
+        };
         accountCard.Controls.Add(accountList);
         accountRosterGrid = new AccountRosterGrid { Bounds = new Rectangle(18, 58, 294, 320), Visible = false };
         accountRosterGrid.AccountActivated += (_, _) => LaunchSelectedAccount();
+        accountRosterGrid.AccountContextRequested += (_, args) => ShowAccountContextMenu(args.Account, accountRosterGrid, args.Location);
         accountCard.Controls.Add(accountRosterGrid);
         launchAccountButton = Button("Launch selected", 18, 394, 150, 36, "Primary");
         launchAccountButton.Click += (_, _) => LaunchSelectedAccount();
@@ -1204,7 +1222,7 @@ internal sealed class MainForm : Form
             if (!string.IsNullOrWhiteSpace(profile.CharacterName) && !string.IsNullOrWhiteSpace(profile.World))
             {
                 displayName = profile.CharacterName;
-                tooltip = $"{profile.CharacterName}@{profile.World}";
+                tooltip = $"{profile.CharacterName}@{profile.World}\nRight-click for Lodestone options.";
             }
 
             var iconPath = AccountIconPath(profile);
@@ -1281,6 +1299,31 @@ internal sealed class MainForm : Form
         return name;
     }
 
+    private static IEnumerable<string> BuildLodestoneNameCandidates(Account account)
+    {
+        var displayName = AccountDisplayName(account);
+        if (!string.IsNullOrWhiteSpace(displayName))
+        {
+            yield return displayName;
+        }
+
+        if (displayName.Contains(' ', StringComparison.Ordinal)) yield break;
+
+        foreach (var surname in GuessLodestoneSurnames(account))
+        {
+            yield return $"{displayName} {surname}";
+        }
+    }
+
+    private static IEnumerable<string> GuessLodestoneSurnames(Account account)
+    {
+        var source = $"{account.Name} {account.AccountKey} {account.BatchFile}".ToLowerInvariant();
+        if (source.Contains("potato", StringComparison.Ordinal)) yield return "Potato";
+        if (source.Contains("mangler", StringComparison.Ordinal)) yield return "Mangler";
+        if (source.Contains("garrison", StringComparison.Ordinal)) yield return "Garrison";
+        if (source.Contains("skye", StringComparison.Ordinal)) yield return "Skye";
+    }
+
     private void RememberAccountCharacterTitle(Account account, string title)
     {
         if (!TryParseCharacterTitle(title, out var characterName, out var world)) return;
@@ -1312,22 +1355,27 @@ internal sealed class MainForm : Form
             foreach (var account in accounts)
             {
                 var key = AccountIconKey(account);
-                if (!settings.AccountIcons.TryGetValue(key, out var profile) ||
-                    string.IsNullOrWhiteSpace(profile.CharacterName) ||
-                    string.IsNullOrWhiteSpace(profile.World))
+                if (!settings.AccountIcons.TryGetValue(key, out var profile))
                 {
-                    unmapped++;
-                    continue;
+                    profile = new AccountIconProfile();
+                    settings.AccountIcons[key] = profile;
                 }
 
-                status.Text = $"Refreshing {profile.CharacterName}@{profile.World}...";
+                status.Text = $"Refreshing {AccountDisplayName(account)}...";
                 if (await RefreshAccountIconAsync(account, quiet: true))
                 {
                     refreshed++;
                 }
                 else
                 {
-                    failed++;
+                    if (string.IsNullOrWhiteSpace(profile.CharacterName) || string.IsNullOrWhiteSpace(profile.World))
+                    {
+                        unmapped++;
+                    }
+                    else
+                    {
+                        failed++;
+                    }
                 }
             }
 
@@ -1342,17 +1390,118 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void ShowAccountContextMenu(Account account, Control owner, Point location)
+    {
+        var menu = new ContextMenuStrip();
+        var profile = GetOrCreateAccountIconProfile(account);
+        var profileUrl = AccountProfileUrl(profile);
+
+        var openProfile = new ToolStripMenuItem("Open Lodestone profile");
+        openProfile.Enabled = !string.IsNullOrWhiteSpace(profileUrl);
+        openProfile.Click += (_, _) => OpenUrl(profileUrl);
+        menu.Items.Add(openProfile);
+
+        var refresh = new ToolStripMenuItem("Refresh from Lodestone");
+        refresh.Click += async (_, _) =>
+        {
+            status.Text = $"Refreshing {AccountDisplayName(account)}...";
+            if (await RefreshAccountIconAsync(account, quiet: false))
+            {
+                PopulateLists();
+            }
+        };
+        menu.Items.Add(refresh);
+
+        var setProfile = new ToolStripMenuItem("Set Lodestone profile URL...");
+        setProfile.Click += async (_, _) =>
+        {
+            var enteredUrl = ShowTextPrompt("Set Lodestone profile URL", "Paste the Lodestone character profile URL for this account:", AccountProfileUrl(profile));
+            if (string.IsNullOrWhiteSpace(enteredUrl)) return;
+            var lodestoneId = ExtractLodestoneId(enteredUrl);
+            if (string.IsNullOrWhiteSpace(lodestoneId))
+            {
+                MessageBox.Show("That does not look like a Lodestone character profile URL.", "Invalid profile URL", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            profile.LodestoneId = lodestoneId;
+            profile.ProfileUrl = NormalizeLodestoneProfileUrl(lodestoneId);
+            SaveSettings(settings);
+            status.Text = $"Refreshing {AccountDisplayName(account)} from profile...";
+            if (await RefreshAccountIconAsync(account, quiet: false))
+            {
+                PopulateLists();
+            }
+        };
+        menu.Items.Add(setProfile);
+
+        menu.Show(owner, location);
+    }
+
+    private AccountIconProfile GetOrCreateAccountIconProfile(Account account)
+    {
+        var key = AccountIconKey(account);
+        if (settings.AccountIcons.TryGetValue(key, out var profile)) return profile;
+        profile = new AccountIconProfile();
+        settings.AccountIcons[key] = profile;
+        return profile;
+    }
+
+    private static string AccountProfileUrl(AccountIconProfile profile)
+    {
+        if (!string.IsNullOrWhiteSpace(profile.LodestoneId)) return NormalizeLodestoneProfileUrl(profile.LodestoneId);
+        var id = ExtractLodestoneId(profile.ProfileUrl);
+        return string.IsNullOrWhiteSpace(id) ? "" : NormalizeLodestoneProfileUrl(id);
+    }
+
+    private static string NormalizeLodestoneProfileUrl(string lodestoneId) => $"https://eu.finalfantasyxiv.com/lodestone/character/{lodestoneId}/";
+
+    private static string ExtractLodestoneId(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        var match = Regex.Match(text, @"/lodestone/character/(?<id>\d+)/?", RegexOptions.IgnoreCase);
+        if (match.Success) return match.Groups["id"].Value;
+        return Regex.IsMatch(text.Trim(), @"^\d+$") ? text.Trim() : "";
+    }
+
+    private static string ShowTextPrompt(string title, string prompt, string defaultValue)
+    {
+        using var form = new Form
+        {
+            Text = title,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MinimizeBox = false,
+            MaximizeBox = false,
+            ClientSize = new Size(520, 150)
+        };
+        var label = new Label { Text = prompt, Bounds = new Rectangle(14, 14, 492, 24) };
+        var input = new TextBox { Text = defaultValue, Bounds = new Rectangle(14, 44, 492, 29) };
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Bounds = new Rectangle(326, 98, 86, 32) };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(420, 98, 86, 32) };
+        form.Controls.AddRange([label, input, ok, cancel]);
+        form.AcceptButton = ok;
+        form.CancelButton = cancel;
+        return form.ShowDialog() == DialogResult.OK ? input.Text.Trim() : "";
+    }
+
     private async Task<bool> RefreshAccountIconAsync(Account account, bool quiet)
     {
         var key = AccountIconKey(account);
-        if (!settings.AccountIcons.TryGetValue(key, out var profile)) return false;
-        if (string.IsNullOrWhiteSpace(profile.CharacterName) || string.IsNullOrWhiteSpace(profile.World)) return false;
+        if (!settings.AccountIcons.TryGetValue(key, out var profile))
+        {
+            profile = new AccountIconProfile();
+            settings.AccountIcons[key] = profile;
+        }
 
         try
         {
-            var result = await FindLodestoneIconAsync(profile.CharacterName, profile.World);
+            var result = await FindLodestoneIconAsync(account, profile, KnownLodestoneWorlds());
             Directory.CreateDirectory(AccountIconsFolder());
             profile.LodestoneId = result.LodestoneId;
+            profile.CharacterName = result.CharacterName;
+            profile.World = result.World;
+            profile.ProfileUrl = result.ProfileUrl;
             profile.IconUrl = result.IconUrl;
             profile.FullImageUrl = result.FullImageUrl;
             profile.IconFileName = AccountIconFileName(key);
@@ -1377,45 +1526,134 @@ internal sealed class MainForm : Form
         {
             if (!quiet && status is not null)
             {
-                status.Text = $"Could not refresh {profile.CharacterName}@{profile.World}: {ex.Message}";
+                status.Text = $"Could not refresh {AccountDisplayName(account)}: {ex.Message}";
             }
             return false;
         }
     }
 
-    private static async Task<LodestoneIconResult> FindLodestoneIconAsync(string characterName, string world)
+    private IEnumerable<string> KnownLodestoneWorlds()
     {
-        var url = $"https://na.finalfantasyxiv.com/lodestone/character/?q={Uri.EscapeDataString(characterName)}&worldname={Uri.EscapeDataString(world)}";
-        var html = await LodestoneClient.GetStringAsync(url);
-        foreach (Match match in Regex.Matches(html, @"<a\s+href=""/lodestone/character/(?<id>\d+)/""[^>]*class=""entry__link"">.*?<div\s+class=""entry__chara__face""><img\s+src=""(?<icon>[^""]+)""[^>]*>.*?<p\s+class=""entry__name"">(?<name>[^<]+)</p><p\s+class=""entry__world"">.*?(?<world>[A-Za-z'\-]+)\s*\[", RegexOptions.Singleline | RegexOptions.IgnoreCase))
-        {
-            var resultName = WebUtility.HtmlDecode(match.Groups["name"].Value).Trim();
-            var resultWorld = WebUtility.HtmlDecode(match.Groups["world"].Value).Trim();
-            if (!resultName.Equals(characterName, StringComparison.OrdinalIgnoreCase) ||
-                !resultWorld.Equals(world, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var id = match.Groups["id"].Value;
-            return new LodestoneIconResult(
-                id,
-                WebUtility.HtmlDecode(match.Groups["icon"].Value),
-                await FindLodestoneFullImageUrlAsync(id));
-        }
-
-        throw new InvalidOperationException($"No exact Lodestone match for {characterName}@{world}.");
+        return settings.AccountIcons.Values
+            .Select(icon => icon.World)
+            .Where(world => !string.IsNullOrWhiteSpace(world))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
-    private static async Task<string> FindLodestoneFullImageUrlAsync(string lodestoneId)
+    private static async Task<LodestoneIconResult> FindLodestoneIconAsync(Account account, AccountIconProfile profile, IEnumerable<string> knownWorlds)
     {
-        var profileHtml = await LodestoneClient.GetStringAsync($"https://na.finalfantasyxiv.com/lodestone/character/{lodestoneId}/");
-        var match = Regex.Match(profileHtml, @"https://img2\.finalfantasyxiv\.com/f/[^""']+fl0\.jpg\?[^""']+", RegexOptions.IgnoreCase);
-        if (!match.Success)
+        if (!string.IsNullOrWhiteSpace(profile.LodestoneId))
         {
-            throw new InvalidOperationException($"No full Lodestone portrait found for character {lodestoneId}.");
+            return await FetchLodestoneProfileAsync(profile.LodestoneId);
         }
-        return WebUtility.HtmlDecode(match.Value);
+
+        var profileId = ExtractLodestoneId(profile.ProfileUrl);
+        if (!string.IsNullOrWhiteSpace(profileId))
+        {
+            return await FetchLodestoneProfileAsync(profileId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(profile.CharacterName))
+        {
+            if (!string.IsNullOrWhiteSpace(profile.World))
+            {
+                return await FindLodestoneBySearchAsync(profile.CharacterName, profile.World);
+            }
+            foreach (var candidateWorld in knownWorlds.Where(world => !string.IsNullOrWhiteSpace(world)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    return await FindLodestoneBySearchAsync(profile.CharacterName, candidateWorld);
+                }
+                catch
+                {
+                    // Try the next known world before reporting failure.
+                }
+            }
+        }
+
+        foreach (var candidateName in BuildLodestoneNameCandidates(account))
+        {
+            foreach (var candidateWorld in knownWorlds.Append(profile.World).Where(world => !string.IsNullOrWhiteSpace(world)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    return await FindLodestoneBySearchAsync(candidateName, candidateWorld);
+                }
+                catch
+                {
+                    // Try the next strict name/world candidate before reporting failure.
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"No unique Lodestone profile found for {AccountDisplayName(account)}. Launch once or right-click the tile to set the profile URL.");
+    }
+
+    private static async Task<LodestoneIconResult> FindLodestoneBySearchAsync(string characterName, string world)
+    {
+        var url = $"https://eu.finalfantasyxiv.com/lodestone/character/?q={Uri.EscapeDataString(characterName)}";
+        if (!string.IsNullOrWhiteSpace(world))
+        {
+            url += $"&worldname={Uri.EscapeDataString(world)}";
+        }
+
+        var html = await LodestoneClient.GetStringAsync(url);
+        var matches = Regex.Matches(html, @"<a\s+href=""/lodestone/character/(?<id>\d+)/""[^>]*class=""entry__link"">.*?<div\s+class=""entry__chara__face""><img\s+src=""(?<icon>[^""]+)""[^>]*>.*?<p\s+class=""entry__name"">(?<name>[^<]+)</p><p\s+class=""entry__world"">.*?(?<world>[A-Za-z'\-]+)\s*\[", RegexOptions.Singleline | RegexOptions.IgnoreCase)
+            .Cast<Match>()
+            .Select(match => new
+            {
+                Id = match.Groups["id"].Value,
+                Name = WebUtility.HtmlDecode(match.Groups["name"].Value).Trim(),
+                World = WebUtility.HtmlDecode(match.Groups["world"].Value).Trim()
+            })
+            .Where(match => match.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase) &&
+                (string.IsNullOrWhiteSpace(world) || match.World.Equals(world, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        if (matches.Count == 1)
+        {
+            return await FetchLodestoneProfileAsync(matches[0].Id);
+        }
+
+        if (matches.Count > 1)
+        {
+            throw new InvalidOperationException($"Multiple exact Lodestone matches for {characterName}. Set the profile URL from the tile menu.");
+        }
+
+        throw new InvalidOperationException(string.IsNullOrWhiteSpace(world)
+            ? $"No exact Lodestone match for {characterName}."
+            : $"No exact Lodestone match for {characterName}@{world}.");
+    }
+
+    private static async Task<LodestoneIconResult> FetchLodestoneProfileAsync(string lodestoneId)
+    {
+        var profileUrl = $"https://eu.finalfantasyxiv.com/lodestone/character/{lodestoneId}/";
+        var profileHtml = await LodestoneClient.GetStringAsync(profileUrl);
+        var faceUrl = FindFirstImageUrl(profileHtml, "fc0") ?? throw new InvalidOperationException($"No Lodestone face portrait found for character {lodestoneId}.");
+        var fullUrl = FindFirstImageUrl(profileHtml, "fl0") ?? throw new InvalidOperationException($"No full Lodestone portrait found for character {lodestoneId}.");
+        var characterName = WebUtility.HtmlDecode(Regex.Match(profileHtml, @"<p\s+class=""frame__chara__name"">(?<name>[^<]+)</p>", RegexOptions.IgnoreCase).Groups["name"].Value).Trim();
+        var worldMatch = Regex.Match(profileHtml, @"<p\s+class=""frame__chara__world"">.*?(?<world>[A-Za-z'\-]+)\s*\[", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        var world = WebUtility.HtmlDecode(worldMatch.Groups["world"].Value).Trim();
+        if (string.IsNullOrWhiteSpace(characterName) || string.IsNullOrWhiteSpace(world))
+        {
+            var titleMatch = Regex.Match(profileHtml, @"<title>\s*(?<name>[^|]+)\|[^|]+\|(?<world>[A-Za-z'\-]+)\s*\[", RegexOptions.IgnoreCase);
+            characterName = string.IsNullOrWhiteSpace(characterName) ? WebUtility.HtmlDecode(titleMatch.Groups["name"].Value).Trim() : characterName;
+            world = string.IsNullOrWhiteSpace(world) ? WebUtility.HtmlDecode(titleMatch.Groups["world"].Value).Trim() : world;
+        }
+        if (string.IsNullOrWhiteSpace(characterName) || string.IsNullOrWhiteSpace(world))
+        {
+            throw new InvalidOperationException($"Could not read character name/world from Lodestone profile {lodestoneId}.");
+        }
+
+        return new LodestoneIconResult(lodestoneId, characterName, world, profileUrl, faceUrl, fullUrl);
+    }
+
+    private static string? FindFirstImageUrl(string html, string suffix)
+    {
+        var match = Regex.Match(html, $@"https://img2\.finalfantasyxiv\.com/f/[^""']+{Regex.Escape(suffix)}\.jpg\?[^""']+", RegexOptions.IgnoreCase);
+        return match.Success ? WebUtility.HtmlDecode(match.Value) : null;
     }
 
     private static async Task DownloadAccountImageAsync(string imageUrl, string targetPath)
@@ -3284,6 +3522,7 @@ internal sealed class AccountRosterGrid : ScrollableControl
     private ThemePalette palette = new(Color.White, Color.White, Color.White, Color.LightGray, Color.Black, Color.Gray, Color.HotPink, Color.CornflowerBlue, Color.IndianRed, Color.White);
 
     public event EventHandler? AccountActivated;
+    public event EventHandler<AccountContextEventArgs>? AccountContextRequested;
 
     public Account? SelectedAccount => selectedIndex >= 0 && selectedIndex < items.Count ? items[selectedIndex].Account : null;
 
@@ -3355,6 +3594,10 @@ internal sealed class AccountRosterGrid : ScrollableControl
         if (hit < 0) return;
         selectedIndex = hit;
         Invalidate();
+        if (e.Button == MouseButtons.Right)
+        {
+            AccountContextRequested?.Invoke(this, new AccountContextEventArgs(items[hit].Account, e.Location));
+        }
     }
 
     protected override void OnMouseDoubleClick(MouseEventArgs e)

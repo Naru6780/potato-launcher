@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.29 - 2026-05-24
+
+- Added right-click account menu actions to open, refresh, or set a Lodestone character profile URL.
+- Changed icon refresh to fetch portraits directly from Lodestone profile pages when a profile ID or URL is known.
+- Improved unmapped account discovery by using known Lodestone worlds and strict name candidates instead of requiring every account to be launched first.
+
 ## 1.0.28 - 2026-05-24
 
 - Made the main Potato Launcher window resizable with a sensible minimum size.

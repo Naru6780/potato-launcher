@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.28`
+**Version:** `1.0.29`
 
 Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
@@ -14,6 +14,7 @@ Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 - In-app loading screen with theme music, mute, volume, and stop-when-loaded controls.
 - Main-window music mute toggle.
 - Text or compact Lodestone portrait roster account display.
+- Right-click account roster options for refreshing, setting, and opening Lodestone profiles.
 - Configurable launch cooldown for band queues.
 - Theme folders with background images and per-theme music playlists.
 - Built-in FFXIV news panel and emergency `Kill FFXIV` button.
