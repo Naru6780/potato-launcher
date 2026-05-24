@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.47 - 2026-05-24
+
+- Added deeper persisted settings cleanup for stale or empty Lodestone profile data.
+- Reduced unnecessary repaint churn from repeated launch/loading status updates.
+- Removed synchronous loading-overlay refresh calls and narrowed animated background invalidation.
+- Polished the help window so it follows the active theme and formats feature sections clearly.
+- Added a safer release packaging script that verifies assets and blocks generated portable data from release zips.
+- Added tests for settings cleanup and duplicate UI text update throttling.
+
 ## 1.0.46 - 2026-05-24
 
 - Fixed a startup crash caused by the custom music volume slider using an unsupported transparent control background.

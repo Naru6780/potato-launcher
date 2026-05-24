@@ -134,6 +134,33 @@ internal static class AppText
     }
 }
 
+internal sealed class TextUpdateGate(TimeSpan duplicateInterval)
+{
+    private string lastText = "";
+    private DateTime lastAppliedUtc = DateTime.MinValue;
+
+    public bool ShouldApply(string? text, DateTime nowUtc, bool force = false)
+    {
+        text ??= "";
+        if (force || !text.Equals(lastText, StringComparison.Ordinal))
+        {
+            lastText = text;
+            lastAppliedUtc = nowUtc;
+            return true;
+        }
+
+        if (nowUtc - lastAppliedUtc < duplicateInterval) return false;
+        lastAppliedUtc = nowUtc;
+        return true;
+    }
+
+    public void Reset()
+    {
+        lastText = "";
+        lastAppliedUtc = DateTime.MinValue;
+    }
+}
+
 internal readonly record struct LauncherLayoutMetrics(int Margin, int Top, int Gap, int ContentHeight, int AccountWidth, int BandWidth)
 {
     public static LauncherLayoutMetrics Calculate(int clientWidth, int clientHeight, int requestedAccountWidth)
@@ -202,10 +229,51 @@ internal static class SettingsMigration
 
     private static void CleanAccountIcons(Dictionary<string, AccountIconProfile> profiles)
     {
-        foreach (var key in profiles.Keys.Where(string.IsNullOrWhiteSpace).ToList())
+        var cleaned = new Dictionary<string, AccountIconProfile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in profiles.ToList())
         {
-            profiles.Remove(key);
+            var key = pair.Key?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(key)) continue;
+
+            var profile = pair.Value ?? new AccountIconProfile();
+            CleanAccountIconProfile(profile);
+            if (IsEmptyAccountIconProfile(profile)) continue;
+
+            if (!cleaned.ContainsKey(key))
+            {
+                cleaned[key] = profile;
+            }
         }
+
+        profiles.Clear();
+        foreach (var pair in cleaned)
+        {
+            profiles[pair.Key] = pair.Value;
+        }
+    }
+
+    private static void CleanAccountIconProfile(AccountIconProfile profile)
+    {
+        profile.CharacterName = (profile.CharacterName ?? "").Trim();
+        profile.World = (profile.World ?? "").Trim();
+        profile.LodestoneId = (profile.LodestoneId ?? "").Trim();
+        profile.ProfileUrl = (profile.ProfileUrl ?? "").Trim();
+        profile.IconUrl = (profile.IconUrl ?? "").Trim();
+        profile.IconFileName = (profile.IconFileName ?? "").Trim();
+        profile.FullImageUrl = (profile.FullImageUrl ?? "").Trim();
+        profile.FullImageFileName = (profile.FullImageFileName ?? "").Trim();
+    }
+
+    private static bool IsEmptyAccountIconProfile(AccountIconProfile profile)
+    {
+        return string.IsNullOrWhiteSpace(profile.CharacterName) &&
+            string.IsNullOrWhiteSpace(profile.World) &&
+            string.IsNullOrWhiteSpace(profile.LodestoneId) &&
+            string.IsNullOrWhiteSpace(profile.ProfileUrl) &&
+            string.IsNullOrWhiteSpace(profile.IconUrl) &&
+            string.IsNullOrWhiteSpace(profile.IconFileName) &&
+            string.IsNullOrWhiteSpace(profile.FullImageUrl) &&
+            string.IsNullOrWhiteSpace(profile.FullImageFileName);
     }
 
     private static void CleanBands(List<BandConfig> bands)
@@ -502,6 +570,8 @@ internal sealed class MainForm : Form
     private bool accountResizeFrameQueued;
     private bool accountResizeListsSuspended;
     private bool refreshingStartupPortraits;
+    private readonly TextUpdateGate statusUpdateGate = new(TimeSpan.FromMilliseconds(750));
+    private readonly TextUpdateGate loadingStatusUpdateGate = new(TimeSpan.FromMilliseconds(250));
 
     public MainForm()
     {
@@ -1883,7 +1953,7 @@ internal sealed class MainForm : Form
     private void ShowAccountContextMenu(Account account, Control owner, Point location)
     {
         var menu = new ContextMenuStrip();
-        var profile = GetOrCreateAccountIconProfile(account);
+        var profile = GetAccountIconProfile(account) ?? new AccountIconProfile();
         var profileUrl = AccountProfileUrl(profile);
 
         var openProfile = new ToolStripMenuItem("Open Lodestone profile");
@@ -1909,8 +1979,9 @@ internal sealed class MainForm : Form
 
             profile.LodestoneId = lodestoneId;
             profile.ProfileUrl = NormalizeLodestoneProfileUrl(lodestoneId);
+            settings.AccountIcons[AccountIconKey(account)] = profile;
             SaveSettings(settings);
-            status.Text = $"Refreshing {AccountDisplayName(account)} from profile...";
+            SetStatus($"Refreshing {AccountDisplayName(account)} from profile...");
             if (await RefreshAccountIconAsync(account, quiet: false))
             {
                 TryUpdateXivLauncherAccountMetadata(account, profile, showResult: true);
@@ -1933,6 +2004,11 @@ internal sealed class MainForm : Form
         menu.Items.Add(delete);
 
         menu.Show(owner, location);
+    }
+
+    private AccountIconProfile? GetAccountIconProfile(Account account)
+    {
+        return settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile) ? profile : null;
     }
 
     private AccountIconProfile GetOrCreateAccountIconProfile(Account account)
@@ -2702,7 +2778,7 @@ internal sealed class MainForm : Form
                 var profileUrl = AccountProfileUrl(profile);
                 if (string.IsNullOrWhiteSpace(profileUrl)) continue;
 
-                status.Text = $"Refreshing {AccountDisplayName(account)} portrait...";
+                SetStatus($"Refreshing {AccountDisplayName(account)} portrait...");
                 if (await RefreshAccountIconAsync(account, quiet: true))
                 {
                     refreshed++;
@@ -2714,9 +2790,9 @@ internal sealed class MainForm : Form
             }
 
             RefreshAccountRosterOnly();
-            status.Text = failed == 0
+            SetStatus(failed == 0
                 ? $"Updated {refreshed} mapped portrait{(refreshed == 1 ? "" : "s")}."
-                : $"Updated {refreshed} mapped portrait{(refreshed == 1 ? "" : "s")}; {failed} failed.";
+                : $"Updated {refreshed} mapped portrait{(refreshed == 1 ? "" : "s")}; {failed} failed.", force: true);
         }
         finally
         {
@@ -2753,7 +2829,7 @@ internal sealed class MainForm : Form
 
             if (!quiet && status is not null)
             {
-                status.Text = $"Updated {profile.CharacterName}@{profile.World}.";
+                SetStatus($"Updated {profile.CharacterName}@{profile.World}.", force: true);
             }
             return true;
         }
@@ -2761,7 +2837,7 @@ internal sealed class MainForm : Form
         {
             if (!quiet && status is not null)
             {
-                status.Text = $"Could not refresh {AccountDisplayName(account)}: {ex.Message}";
+                SetStatus($"Could not refresh {AccountDisplayName(account)}: {ex.Message}", force: true);
             }
             return false;
         }
@@ -2985,7 +3061,7 @@ internal sealed class MainForm : Form
         }
         catch (OperationCanceledException)
         {
-            status.Text = $"Cancelled {account.Name}.";
+            SetStatus($"Cancelled {account.Name}.");
             UpdateLoadingOverlay($"Cancelled {account.Name}.");
         }
         finally
@@ -3001,13 +3077,13 @@ internal sealed class MainForm : Form
         SaveCurrentBand();
         if (bandList.SelectedItem is not BandConfig band)
         {
-            status.Text = "Choose or create a band first.";
+            SetStatus("Choose or create a band first.", force: true);
             return;
         }
         var bandAccounts = band.BatchFiles.Select(file => accounts.FirstOrDefault(account => account.BatchFile.Equals(file, StringComparison.OrdinalIgnoreCase))).Where(account => account is not null).Cast<Account>().ToList();
         if (bandAccounts.Count == 0)
         {
-            status.Text = $"{band.Name} has no accounts selected.";
+            SetStatus($"{band.Name} has no accounts selected.", force: true);
             return;
         }
         queueCancel?.Cancel();
@@ -3028,7 +3104,7 @@ internal sealed class MainForm : Form
                 UpdateLoadingOverlay($"{band.Name}: launching {account.Name} ({index + 1}/{bandAccounts.Count}).");
                 var client = await StartAccountAndWaitForClientAsync(account, cancellation.Token);
                 launchedClients.Add(new StartedGameClient(account, client.ProcessId));
-                status.Text = $"{band.Name}: started {account.Name} ({index + 1}/{bandAccounts.Count}).";
+                SetStatus($"{band.Name}: started {account.Name} ({index + 1}/{bandAccounts.Count}).");
                 if (index < bandAccounts.Count - 1)
                 {
                     await WaitForLaunchCooldownAsync(band.Name, cancellation.Token);
@@ -3042,18 +3118,19 @@ internal sealed class MainForm : Form
                 await WaitForGameClientCharacterTitleAsync(client, cancellation.Token);
                 RememberAccountConnected(client.Account);
             }
-            status.Text = $"{band.Name} queue complete.";
+            SetStatus($"{band.Name} queue complete.", force: true);
             UpdateLoadingOverlay($"{band.Name} queue complete.");
         }
         catch (OperationCanceledException)
         {
-            status.Text = $"{band.Name} queue cancelled.";
+            SetStatus($"{band.Name} queue cancelled.", force: true);
             UpdateLoadingOverlay($"{band.Name} queue cancelled.");
         }
         catch (Exception ex)
         {
-            status.Text = $"{band.Name} queue failed: {ex.Message}";
-            UpdateLoadingOverlay(status.Text);
+            var message = $"{band.Name} queue failed: {ex.Message}";
+            SetStatus(message, force: true);
+            UpdateLoadingOverlay(message, force: true);
         }
         finally
         {
@@ -3074,14 +3151,14 @@ internal sealed class MainForm : Form
             RememberAccountConnected(account);
             if (!quiet)
             {
-                status.Text = $"{account.Name} reached the character window title.";
+                SetStatus($"{account.Name} reached the character window title.");
             }
             UpdateLoadingOverlay($"{account.Name} reached the character window title.");
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            status.Text = $"Could not launch {account.Name}: {ex.Message}";
+            SetStatus($"Could not launch {account.Name}: {ex.Message}", force: true);
             return false;
         }
     }
@@ -3110,9 +3187,9 @@ internal sealed class MainForm : Form
             WindowStyle = ProcessWindowStyle.Hidden
         };
         using var launcherProcess = Process.Start(startInfo);
-        status.Text = IsSharedLaunchMode()
+        SetStatus(IsSharedLaunchMode()
             ? $"Started {account.Name} through Shared."
-            : $"Started {account.Name} from BAT command.";
+            : $"Started {account.Name} from BAT command.");
         var waitMessage = account.UseOtp
             ? $"Started {account.Name}. OTP is enabled, waiting for manual login..."
             : $"Started {account.Name}. Waiting for XIVLauncher to finish...";
@@ -3129,8 +3206,9 @@ internal sealed class MainForm : Form
         for (var remaining = seconds; remaining > 0; remaining--)
         {
             token.ThrowIfCancellationRequested();
-            status.Text = $"{bandName}: next client launches in {remaining}s.";
-            UpdateLoadingOverlay(status.Text);
+            var message = $"{bandName}: next client launches in {remaining}s.";
+            SetStatus(message);
+            UpdateLoadingOverlay(message);
             await Task.Delay(TimeSpan.FromSeconds(1), token);
         }
     }
@@ -3312,8 +3390,9 @@ internal sealed class MainForm : Form
                     if (!processExited && launcherProcess.MainWindowHandle != IntPtr.Zero)
                     {
                         sawLauncherWindow = true;
-                        status.Text = $"Waiting for XIVLauncher to finish {accountName}...";
-                        UpdateLoadingOverlay(status.Text);
+                        var message = $"Waiting for XIVLauncher to finish {accountName}...";
+                        SetStatus(message);
+                        UpdateLoadingOverlay(message);
                     }
                 }
                 catch
@@ -3329,8 +3408,9 @@ internal sealed class MainForm : Form
             if (window.Handle != IntPtr.Zero)
             {
                 sawLauncherWindow = true;
-                status.Text = $"Waiting for XIVLauncher to finish {accountName}...";
-                UpdateLoadingOverlay(status.Text);
+                var message = $"Waiting for XIVLauncher to finish {accountName}...";
+                SetStatus(message);
+                UpdateLoadingOverlay(message);
                 await WaitForLauncherCloseAsync(window, token);
                 return;
             }
@@ -3360,13 +3440,15 @@ internal sealed class MainForm : Form
             var client = GetFreshGameClient(existingProcessIds);
             if (client is not null)
             {
-                status.Text = $"Found {accountName}'s game client.";
-                UpdateLoadingOverlay(status.Text);
+                var message = $"Found {accountName}'s game client.";
+                SetStatus(message);
+                UpdateLoadingOverlay(message);
                 return client.Value;
             }
 
-            status.Text = $"Waiting for {accountName}'s game client to appear...";
-            UpdateLoadingOverlay(status.Text);
+            var waitingMessage = $"Waiting for {accountName}'s game client to appear...";
+            SetStatus(waitingMessage);
+            UpdateLoadingOverlay(waitingMessage);
             await Task.Delay(500, token);
         }
 
@@ -3385,8 +3467,9 @@ internal sealed class MainForm : Form
             var client = GetGameClientByProcessId(startedClient.ProcessId);
             if (client is null)
             {
-                status.Text = $"Waiting for {startedClient.Account.Name}'s game client...";
-                UpdateLoadingOverlay(status.Text);
+                var message = $"Waiting for {startedClient.Account.Name}'s game client...";
+                SetStatus(message);
+                UpdateLoadingOverlay(message);
                 await Task.Delay(500, token);
                 continue;
             }
@@ -3404,12 +3487,14 @@ internal sealed class MainForm : Form
                     ? stableCharacterTitleHits + 1
                     : 1;
                 stableCharacterTitle = title;
-                status.Text = $"Detected {title} ({stableCharacterTitleHits}/3).";
-                UpdateLoadingOverlay(status.Text);
+                var message = $"Detected {title} ({stableCharacterTitleHits}/3).";
+                SetStatus(message);
+                UpdateLoadingOverlay(message);
                 if (stableCharacterTitleHits >= 3)
                 {
-                    status.Text = $"{title} is ready.";
-                    UpdateLoadingOverlay(status.Text);
+                    var readyMessage = $"{title} is ready.";
+                    SetStatus(readyMessage, force: true);
+                    UpdateLoadingOverlay(readyMessage, force: true);
                     RememberAccountCharacterTitle(startedClient.Account, title);
                     return;
                 }
@@ -3418,10 +3503,11 @@ internal sealed class MainForm : Form
             {
                 stableCharacterTitleHits = 0;
                 stableCharacterTitle = null;
-                status.Text = sawGameConnection
+                var message = sawGameConnection
                     ? $"Waiting {startedClient.Account.Name} to connect..."
                     : $"Waiting for {startedClient.Account.Name}'s data center connection...";
-                UpdateLoadingOverlay(status.Text);
+                SetStatus(message);
+                UpdateLoadingOverlay(message);
             }
 
             await Task.Delay(700, token);
@@ -3561,6 +3647,15 @@ internal sealed class MainForm : Form
         return windows;
     }
 
+    private void SetStatus(string text, bool force = false)
+    {
+        if (status is null || status.IsDisposed) return;
+        if (statusUpdateGate.ShouldApply(text, DateTime.UtcNow, force))
+        {
+            status.Text = text;
+        }
+    }
+
     private async Task WaitForLauncherCloseAsync(LauncherWindow launcher, CancellationToken token)
     {
         var deadline = DateTime.UtcNow.AddMinutes(5);
@@ -3587,19 +3682,23 @@ internal sealed class MainForm : Form
     {
         SetRandomLoadingGif();
         loadingTitle.Text = title;
+        loadingStatusUpdateGate.Reset();
         loadingStatus.Text = detail;
         loadingOverlay.Visible = true;
         loadingOverlay.BringToFront();
         loadingOverlay.Focus();
-        loadingOverlay.Refresh();
+        loadingOverlay.Invalidate(false);
         if (settings.StopMusicWhenAllLoaded) ApplyThemeMusic(settings.Theme);
     }
 
-    private void UpdateLoadingOverlay(string detail)
+    private void UpdateLoadingOverlay(string detail, bool force = false)
     {
         if (!loadingOverlay.Visible) return;
-        loadingStatus.Text = detail;
-        loadingStatus.Refresh();
+        if (loadingStatusUpdateGate.ShouldApply(detail, DateTime.UtcNow, force))
+        {
+            loadingStatus.Text = detail;
+            loadingStatus.Invalidate();
+        }
     }
 
     private void HideLoadingOverlay()
@@ -3658,14 +3757,17 @@ internal sealed class MainForm : Form
             MinimizeBox = false,
             MaximizeBox = false,
             ClientSize = new Size(680, 560),
-            Font = new Font("Segoe UI", 10F)
+            Font = new Font("Segoe UI", 10F),
+            BackColor = Color.FromArgb(255, palette.Card)
         };
 
         var title = new Label
         {
             Text = "Potato Launcher Help",
             Bounds = new Rectangle(18, 16, 520, 30),
-            Font = new Font("Segoe UI", 15F, FontStyle.Bold)
+            Font = new Font("Segoe UI", 15F, FontStyle.Bold),
+            ForeColor = palette.Text,
+            BackColor = Color.Transparent
         };
         var helpText = new RichTextBox
         {
@@ -3673,17 +3775,55 @@ internal sealed class MainForm : Form
             Bounds = new Rectangle(18, 58, 644, 432),
             ReadOnly = true,
             ScrollBars = RichTextBoxScrollBars.Vertical,
-            BorderStyle = BorderStyle.FixedSingle,
+            BorderStyle = BorderStyle.None,
             DetectUrls = false,
             WordWrap = true,
-            BackColor = Color.White
+            BackColor = palette.ListBack,
+            ForeColor = palette.Text,
+            Font = new Font("Segoe UI", 10F)
         };
-        var close = new Button { Text = "OK", DialogResult = DialogResult.OK, Bounds = new Rectangle(552, 510, 110, 34) };
+        StyleHelpText(helpText);
+        var close = new Button
+        {
+            Text = "OK",
+            DialogResult = DialogResult.OK,
+            Bounds = new Rectangle(552, 510, 110, 34),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = palette.Primary,
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold)
+        };
+        close.FlatAppearance.BorderSize = 0;
 
         form.Controls.AddRange([title, helpText, close]);
         form.AcceptButton = close;
         form.CancelButton = close;
         form.ShowDialog(this);
+    }
+
+    private void StyleHelpText(RichTextBox helpText)
+    {
+        using var headingFont = new Font(helpText.Font, FontStyle.Bold);
+        foreach (var heading in new[]
+        {
+            "Launch modes",
+            "Accounts",
+            "Lodestone profiles and portraits",
+            "Bands",
+            "Launching",
+            "Display and themes",
+            "Import and export",
+            "News and updates",
+            "Safety tools"
+        })
+        {
+            var index = helpText.Text.IndexOf(heading, StringComparison.Ordinal);
+            if (index < 0) continue;
+            helpText.Select(index, heading.Length);
+            helpText.SelectionFont = headingFont;
+            helpText.SelectionColor = palette.Primary;
+        }
+        helpText.Select(0, 0);
     }
 
     private void KillGameInstances()
@@ -4609,7 +4749,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.46 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.47 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -4750,7 +4890,7 @@ internal sealed class CuteBackgroundPanel : Panel
             animateBubbles = value;
             if (animateBubbles) timer.Start();
             else timer.Stop();
-            Invalidate();
+            Invalidate(ClientRectangle, false);
         }
     }
 
@@ -4770,9 +4910,15 @@ internal sealed class CuteBackgroundPanel : Panel
 
     public CuteBackgroundPanel()
     {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         DoubleBuffered = true;
         timer.Interval = 33;
-        timer.Tick += (_, _) => { tick += 0.018f; Invalidate(); };
+        timer.Tick += (_, _) =>
+        {
+            if (!Visible) return;
+            tick += 0.018f;
+            Invalidate(ClientRectangle, false);
+        };
     }
 
     protected override void Dispose(bool disposing)

@@ -51,4 +51,48 @@ public class SettingsMigrationTests
         Assert.Equal(["bat-one", "bat-two"], state.InstancedAccountOrder);
         Assert.DoesNotContain("", state.LastConnectedUtc.Keys);
     }
+
+    [Fact]
+    public void CleanSettingsJson_TrimsAccountIconProfilesAndRemovesEmptyEntries()
+    {
+        var dirtyJson = """
+        {
+          "AccountIcons": {
+            "  alpha  ": {
+              "CharacterName": "  Alpha  ",
+              "World": "  Balmung  ",
+              "LodestoneId": " 12345 ",
+              "ProfileUrl": " https://na.finalfantasyxiv.com/lodestone/character/12345/ ",
+              "IconUrl": " https://img.finalfantasyxiv.com/alpha.png ",
+              "IconFileName": " alpha-face.png ",
+              "FullImageUrl": " https://img.finalfantasyxiv.com/alpha-full.png ",
+              "FullImageFileName": " alpha-full.png "
+            },
+            "empty": {
+              "CharacterName": " ",
+              "World": "",
+              "LodestoneId": "",
+              "ProfileUrl": " ",
+              "IconUrl": "",
+              "IconFileName": "",
+              "FullImageUrl": "",
+              "FullImageFileName": ""
+            }
+          }
+        }
+        """;
+
+        var cleanedJson = SettingsMigration.CleanSettingsJson(dirtyJson, out var changed);
+        using var document = JsonDocument.Parse(cleanedJson);
+        var accountIcons = document.RootElement.GetProperty("AccountIcons");
+
+        Assert.True(changed);
+        Assert.True(accountIcons.TryGetProperty("alpha", out var profile));
+        Assert.False(accountIcons.TryGetProperty("  alpha  ", out _));
+        Assert.False(accountIcons.TryGetProperty("empty", out _));
+        Assert.Equal("Alpha", profile.GetProperty("CharacterName").GetString());
+        Assert.Equal("Balmung", profile.GetProperty("World").GetString());
+        Assert.Equal("12345", profile.GetProperty("LodestoneId").GetString());
+        Assert.Equal("alpha-face.png", profile.GetProperty("IconFileName").GetString());
+    }
 }

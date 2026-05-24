@@ -21,9 +21,20 @@ dotnet publish .\PotatoLauncher.csproj -c Release -o .\publish
 
 ## Package
 
-Always refresh assets manually before zipping:
+Use the release packaging script so generated portable files cannot be included by accident:
 
 ```powershell
+.\scripts\package-release.ps1
+```
+
+The script publishes the app, refreshes assets, removes generated portable files from `publish`, builds `release\PotatoLauncher.zip`, and verifies the zip.
+
+Manual fallback:
+
+```powershell
+Remove-Item -LiteralPath 'publish\settings.json' -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath 'publish\accountList.json' -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath 'publish\band.json' -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath 'publish\Potato Launcher Assets' -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item -LiteralPath 'Potato Launcher Assets' -Destination 'publish\Potato Launcher Assets' -Recurse -Force
 if (Test-Path .\release) { Remove-Item .\release -Recurse -Force }
@@ -38,7 +49,7 @@ Potato Launcher.exe
 Potato Launcher Assets\
 ```
 
-It should not contain `settings.json`.
+It should not contain `settings.json`, `accountList.json`, or `band.json`.
 
 ## Publish
 

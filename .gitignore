@@ -3,4 +3,6 @@ obj/
 publish/
 release/
 settings.json
+accountList.json
+band.json
 *.user

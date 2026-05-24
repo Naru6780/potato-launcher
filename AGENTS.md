@@ -28,15 +28,10 @@ Keep the app friendly, portable, and simple for non-technical users sharing the 
 Use PowerShell from the repository root:
 
 ```powershell
-dotnet publish .\PotatoLauncher.csproj -c Release -o .\publish
-Remove-Item -LiteralPath 'publish\Potato Launcher Assets' -Recurse -Force -ErrorAction SilentlyContinue
-Copy-Item -LiteralPath 'Potato Launcher Assets' -Destination 'publish\Potato Launcher Assets' -Recurse -Force
-if (Test-Path .\release) { Remove-Item .\release -Recurse -Force }
-New-Item -ItemType Directory -Path .\release | Out-Null
-Compress-Archive -Path .\publish\* -DestinationPath .\release\PotatoLauncher.zip -Force
+.\scripts\package-release.ps1
 ```
 
-Then create a GitHub release with asset name `PotatoLauncher.zip`.
+Then create a GitHub release with asset name `PotatoLauncher.zip`. The package must include `Potato Launcher.exe` and `Potato Launcher Assets`, and must not include generated portable data such as `settings.json`, `accountList.json`, or `band.json`.
 
 ## Important Files
 
