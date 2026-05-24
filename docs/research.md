@@ -1,6 +1,6 @@
 # Potato Launcher Research
 
-**Current version:** `1.0.25`
+**Current version:** `1.0.26`
 
 This document keeps implementation decisions that matter for future Codex sessions.
 
@@ -67,6 +67,14 @@ Theme folders may contain:
 - one or more music files
 
 Supported music playlist extensions currently include common audio formats handled by WPF MediaPlayer.
+
+Account portraits are cached in:
+
+```text
+Potato Launcher Assets\Account Icons
+```
+
+The cache is keyed by the launcher account key or BAT identity. Portraits are refreshed from exact Lodestone search matches for the saved `Character@World` mapping. The app does not use placeholder/fallback icons in icon mode; missing icons stay visibly unmapped until the account has been launched once and refreshed successfully.
 
 ## News and Updates
 

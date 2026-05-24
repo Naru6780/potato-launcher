@@ -1,9 +1,13 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows.Forms.Integration;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
@@ -52,12 +56,24 @@ internal sealed class AppSettings
     public bool StopMusicWhenAllLoaded { get; set; }
     public int MusicVolume { get; set; } = 45;
     public int LaunchCooldownSeconds { get; set; } = 0;
+    public string AccountDisplayMode { get; set; } = "Text";
     public bool RandomizeThemeAtLaunch { get; set; }
     public string LastShownChangelogVersion { get; set; } = "";
+    public Dictionary<string, AccountIconProfile> AccountIcons { get; set; } = [];
     public List<BandConfig> Bands { get; set; } = [];
     public List<BandConfig> InstancedBands { get; set; } = [];
     public List<BandConfig> SharedBands { get; set; } = [];
 
+}
+
+internal sealed class AccountIconProfile
+{
+    public string CharacterName { get; set; } = "";
+    public string World { get; set; } = "";
+    public string LodestoneId { get; set; } = "";
+    public string IconUrl { get; set; } = "";
+    public string IconFileName { get; set; } = "";
+    public DateTime LastUpdatedUtc { get; set; }
 }
 
 internal sealed record ThemePalette(Color Back1, Color Back2, Color Card, Color Border, Color Text, Color Muted, Color Primary, Color Secondary, Color Danger, Color ListBack);
@@ -68,12 +84,14 @@ internal readonly record struct BatchLaunchInfo(string AccountKey, string Roamin
 internal readonly record struct StartedGameClient(Account Account, int ProcessId);
 internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
 internal sealed record NewsEntry(string Title, string Url, DateTimeOffset Date, string Tag);
+internal sealed record LodestoneIconResult(string LodestoneId, string IconUrl);
 
 internal sealed class MainForm : Form
 {
     private const string GitHubOwner = "Naru6780";
     private const string GitHubRepo = "potato-launcher";
     private const string ReleaseZipName = "PotatoLauncher.zip";
+    private static readonly HttpClient LodestoneClient = CreateLodestoneClient();
 
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr hObject);
@@ -154,6 +172,8 @@ internal sealed class MainForm : Form
     private RoundedPanel settingsDrawer = null!;
     private readonly System.Windows.Forms.Timer settingsDrawerTimer = new();
     private ListBox accountList = null!;
+    private ListView accountIconList = null!;
+    private ImageList accountImageList = null!;
     private ListBox bandList = null!;
     private CheckedListBox memberList = null!;
     private TextBox bandName = null!;
@@ -171,6 +191,9 @@ internal sealed class MainForm : Form
     private CheckBox stopMusicWhenLoadedInput = null!;
     private TrackBar musicVolumeInput = null!;
     private Label musicVolumeLabel = null!;
+    private Label accountDisplayLabel = null!;
+    private ComboBox accountDisplayInput = null!;
+    private Button refreshAccountIconsButton = null!;
     private Label launchCooldownLabel = null!;
     private NumericUpDown launchCooldownInput = null!;
     private CheckBox randomizeThemeInput = null!;
@@ -490,6 +513,19 @@ internal sealed class MainForm : Form
         accountList = new ListBox { Bounds = new Rectangle(18, 58, 294, 320) };
         accountList.DoubleClick += (_, _) => LaunchSelectedAccount();
         accountCard.Controls.Add(accountList);
+        accountImageList = new ImageList { ColorDepth = ColorDepth.Depth32Bit, ImageSize = new Size(64, 64) };
+        accountIconList = new ListView
+        {
+            Bounds = new Rectangle(18, 58, 294, 320),
+            View = View.LargeIcon,
+            LargeImageList = accountImageList,
+            MultiSelect = false,
+            HideSelection = false,
+            ShowItemToolTips = true,
+            Visible = false
+        };
+        accountIconList.DoubleClick += (_, _) => LaunchSelectedAccount();
+        accountCard.Controls.Add(accountIconList);
         var launchAccount = Button("Launch selected", 18, 394, 150, 36, "Primary");
         launchAccount.Click += (_, _) => LaunchSelectedAccount();
         accountCard.Controls.Add(launchAccount);
@@ -565,6 +601,19 @@ internal sealed class MainForm : Form
         browseSharedProfileButton = Button("Browse", 24, 212, 96, 32, "Secondary");
         browseSharedProfileButton.Click += (_, _) => BrowseFolder(sharedProfileInput, "Choose the folder containing accountsList.json", SaveAndRescan);
         settingsDrawer.Controls.AddRange([sharedProfileLabel, sharedProfileInput, browseSharedProfileButton]);
+
+        accountDisplayLabel = Label("Account list display", 24, 270, 220, 24);
+        accountDisplayInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 298, 160, 29) };
+        accountDisplayInput.Items.AddRange(["Text", "Icons"]);
+        accountDisplayInput.SelectedItem = NormalizeAccountDisplayMode(settings.AccountDisplayMode);
+        accountDisplayInput.SelectedIndexChanged += (_, _) =>
+        {
+            SaveSettingsFromInputs();
+            UpdateAccountDisplayMode();
+        };
+        refreshAccountIconsButton = Button("Refresh account icons", 196, 298, 160, 29, "Secondary");
+        refreshAccountIconsButton.Click += async (_, _) => await RefreshAccountIconsAsync();
+        settingsDrawer.Controls.AddRange([accountDisplayLabel, accountDisplayInput, refreshAccountIconsButton]);
 
         themeLabel = Label("Theme", 24, 580, 120, 24);
         themeInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 608, 260, 29) };
@@ -646,29 +695,35 @@ internal sealed class MainForm : Form
 
         if (sharedMode)
         {
-            SetY(themeLabel, 270);
-            SetY(themeInput, 298);
-            SetY(muteMusicInput, 350);
-            SetY(stopMusicWhenLoadedInput, 382);
-            SetY(musicVolumeLabel, 418);
-            SetY(musicVolumeInput, 442);
-            SetY(launchCooldownLabel, 498);
-            SetY(launchCooldownInput, 522);
-            SetY(randomizeThemeInput, 560);
-            SetY(updateButton, 606);
+            SetY(accountDisplayLabel, 270);
+            SetY(accountDisplayInput, 298);
+            SetY(refreshAccountIconsButton, 298);
+            SetY(themeLabel, 350);
+            SetY(themeInput, 378);
+            SetY(muteMusicInput, 426);
+            SetY(stopMusicWhenLoadedInput, 456);
+            SetY(musicVolumeLabel, 488);
+            SetY(musicVolumeInput, 510);
+            SetY(launchCooldownLabel, 558);
+            SetY(launchCooldownInput, 580);
+            SetY(randomizeThemeInput, 616);
+            SetY(updateButton, 648);
         }
         else
         {
-            SetY(themeLabel, 270);
-            SetY(themeInput, 298);
-            SetY(muteMusicInput, 350);
-            SetY(stopMusicWhenLoadedInput, 382);
-            SetY(musicVolumeLabel, 418);
-            SetY(musicVolumeInput, 442);
-            SetY(launchCooldownLabel, 498);
-            SetY(launchCooldownInput, 522);
-            SetY(randomizeThemeInput, 560);
-            SetY(updateButton, 606);
+            SetY(accountDisplayLabel, 270);
+            SetY(accountDisplayInput, 298);
+            SetY(refreshAccountIconsButton, 298);
+            SetY(themeLabel, 350);
+            SetY(themeInput, 378);
+            SetY(muteMusicInput, 426);
+            SetY(stopMusicWhenLoadedInput, 456);
+            SetY(musicVolumeLabel, 488);
+            SetY(musicVolumeInput, 510);
+            SetY(launchCooldownLabel, 558);
+            SetY(launchCooldownInput, 580);
+            SetY(randomizeThemeInput, 616);
+            SetY(updateButton, 648);
         }
     }
 
@@ -1041,6 +1096,8 @@ internal sealed class MainForm : Form
     private void PopulateLists()
     {
         accountList.Items.Clear();
+        accountIconList.Items.Clear();
+        accountImageList.Images.Clear();
         memberList.Items.Clear();
         IEnumerable<Account> orderedAccounts = IsSharedLaunchMode()
             ? accounts
@@ -1048,6 +1105,7 @@ internal sealed class MainForm : Form
         foreach (var account in orderedAccounts)
         {
             accountList.Items.Add(account);
+            AddAccountIconItem(account);
             memberList.Items.Add(account);
         }
         bandList.Items.Clear();
@@ -1058,7 +1116,58 @@ internal sealed class MainForm : Form
         }
         bandList.SelectedIndex = bandList.Items.Count > 0 ? 0 : -1;
         UpdateAccountStatus();
+        UpdateAccountDisplayMode();
         ApplyTheme(settings.Theme);
+    }
+
+    private void AddAccountIconItem(Account account)
+    {
+        var item = new ListViewItem(account.Name) { Tag = account };
+        var key = AccountIconKey(account);
+        if (settings.AccountIcons.TryGetValue(key, out var profile))
+        {
+            var iconPath = AccountIconPath(profile);
+            if (File.Exists(iconPath))
+            {
+                try
+                {
+                    var imageKey = key;
+                    accountImageList.Images.Add(imageKey, CreateSquareIcon(iconPath, accountImageList.ImageSize));
+                    item.ImageKey = imageKey;
+                    item.ToolTipText = $"{profile.CharacterName}@{profile.World}";
+                }
+                catch
+                {
+                    item.ToolTipText = $"Saved icon is unreadable for {profile.CharacterName}@{profile.World}. Use Refresh account icons.";
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(profile.CharacterName) && !string.IsNullOrWhiteSpace(profile.World))
+            {
+                item.ToolTipText = $"No downloaded icon yet for {profile.CharacterName}@{profile.World}. Use Refresh account icons.";
+            }
+        }
+        else
+        {
+            item.ToolTipText = "No character mapping yet. Launch this account once so Potato Launcher can see Character@World.";
+        }
+        accountIconList.Items.Add(item);
+    }
+
+    private static Bitmap CreateSquareIcon(string iconPath, Size size)
+    {
+        using var source = Image.FromFile(iconPath);
+        var bitmap = new Bitmap(size.Width, size.Height);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.Clear(Color.Transparent);
+        var scale = Math.Max((float)size.Width / source.Width, (float)size.Height / source.Height);
+        var width = source.Width * scale;
+        var height = source.Height * scale;
+        var x = (size.Width - width) / 2F;
+        var y = (size.Height - height) / 2F;
+        graphics.DrawImage(source, x, y, width, height);
+        return bitmap;
     }
 
     private void UpdateAccountStatus()
@@ -1078,6 +1187,157 @@ internal sealed class MainForm : Form
         status.Text = IsSharedLaunchMode()
             ? $"Found {accounts.Count} shared account{(accounts.Count == 1 ? "" : "s")}."
             : $"Found {accounts.Count} launcher BAT file{(accounts.Count == 1 ? "" : "s")}.";
+    }
+
+    private void UpdateAccountDisplayMode()
+    {
+        if (accountList is null || accountIconList is null) return;
+        var iconMode = IsAccountIconMode();
+        accountList.Visible = !iconMode;
+        accountIconList.Visible = iconMode;
+        if (iconMode && accounts.Count > 0)
+        {
+            var missingIcons = accounts.Count(account => !HasAccountIcon(account));
+            if (missingIcons > 0)
+            {
+                status.Text = $"{missingIcons} account icon{(missingIcons == 1 ? "" : "s")} need refresh or first launch.";
+            }
+        }
+    }
+
+    private bool IsAccountIconMode() => NormalizeAccountDisplayMode(settings.AccountDisplayMode).Equals("Icons", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeAccountDisplayMode(string displayMode) => displayMode.Equals("Icons", StringComparison.OrdinalIgnoreCase) ? "Icons" : "Text";
+
+    private bool HasAccountIcon(Account account)
+    {
+        return settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile) && File.Exists(AccountIconPath(profile));
+    }
+
+    private void RememberAccountCharacterTitle(Account account, string title)
+    {
+        if (!TryParseCharacterTitle(title, out var characterName, out var world)) return;
+        var key = AccountIconKey(account);
+        if (!settings.AccountIcons.TryGetValue(key, out var profile))
+        {
+            profile = new AccountIconProfile();
+            settings.AccountIcons[key] = profile;
+        }
+
+        profile.CharacterName = characterName;
+        profile.World = world;
+        if (string.IsNullOrWhiteSpace(profile.IconFileName))
+        {
+            profile.IconFileName = AccountIconFileName(key);
+        }
+        SaveSettings(settings);
+        _ = RefreshAccountIconAsync(account, quiet: true);
+    }
+
+    private async Task RefreshAccountIconsAsync()
+    {
+        refreshAccountIconsButton.Enabled = false;
+        var refreshed = 0;
+        var failed = 0;
+        var unmapped = 0;
+        try
+        {
+            foreach (var account in accounts)
+            {
+                var key = AccountIconKey(account);
+                if (!settings.AccountIcons.TryGetValue(key, out var profile) ||
+                    string.IsNullOrWhiteSpace(profile.CharacterName) ||
+                    string.IsNullOrWhiteSpace(profile.World))
+                {
+                    unmapped++;
+                    continue;
+                }
+
+                status.Text = $"Refreshing {profile.CharacterName}@{profile.World}...";
+                if (await RefreshAccountIconAsync(account, quiet: true))
+                {
+                    refreshed++;
+                }
+                else
+                {
+                    failed++;
+                }
+            }
+
+            PopulateLists();
+            status.Text = failed == 0 && unmapped == 0
+                ? $"Refreshed {refreshed} account icon{(refreshed == 1 ? "" : "s")}."
+                : $"Icons refreshed: {refreshed}. Failed: {failed}. Launch once to map: {unmapped}.";
+        }
+        finally
+        {
+            refreshAccountIconsButton.Enabled = true;
+        }
+    }
+
+    private async Task<bool> RefreshAccountIconAsync(Account account, bool quiet)
+    {
+        var key = AccountIconKey(account);
+        if (!settings.AccountIcons.TryGetValue(key, out var profile)) return false;
+        if (string.IsNullOrWhiteSpace(profile.CharacterName) || string.IsNullOrWhiteSpace(profile.World)) return false;
+
+        try
+        {
+            var result = await FindLodestoneIconAsync(profile.CharacterName, profile.World);
+            Directory.CreateDirectory(AccountIconsFolder());
+            profile.LodestoneId = result.LodestoneId;
+            profile.IconUrl = result.IconUrl;
+            profile.IconFileName = AccountIconFileName(key);
+            profile.LastUpdatedUtc = DateTime.UtcNow;
+
+            var bytes = await LodestoneClient.GetByteArrayAsync(result.IconUrl);
+            var iconPath = AccountIconPath(profile);
+            var tempPath = $"{iconPath}.tmp";
+            await File.WriteAllBytesAsync(tempPath, bytes);
+            if (File.Exists(iconPath)) File.Delete(iconPath);
+            File.Move(tempPath, iconPath);
+            SaveSettings(settings);
+
+            if (!quiet && status is not null)
+            {
+                status.Text = $"Updated {profile.CharacterName}@{profile.World}.";
+            }
+            if (accountIconList is not null && !accountIconList.IsDisposed)
+            {
+                BeginInvoke(new Action(PopulateLists));
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (!quiet && status is not null)
+            {
+                status.Text = $"Could not refresh {profile.CharacterName}@{profile.World}: {ex.Message}";
+            }
+            return false;
+        }
+    }
+
+    private static async Task<LodestoneIconResult> FindLodestoneIconAsync(string characterName, string world)
+    {
+        var url = $"https://na.finalfantasyxiv.com/lodestone/character/?q={Uri.EscapeDataString(characterName)}&worldname={Uri.EscapeDataString(world)}";
+        var html = await LodestoneClient.GetStringAsync(url);
+        foreach (Match match in Regex.Matches(html, @"<a\s+href=""/lodestone/character/(?<id>\d+)/""[^>]*class=""entry__link"">.*?<div\s+class=""entry__chara__face""><img\s+src=""(?<icon>[^""]+)""[^>]*>.*?<p\s+class=""entry__name"">(?<name>[^<]+)</p><p\s+class=""entry__world"">.*?(?<world>[A-Za-z'\-]+)\s*\[", RegexOptions.Singleline | RegexOptions.IgnoreCase))
+        {
+            var resultName = WebUtility.HtmlDecode(match.Groups["name"].Value).Trim();
+            var resultWorld = WebUtility.HtmlDecode(match.Groups["world"].Value).Trim();
+            if (!resultName.Equals(characterName, StringComparison.OrdinalIgnoreCase) ||
+                !resultWorld.Equals(world, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return new LodestoneIconResult(
+                match.Groups["id"].Value,
+                WebUtility.HtmlDecode(match.Groups["icon"].Value));
+        }
+
+        throw new InvalidOperationException($"No exact Lodestone match for {characterName}@{world}.");
     }
 
     private List<BandConfig> CurrentBands() => IsSharedLaunchMode() ? settings.SharedBands : settings.InstancedBands;
@@ -1174,6 +1434,11 @@ internal sealed class MainForm : Form
 
     private void LaunchSelectedAccount()
     {
+        if (IsAccountIconMode() && accountIconList.SelectedItems.Count > 0 && accountIconList.SelectedItems[0].Tag is Account iconAccount)
+        {
+            _ = LaunchSingleAccountAsync(iconAccount);
+            return;
+        }
         if (accountList.SelectedItem is Account account) _ = LaunchSingleAccountAsync(account);
     }
 
@@ -1607,6 +1872,7 @@ internal sealed class MainForm : Form
                 {
                     status.Text = $"{title} is ready.";
                     UpdateLoadingOverlay(status.Text);
+                    RememberAccountCharacterTitle(startedClient.Account, title);
                     return;
                 }
             }
@@ -1691,9 +1957,20 @@ internal sealed class MainForm : Form
 
     private static bool IsCharacterTitle(string title)
     {
-        return title.Contains('@', StringComparison.Ordinal) &&
+        return TryParseCharacterTitle(title, out _, out _) &&
             !title.Equals("FINAL FANTASY XIV", StringComparison.OrdinalIgnoreCase) &&
             title.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
+    }
+
+    private static bool TryParseCharacterTitle(string title, out string characterName, out string world)
+    {
+        characterName = "";
+        world = "";
+        var separator = title.LastIndexOf('@');
+        if (separator <= 0 || separator >= title.Length - 1) return false;
+        characterName = title[..separator].Trim();
+        world = title[(separator + 1)..].Trim();
+        return characterName.Length > 0 && world.Length > 0;
     }
 
     private static bool HasEstablishedTcpConnection(int processId)
@@ -2148,6 +2425,7 @@ internal sealed class MainForm : Form
         settings.StopMusicWhenAllLoaded = stopMusicWhenLoadedInput?.Checked ?? settings.StopMusicWhenAllLoaded;
         settings.MusicVolume = musicVolumeInput?.Value ?? settings.MusicVolume;
         settings.LaunchCooldownSeconds = (int)(launchCooldownInput?.Value ?? settings.LaunchCooldownSeconds);
+        settings.AccountDisplayMode = NormalizeAccountDisplayMode(accountDisplayInput?.SelectedItem?.ToString() ?? settings.AccountDisplayMode);
         settings.RandomizeThemeAtLaunch = randomizeThemeInput?.Checked ?? settings.RandomizeThemeAtLaunch;
         SaveSettings(settings);
     }
@@ -2547,9 +2825,17 @@ internal sealed class MainForm : Form
                     list.BackColor = palette.ListBack;
                     list.ForeColor = palette.Text;
                     break;
+                case ListView listView:
+                    listView.BackColor = palette.ListBack;
+                    listView.ForeColor = palette.Text;
+                    break;
                 case TextBox text:
                     text.BackColor = palette.ListBack;
                     text.ForeColor = palette.Text;
+                    break;
+                case ComboBox combo:
+                    combo.BackColor = palette.ListBack;
+                    combo.ForeColor = palette.Text;
                     break;
                 case CheckBox check:
                     check.ForeColor = palette.Text;
@@ -2606,8 +2892,34 @@ internal sealed class MainForm : Form
         catch { }
     }
 
+    private static HttpClient CreateLodestoneClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0 (+https://github.com/Naru6780/potato-launcher)");
+        return client;
+    }
+
+    private static string AccountIconKey(Account account)
+    {
+        return string.IsNullOrWhiteSpace(account.AccountKey) ? account.BatchFile : account.AccountKey;
+    }
+
+    private static string AccountIconFileName(string accountKey)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(accountKey));
+        return $"{Convert.ToHexString(hash).ToLowerInvariant()}.jpg";
+    }
+
+    private static string AccountIconPath(AccountIconProfile profile)
+    {
+        return string.IsNullOrWhiteSpace(profile.IconFileName)
+            ? ""
+            : Path.Combine(AccountIconsFolder(), profile.IconFileName);
+    }
+
     private static string SettingsPath() => Path.Combine(AppContext.BaseDirectory, "settings.json");
     private static string GetAssetRoot() => Path.Combine(AppContext.BaseDirectory, "Potato Launcher Assets");
+    private static string AccountIconsFolder() => Path.Combine(GetAssetRoot(), "Account Icons");
     private static string GetLoadingGifFolder() => Path.Combine(GetAssetRoot(), "Assets");
     private static string MascotGifPath() => Path.Combine(GetLoadingGifFolder(), "09-sIayC6DgB9QOsPj4jd.gif");
     private static string ThemeFolder(string themeName) => Path.Combine(GetAssetRoot(), "themes", SafeFolderName(themeName));
@@ -2622,6 +2934,7 @@ internal sealed class MainForm : Form
     private static void EnsureThemeAssetFolders()
     {
         Directory.CreateDirectory(GetAssetRoot());
+        Directory.CreateDirectory(AccountIconsFolder());
         Directory.CreateDirectory(GetLoadingGifFolder());
         Directory.CreateDirectory(Path.Combine(GetAssetRoot(), "themes"));
     }

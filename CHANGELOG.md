@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.26 - 2026-05-24
+
+- Added Settings support for switching the account list between text and Lodestone portrait icons.
+- Added automatic `Character@World` mapping when a launched client reaches the ready title.
+- Added strict Lodestone icon refresh and local account portrait caching without fake fallback icons.
+
 ## 1.0.25 - 2026-05-23
 
 - Moved the main-window music mute toggle beside the Kill FFXIV button so it no longer overlaps the mascot area.
