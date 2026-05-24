@@ -1,6 +1,6 @@
 # Potato Launcher Goal
 
-**Current version:** `1.0.26`
+**Current version:** `1.0.27`
 
 Potato Launcher is a cute, portable Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
 
@@ -46,7 +46,7 @@ Default color themes are simple built-ins and are excluded from random theme sel
 
 ## Account Icons
 
-Users can switch the account list between text and icon display in Settings. Icon mode uses real Lodestone character portraits only: Potato Launcher stores `Character@World` mappings when a launched client reaches the ready title, then refreshes the matching Lodestone portrait into the portable account icon cache. Missing mappings or failed Lodestone matches are reported instead of using fake fallback icons.
+Users can switch the account list between text and compact roster display in Settings. Roster mode uses real Lodestone character portraits only: Potato Launcher stores `Character@World` mappings when a launched client reaches the ready title, then refreshes the matching Lodestone face and full-body portraits into the portable account icon cache. Missing mappings or failed Lodestone matches are reported instead of using fake fallback icons.
 
 ## Guardrails
 

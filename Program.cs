@@ -73,6 +73,8 @@ internal sealed class AccountIconProfile
     public string LodestoneId { get; set; } = "";
     public string IconUrl { get; set; } = "";
     public string IconFileName { get; set; } = "";
+    public string FullImageUrl { get; set; } = "";
+    public string FullImageFileName { get; set; } = "";
     public DateTime LastUpdatedUtc { get; set; }
 }
 
@@ -84,7 +86,8 @@ internal readonly record struct BatchLaunchInfo(string AccountKey, string Roamin
 internal readonly record struct StartedGameClient(Account Account, int ProcessId);
 internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
 internal sealed record NewsEntry(string Title, string Url, DateTimeOffset Date, string Tag);
-internal sealed record LodestoneIconResult(string LodestoneId, string IconUrl);
+internal sealed record LodestoneIconResult(string LodestoneId, string IconUrl, string FullImageUrl);
+internal sealed record AccountRosterItem(Account Account, string DisplayName, string? FacePath, string? FullPath, string Tooltip);
 
 internal sealed class MainForm : Form
 {
@@ -172,8 +175,7 @@ internal sealed class MainForm : Form
     private RoundedPanel settingsDrawer = null!;
     private readonly System.Windows.Forms.Timer settingsDrawerTimer = new();
     private ListBox accountList = null!;
-    private ListView accountIconList = null!;
-    private ImageList accountImageList = null!;
+    private AccountRosterGrid accountRosterGrid = null!;
     private ListBox bandList = null!;
     private CheckedListBox memberList = null!;
     private TextBox bandName = null!;
@@ -513,19 +515,9 @@ internal sealed class MainForm : Form
         accountList = new ListBox { Bounds = new Rectangle(18, 58, 294, 320) };
         accountList.DoubleClick += (_, _) => LaunchSelectedAccount();
         accountCard.Controls.Add(accountList);
-        accountImageList = new ImageList { ColorDepth = ColorDepth.Depth32Bit, ImageSize = new Size(64, 64) };
-        accountIconList = new ListView
-        {
-            Bounds = new Rectangle(18, 58, 294, 320),
-            View = View.LargeIcon,
-            LargeImageList = accountImageList,
-            MultiSelect = false,
-            HideSelection = false,
-            ShowItemToolTips = true,
-            Visible = false
-        };
-        accountIconList.DoubleClick += (_, _) => LaunchSelectedAccount();
-        accountCard.Controls.Add(accountIconList);
+        accountRosterGrid = new AccountRosterGrid { Bounds = new Rectangle(18, 58, 294, 320), Visible = false };
+        accountRosterGrid.AccountActivated += (_, _) => LaunchSelectedAccount();
+        accountCard.Controls.Add(accountRosterGrid);
         var launchAccount = Button("Launch selected", 18, 394, 150, 36, "Primary");
         launchAccount.Click += (_, _) => LaunchSelectedAccount();
         accountCard.Controls.Add(launchAccount);
@@ -604,7 +596,7 @@ internal sealed class MainForm : Form
 
         accountDisplayLabel = Label("Account list display", 24, 270, 220, 24);
         accountDisplayInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 298, 160, 29) };
-        accountDisplayInput.Items.AddRange(["Text", "Icons"]);
+        accountDisplayInput.Items.AddRange(["Text", "Roster"]);
         accountDisplayInput.SelectedItem = NormalizeAccountDisplayMode(settings.AccountDisplayMode);
         accountDisplayInput.SelectedIndexChanged += (_, _) =>
         {
@@ -1096,18 +1088,17 @@ internal sealed class MainForm : Form
     private void PopulateLists()
     {
         accountList.Items.Clear();
-        accountIconList.Items.Clear();
-        accountImageList.Images.Clear();
         memberList.Items.Clear();
         IEnumerable<Account> orderedAccounts = IsSharedLaunchMode()
             ? accounts
             : accounts.OrderBy(account => account.SortOrder).ThenBy(account => account.Name);
-        foreach (var account in orderedAccounts)
+        var orderedAccountList = orderedAccounts.ToList();
+        foreach (var account in orderedAccountList)
         {
             accountList.Items.Add(account);
-            AddAccountIconItem(account);
             memberList.Items.Add(account);
         }
+        accountRosterGrid.SetItems(orderedAccountList.Select(CreateRosterItem));
         bandList.Items.Clear();
         foreach (var band in CurrentBands())
         {
@@ -1120,54 +1111,37 @@ internal sealed class MainForm : Form
         ApplyTheme(settings.Theme);
     }
 
-    private void AddAccountIconItem(Account account)
+    private AccountRosterItem CreateRosterItem(Account account)
     {
-        var item = new ListViewItem(account.Name) { Tag = account };
-        var key = AccountIconKey(account);
-        if (settings.AccountIcons.TryGetValue(key, out var profile))
+        var displayName = AccountDisplayName(account);
+        var tooltip = "No character mapping yet. Launch this account once so Potato Launcher can see Character@World.";
+        string? facePath = null;
+        string? fullPath = null;
+        if (settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile))
         {
+            if (!string.IsNullOrWhiteSpace(profile.CharacterName) && !string.IsNullOrWhiteSpace(profile.World))
+            {
+                displayName = profile.CharacterName;
+                tooltip = $"{profile.CharacterName}@{profile.World}";
+            }
+
             var iconPath = AccountIconPath(profile);
             if (File.Exists(iconPath))
             {
-                try
-                {
-                    var imageKey = key;
-                    accountImageList.Images.Add(imageKey, CreateSquareIcon(iconPath, accountImageList.ImageSize));
-                    item.ImageKey = imageKey;
-                    item.ToolTipText = $"{profile.CharacterName}@{profile.World}";
-                }
-                catch
-                {
-                    item.ToolTipText = $"Saved icon is unreadable for {profile.CharacterName}@{profile.World}. Use Refresh account icons.";
-                }
+                facePath = iconPath;
             }
             else if (!string.IsNullOrWhiteSpace(profile.CharacterName) && !string.IsNullOrWhiteSpace(profile.World))
             {
-                item.ToolTipText = $"No downloaded icon yet for {profile.CharacterName}@{profile.World}. Use Refresh account icons.";
+                tooltip = $"No downloaded icon yet for {profile.CharacterName}@{profile.World}. Use Refresh account icons.";
+            }
+
+            var bodyPath = AccountFullImagePath(profile);
+            if (File.Exists(bodyPath))
+            {
+                fullPath = bodyPath;
             }
         }
-        else
-        {
-            item.ToolTipText = "No character mapping yet. Launch this account once so Potato Launcher can see Character@World.";
-        }
-        accountIconList.Items.Add(item);
-    }
-
-    private static Bitmap CreateSquareIcon(string iconPath, Size size)
-    {
-        using var source = Image.FromFile(iconPath);
-        var bitmap = new Bitmap(size.Width, size.Height);
-        using var graphics = Graphics.FromImage(bitmap);
-        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.Clear(Color.Transparent);
-        var scale = Math.Max((float)size.Width / source.Width, (float)size.Height / source.Height);
-        var width = source.Width * scale;
-        var height = source.Height * scale;
-        var x = (size.Width - width) / 2F;
-        var y = (size.Height - height) / 2F;
-        graphics.DrawImage(source, x, y, width, height);
-        return bitmap;
+        return new AccountRosterItem(account, displayName, facePath, fullPath, tooltip);
     }
 
     private void UpdateAccountStatus()
@@ -1191,10 +1165,10 @@ internal sealed class MainForm : Form
 
     private void UpdateAccountDisplayMode()
     {
-        if (accountList is null || accountIconList is null) return;
+        if (accountList is null || accountRosterGrid is null) return;
         var iconMode = IsAccountIconMode();
         accountList.Visible = !iconMode;
-        accountIconList.Visible = iconMode;
+        accountRosterGrid.Visible = iconMode;
         if (iconMode && accounts.Count > 0)
         {
             var missingIcons = accounts.Count(account => !HasAccountIcon(account));
@@ -1205,13 +1179,24 @@ internal sealed class MainForm : Form
         }
     }
 
-    private bool IsAccountIconMode() => NormalizeAccountDisplayMode(settings.AccountDisplayMode).Equals("Icons", StringComparison.OrdinalIgnoreCase);
+    private bool IsAccountIconMode() => NormalizeAccountDisplayMode(settings.AccountDisplayMode).Equals("Roster", StringComparison.OrdinalIgnoreCase);
 
-    private static string NormalizeAccountDisplayMode(string displayMode) => displayMode.Equals("Icons", StringComparison.OrdinalIgnoreCase) ? "Icons" : "Text";
+    private static string NormalizeAccountDisplayMode(string displayMode) => displayMode.Equals("Icons", StringComparison.OrdinalIgnoreCase) || displayMode.Equals("Roster", StringComparison.OrdinalIgnoreCase) ? "Roster" : "Text";
 
     private bool HasAccountIcon(Account account)
     {
         return settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile) && File.Exists(AccountIconPath(profile));
+    }
+
+    private static string AccountDisplayName(Account account)
+    {
+        var name = account.Name.Trim();
+        var separator = name.LastIndexOf(" - ", StringComparison.Ordinal);
+        if (separator >= 0 && separator < name.Length - 3)
+        {
+            return name[(separator + 3)..].Trim();
+        }
+        return name;
     }
 
     private void RememberAccountCharacterTitle(Account account, string title)
@@ -1287,22 +1272,20 @@ internal sealed class MainForm : Form
             Directory.CreateDirectory(AccountIconsFolder());
             profile.LodestoneId = result.LodestoneId;
             profile.IconUrl = result.IconUrl;
+            profile.FullImageUrl = result.FullImageUrl;
             profile.IconFileName = AccountIconFileName(key);
+            profile.FullImageFileName = AccountFullImageFileName(key);
             profile.LastUpdatedUtc = DateTime.UtcNow;
 
-            var bytes = await LodestoneClient.GetByteArrayAsync(result.IconUrl);
-            var iconPath = AccountIconPath(profile);
-            var tempPath = $"{iconPath}.tmp";
-            await File.WriteAllBytesAsync(tempPath, bytes);
-            if (File.Exists(iconPath)) File.Delete(iconPath);
-            File.Move(tempPath, iconPath);
+            await DownloadAccountImageAsync(result.IconUrl, AccountIconPath(profile));
+            await DownloadAccountImageAsync(result.FullImageUrl, AccountFullImagePath(profile));
             SaveSettings(settings);
 
             if (!quiet && status is not null)
             {
                 status.Text = $"Updated {profile.CharacterName}@{profile.World}.";
             }
-            if (accountIconList is not null && !accountIconList.IsDisposed)
+            if (accountRosterGrid is not null && !accountRosterGrid.IsDisposed)
             {
                 BeginInvoke(new Action(PopulateLists));
             }
@@ -1332,12 +1315,39 @@ internal sealed class MainForm : Form
                 continue;
             }
 
+            var id = match.Groups["id"].Value;
             return new LodestoneIconResult(
-                match.Groups["id"].Value,
-                WebUtility.HtmlDecode(match.Groups["icon"].Value));
+                id,
+                WebUtility.HtmlDecode(match.Groups["icon"].Value),
+                await FindLodestoneFullImageUrlAsync(id));
         }
 
         throw new InvalidOperationException($"No exact Lodestone match for {characterName}@{world}.");
+    }
+
+    private static async Task<string> FindLodestoneFullImageUrlAsync(string lodestoneId)
+    {
+        var profileHtml = await LodestoneClient.GetStringAsync($"https://na.finalfantasyxiv.com/lodestone/character/{lodestoneId}/");
+        var match = Regex.Match(profileHtml, @"https://img2\.finalfantasyxiv\.com/f/[^""']+fl0\.jpg\?[^""']+", RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            throw new InvalidOperationException($"No full Lodestone portrait found for character {lodestoneId}.");
+        }
+        return WebUtility.HtmlDecode(match.Value);
+    }
+
+    private static async Task DownloadAccountImageAsync(string imageUrl, string targetPath)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl) || string.IsNullOrWhiteSpace(targetPath))
+        {
+            throw new InvalidOperationException("Missing Lodestone image URL or cache path.");
+        }
+
+        var bytes = await LodestoneClient.GetByteArrayAsync(imageUrl);
+        var tempPath = $"{targetPath}.tmp";
+        await File.WriteAllBytesAsync(tempPath, bytes);
+        if (File.Exists(targetPath)) File.Delete(targetPath);
+        File.Move(tempPath, targetPath);
     }
 
     private List<BandConfig> CurrentBands() => IsSharedLaunchMode() ? settings.SharedBands : settings.InstancedBands;
@@ -1434,9 +1444,9 @@ internal sealed class MainForm : Form
 
     private void LaunchSelectedAccount()
     {
-        if (IsAccountIconMode() && accountIconList.SelectedItems.Count > 0 && accountIconList.SelectedItems[0].Tag is Account iconAccount)
+        if (IsAccountIconMode() && accountRosterGrid.SelectedAccount is Account rosterAccount)
         {
-            _ = LaunchSingleAccountAsync(iconAccount);
+            _ = LaunchSingleAccountAsync(rosterAccount);
             return;
         }
         if (accountList.SelectedItem is Account account) _ = LaunchSingleAccountAsync(account);
@@ -2817,6 +2827,9 @@ internal sealed class MainForm : Form
                 case FlowLayoutPanel flow:
                     flow.BackColor = ReferenceEquals(flow, newsListPanel) ? palette.ListBack : Color.Transparent;
                     break;
+                case AccountRosterGrid roster:
+                    roster.Palette = palette;
+                    break;
                 case CheckedListBox checkedList:
                     checkedList.BackColor = palette.ListBack;
                     checkedList.ForeColor = palette.Text;
@@ -2910,11 +2923,24 @@ internal sealed class MainForm : Form
         return $"{Convert.ToHexString(hash).ToLowerInvariant()}.jpg";
     }
 
+    private static string AccountFullImageFileName(string accountKey)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"full:{accountKey}"));
+        return $"{Convert.ToHexString(hash).ToLowerInvariant()}.jpg";
+    }
+
     private static string AccountIconPath(AccountIconProfile profile)
     {
         return string.IsNullOrWhiteSpace(profile.IconFileName)
             ? ""
             : Path.Combine(AccountIconsFolder(), profile.IconFileName);
+    }
+
+    private static string AccountFullImagePath(AccountIconProfile profile)
+    {
+        return string.IsNullOrWhiteSpace(profile.FullImageFileName)
+            ? ""
+            : Path.Combine(AccountIconsFolder(), profile.FullImageFileName);
     }
 
     private static string SettingsPath() => Path.Combine(AppContext.BaseDirectory, "settings.json");
@@ -3160,6 +3186,227 @@ internal sealed class BufferedFlowLayoutPanel : FlowLayoutPanel
     {
         base.OnScroll(se);
         Invalidate();
+    }
+}
+
+internal sealed class AccountRosterGrid : ScrollableControl
+{
+    private const int TileWidth = 64;
+    private const int TileHeight = 86;
+    private const int TileGap = 7;
+    private const int PortraitSize = 48;
+    private readonly List<AccountRosterItem> items = [];
+    private readonly Dictionary<string, Image> imageCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ToolTip tooltip = new();
+    private int selectedIndex = -1;
+    private ThemePalette palette = new(Color.White, Color.White, Color.White, Color.LightGray, Color.Black, Color.Gray, Color.HotPink, Color.CornflowerBlue, Color.IndianRed, Color.White);
+
+    public event EventHandler? AccountActivated;
+
+    public Account? SelectedAccount => selectedIndex >= 0 && selectedIndex < items.Count ? items[selectedIndex].Account : null;
+
+    public ThemePalette Palette
+    {
+        get => palette;
+        set
+        {
+            palette = value;
+            BackColor = palette.ListBack;
+            Invalidate();
+        }
+    }
+
+    public AccountRosterGrid()
+    {
+        DoubleBuffered = true;
+        AutoScroll = true;
+        BackColor = palette.ListBack;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+        UpdateStyles();
+    }
+
+    public void SetItems(IEnumerable<AccountRosterItem> rosterItems)
+    {
+        foreach (var image in imageCache.Values)
+        {
+            image.Dispose();
+        }
+        imageCache.Clear();
+        items.Clear();
+        items.AddRange(rosterItems);
+        if (selectedIndex >= items.Count) selectedIndex = items.Count - 1;
+        if (items.Count == 0) selectedIndex = -1;
+        UpdateScrollSize();
+        Invalidate();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        UpdateScrollSize();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        using var backgroundBrush = new SolidBrush(palette.ListBack);
+        e.Graphics.FillRectangle(backgroundBrush, ClientRectangle);
+        if (items.Count == 0) return;
+
+        var origin = AutoScrollPosition;
+        for (var index = 0; index < items.Count; index++)
+        {
+            var bounds = TileBounds(index);
+            bounds.Offset(origin);
+            if (bounds.Bottom < 0 || bounds.Top > ClientSize.Height) continue;
+            DrawTile(e.Graphics, index, bounds);
+        }
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        Focus();
+        var hit = HitTest(e.Location);
+        if (hit < 0) return;
+        selectedIndex = hit;
+        Invalidate();
+    }
+
+    protected override void OnMouseDoubleClick(MouseEventArgs e)
+    {
+        base.OnMouseDoubleClick(e);
+        var hit = HitTest(e.Location);
+        if (hit < 0) return;
+        selectedIndex = hit;
+        AccountActivated?.Invoke(this, EventArgs.Empty);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        var hit = HitTest(e.Location);
+        tooltip.SetToolTip(this, hit >= 0 ? items[hit].Tooltip : "");
+    }
+
+    private void DrawTile(Graphics graphics, int index, Rectangle bounds)
+    {
+        var item = items[index];
+        var selected = index == selectedIndex;
+        using var tileBrush = new SolidBrush(selected ? Color.FromArgb(235, palette.Primary) : Color.FromArgb(90, palette.Card));
+        using var borderPen = new Pen(selected ? palette.Secondary : Color.FromArgb(150, palette.Border), selected ? 3 : 1);
+        using var path = Rounded(bounds, 10);
+        graphics.FillPath(tileBrush, path);
+        graphics.DrawPath(borderPen, path);
+
+        var portraitBounds = new Rectangle(bounds.X + (bounds.Width - PortraitSize) / 2, bounds.Y + 6, PortraitSize, PortraitSize);
+        if (!string.IsNullOrWhiteSpace(item.FacePath) && File.Exists(item.FacePath))
+        {
+            var image = GetImage(item.FacePath);
+            using var clip = Rounded(portraitBounds, 8);
+            graphics.SetClip(clip);
+            DrawImageCover(graphics, image, portraitBounds);
+            graphics.ResetClip();
+            using var portraitPen = new Pen(Color.FromArgb(220, Color.White), 1);
+            graphics.DrawPath(portraitPen, clip);
+        }
+        else
+        {
+            using var missingBrush = new SolidBrush(Color.FromArgb(60, palette.Danger));
+            using var missingPen = new Pen(palette.Danger, 1);
+            graphics.FillRectangle(missingBrush, portraitBounds);
+            graphics.DrawRectangle(missingPen, portraitBounds);
+            using var refreshFont = new Font(Font.FontFamily, 6.5F, FontStyle.Bold);
+            DrawCenteredText(graphics, "Refresh", portraitBounds, refreshFont, Color.White);
+        }
+
+        var nameBounds = new Rectangle(bounds.X + 3, bounds.Y + 58, bounds.Width - 6, bounds.Height - 60);
+        using var nameFont = new Font(Font.FontFamily, 7.2F, FontStyle.Bold);
+        DrawCenteredText(graphics, item.DisplayName, nameBounds, nameFont, selected ? Color.White : palette.Text);
+    }
+
+    private Image GetImage(string path)
+    {
+        if (imageCache.TryGetValue(path, out var cached)) return cached;
+        using var source = Image.FromFile(path);
+        var copy = new Bitmap(source);
+        imageCache[path] = copy;
+        return copy;
+    }
+
+    private static void DrawImageCover(Graphics graphics, Image image, Rectangle bounds)
+    {
+        var scale = Math.Max((float)bounds.Width / image.Width, (float)bounds.Height / image.Height);
+        var width = image.Width * scale;
+        var height = image.Height * scale;
+        var x = bounds.X + (bounds.Width - width) / 2F;
+        var y = bounds.Y + (bounds.Height - height) / 2F;
+        graphics.DrawImage(image, x, y, width, height);
+    }
+
+    private static void DrawCenteredText(Graphics graphics, string text, Rectangle bounds, Font font, Color color)
+    {
+        using var brush = new SolidBrush(color);
+        using var format = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.EllipsisCharacter
+        };
+        graphics.DrawString(text, font, brush, bounds, format);
+    }
+
+    private int HitTest(Point point)
+    {
+        var scrolledPoint = new Point(point.X - AutoScrollPosition.X, point.Y - AutoScrollPosition.Y);
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (TileBounds(index).Contains(scrolledPoint)) return index;
+        }
+        return -1;
+    }
+
+    private Rectangle TileBounds(int index)
+    {
+        var columns = ColumnCount();
+        var row = index / columns;
+        var column = index % columns;
+        var contentWidth = columns * TileWidth + (columns - 1) * TileGap;
+        var startX = Math.Max(0, (ClientSize.Width - SystemInformation.VerticalScrollBarWidth - contentWidth) / 2);
+        return new Rectangle(startX + column * (TileWidth + TileGap), TileGap + row * (TileHeight + TileGap), TileWidth, TileHeight);
+    }
+
+    private int ColumnCount()
+    {
+        var usableWidth = Math.Max(TileWidth, ClientSize.Width - SystemInformation.VerticalScrollBarWidth);
+        return Math.Max(1, (usableWidth + TileGap) / (TileWidth + TileGap));
+    }
+
+    private void UpdateScrollSize()
+    {
+        var columns = ColumnCount();
+        var rows = items.Count == 0 ? 0 : (int)Math.Ceiling(items.Count / (double)columns);
+        AutoScrollMinSize = new Size(0, rows * (TileHeight + TileGap) + TileGap);
+    }
+
+    private static GraphicsPath Rounded(Rectangle bounds, int radius)
+    {
+        var path = new GraphicsPath();
+        if (bounds.Width <= 0 || bounds.Height <= 0) return path;
+        radius = Math.Min(radius, Math.Max(1, Math.Min(bounds.Width, bounds.Height) / 2));
+        var diameter = radius * 2;
+        var rect = new Rectangle(bounds.Location, new Size(diameter, diameter));
+        path.AddArc(rect, 180, 90);
+        rect.X = bounds.Right - diameter - 1;
+        path.AddArc(rect, 270, 90);
+        rect.Y = bounds.Bottom - diameter - 1;
+        path.AddArc(rect, 0, 90);
+        rect.X = bounds.Left;
+        path.AddArc(rect, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 }
 

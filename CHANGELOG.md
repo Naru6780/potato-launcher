@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.27 - 2026-05-24
+
+- Replaced the oversized Windows icon list with a compact custom character roster grid.
+- Added roster tile selection, double-click launch, themed selection styling, and strict refresh-needed tile states.
+- Cached full-body Lodestone portraits alongside face portraits for future character card views.
+
 ## 1.0.26 - 2026-05-24
 
 - Added Settings support for switching the account list between text and Lodestone portrait icons.
