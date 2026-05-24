@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.36 - 2026-05-24
+
+- Added import mode prompts for account and band imports: `AppendAll`, `AppendNew`, `Merge`, `ReplaceExisting`, and `OverwriteAll`.
+- Moved account order and last-connected state out of `settings.json` into portable `accountList.json`, with migration from older settings.
+- Added account sorting by selected band and improved roster drag feedback with a live card preview.
+- Kept startup portrait refresh from repainting the Band Manager and removed the obsolete per-account Lodestone refresh menu item.
+- Changed missing roster tiles to `No Data Found` with clearer Lodestone-link guidance, and simplified account deletion without Shared-mode backups.
+- Kept Shared and Instanced account deletion/order cleanup separate so one launch mode does not mutate the other.
+
 ## 1.0.35 - 2026-05-24
 
 - Refreshed mapped Lodestone portraits automatically on every app launch.

@@ -66,13 +66,17 @@ internal sealed class AppSettings
     public bool RandomizeThemeAtLaunch { get; set; }
     public string LastShownChangelogVersion { get; set; } = "";
     public Dictionary<string, AccountIconProfile> AccountIcons { get; set; } = [];
-    public List<string> SharedAccountOrder { get; set; } = [];
-    public List<string> InstancedAccountOrder { get; set; } = [];
-    public Dictionary<string, DateTime> LastConnectedUtc { get; set; } = [];
     public List<BandConfig> Bands { get; set; } = [];
     public List<BandConfig> InstancedBands { get; set; } = [];
     public List<BandConfig> SharedBands { get; set; } = [];
 
+}
+
+internal sealed class AccountListState
+{
+    public List<string> SharedAccountOrder { get; set; } = [];
+    public List<string> InstancedAccountOrder { get; set; } = [];
+    public Dictionary<string, DateTime> LastConnectedUtc { get; set; } = [];
 }
 
 internal sealed class AccountIconProfile
@@ -110,6 +114,15 @@ internal sealed class BandTransfer
     public int Version { get; set; } = 1;
     public string LaunchMode { get; set; } = "Shared";
     public List<BandConfig> Bands { get; set; } = [];
+}
+
+internal enum ImportMode
+{
+    AppendAll,
+    AppendNew,
+    Merge,
+    ReplaceExisting,
+    OverwriteAll
 }
 
 internal sealed record ThemePalette(Color Back1, Color Back2, Color Card, Color Border, Color Text, Color Muted, Color Primary, Color Secondary, Color Danger, Color ListBack);
@@ -213,6 +226,7 @@ internal sealed class MainForm : Form
     };
 
     private readonly AppSettings settings = LoadSettings();
+    private readonly AccountListState accountState = LoadAccountListState();
     private readonly List<Account> accounts = [];
     private CuteBackgroundPanel background = null!;
     private RoundedPanel accountCard = null!;
@@ -1147,13 +1161,18 @@ internal sealed class MainForm : Form
                 var useSteam = entry.UseSteam;
                 var useOtp = entry.UseOtp;
                 var accountKey = BuildAccountKey(userName, useSteam, useOtp);
-                var characterName = GetJsonString(entry.Element, "ChosenCharacterName");
+                var characterName = settings.AccountIcons.TryGetValue(accountKey, out var profile) && !string.IsNullOrWhiteSpace(profile.CharacterName)
+                    ? profile.CharacterName
+                    : GetJsonString(entry.Element, "ChosenCharacterName");
                 var displayName = string.IsNullOrWhiteSpace(characterName) ? userName : $"{userName} - {characterName}";
                 var key = accountKey;
                 var order = 999;
                 if (batLookup.TryGetValue(accountKey, out var batAccount))
                 {
-                    displayName = $"{userName} - {batAccount.Name}";
+                    if (string.IsNullOrWhiteSpace(characterName))
+                    {
+                        displayName = $"{userName} - {batAccount.Name}";
+                    }
                     key = batAccount.BatchFile;
                     order = batAccount.SortOrder;
                 }
@@ -1339,20 +1358,20 @@ internal sealed class MainForm : Form
             .ToList();
     }
 
-    private List<string> CurrentAccountOrder() => IsSharedLaunchMode() ? settings.SharedAccountOrder : settings.InstancedAccountOrder;
+    private List<string> CurrentAccountOrder() => IsSharedLaunchMode() ? accountState.SharedAccountOrder : accountState.InstancedAccountOrder;
 
     private void SaveCurrentAccountOrder(IEnumerable<Account> orderedAccounts)
     {
         var order = orderedAccounts.Select(AccountIconKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (IsSharedLaunchMode())
         {
-            settings.SharedAccountOrder = order;
+            accountState.SharedAccountOrder = order;
         }
         else
         {
-            settings.InstancedAccountOrder = order;
+            accountState.InstancedAccountOrder = order;
         }
-        SaveSettings(settings);
+        SaveAccountListState(accountState);
     }
 
     private void ReorderAccount(Account account, int targetIndex)
@@ -1386,12 +1405,36 @@ internal sealed class MainForm : Form
     private void SortAccountsByLastConnected()
     {
         var ordered = OrderedAccounts()
-            .OrderByDescending(account => settings.LastConnectedUtc.TryGetValue(AccountIconKey(account), out var connectedAt) ? connectedAt : DateTime.MinValue)
+            .OrderByDescending(account => accountState.LastConnectedUtc.TryGetValue(AccountIconKey(account), out var connectedAt) ? connectedAt : DateTime.MinValue)
             .ThenBy(AccountDisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
         SaveCurrentAccountOrder(ordered);
         PopulateLists();
         status.Text = "Sorted accounts by last connected.";
+    }
+
+    private void SortAccountsBySelectedBand()
+    {
+        if (bandList.SelectedItem is not BandConfig band)
+        {
+            status.Text = "Choose a band before sorting by band.";
+            return;
+        }
+
+        NormalizeBand(band);
+        var bandOrder = band.BatchFiles
+            .Select((file, index) => new { file, index })
+            .GroupBy(pair => pair.file, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.OrdinalIgnoreCase);
+        var ordered = OrderedAccounts()
+            .Select((account, index) => new { account, index })
+            .OrderBy(pair => bandOrder.TryGetValue(pair.account.BatchFile, out var bandIndex) ? 0 : 1)
+            .ThenBy(pair => bandOrder.TryGetValue(pair.account.BatchFile, out var bandIndex) ? bandIndex : pair.index)
+            .Select(pair => pair.account)
+            .ToList();
+        SaveCurrentAccountOrder(ordered);
+        PopulateLists();
+        status.Text = $"Sorted accounts by {band.Name}.";
     }
 
     private void SelectAccount(Account account)
@@ -1425,7 +1468,7 @@ internal sealed class MainForm : Form
     private AccountRosterItem CreateRosterItem(Account account)
     {
         var displayName = AccountDisplayName(account);
-        var tooltip = "No character mapping yet. Launch this account once so Potato Launcher can see Character@World.";
+        var tooltip = "This character has no data yet. Please link it's Lodestone.";
         string? facePath = null;
         string? fullPath = null;
         if (settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile))
@@ -1490,6 +1533,12 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void RefreshAccountRosterOnly()
+    {
+        if (accountRosterGrid is null || accountRosterGrid.IsDisposed) return;
+        accountRosterGrid.SetItems(OrderedAccounts().Select(CreateRosterItem));
+    }
+
     private bool IsAccountIconMode() => NormalizeAccountDisplayMode(settings.AccountDisplayMode).Equals("Roster", StringComparison.OrdinalIgnoreCase);
 
     private static string NormalizeAccountDisplayMode(string displayMode) => displayMode.Equals("Icons", StringComparison.OrdinalIgnoreCase) || displayMode.Equals("Roster", StringComparison.OrdinalIgnoreCase) ? "Roster" : "Text";
@@ -1527,7 +1576,13 @@ internal sealed class MainForm : Form
             profile.IconFileName = AccountIconFileName(key);
         }
         SaveSettings(settings);
-        _ = RefreshAccountIconAsync(account, quiet: true);
+        _ = RefreshAccountIconAsync(account, quiet: true).ContinueWith(task =>
+        {
+            if (task.Status == TaskStatus.RanToCompletion && task.Result && !IsDisposed)
+            {
+                BeginInvoke(new Action(RefreshAccountRosterOnly));
+            }
+        }, TaskScheduler.Default);
     }
 
     private void ShowAccountContextMenu(Account account, Control owner, Point location)
@@ -1540,17 +1595,6 @@ internal sealed class MainForm : Form
         openProfile.Enabled = !string.IsNullOrWhiteSpace(profileUrl);
         openProfile.Click += (_, _) => OpenUrl(profileUrl);
         menu.Items.Add(openProfile);
-
-        var refresh = new ToolStripMenuItem("Refresh from Lodestone");
-        refresh.Click += async (_, _) =>
-        {
-            status.Text = $"Refreshing {AccountDisplayName(account)}...";
-            if (await RefreshAccountIconAsync(account, quiet: false))
-            {
-                PopulateLists();
-            }
-        };
-        menu.Items.Add(refresh);
 
         var setProfile = new ToolStripMenuItem("Set Lodestone profile URL...");
         setProfile.Click += async (_, _) =>
@@ -1582,6 +1626,7 @@ internal sealed class MainForm : Form
         var sortMenu = new ToolStripMenuItem("Sort accounts");
         sortMenu.DropDownItems.Add("Alphabetically", null, (_, _) => SortAccountsByName());
         sortMenu.DropDownItems.Add("By last connected", null, (_, _) => SortAccountsByLastConnected());
+        sortMenu.DropDownItems.Add("By selected band", null, (_, _) => SortAccountsBySelectedBand());
         menu.Items.Add(sortMenu);
 
         var delete = new ToolStripMenuItem("Delete account");
@@ -1636,6 +1681,73 @@ internal sealed class MainForm : Form
         form.AcceptButton = ok;
         form.CancelButton = cancel;
         return form.ShowDialog() == DialogResult.OK ? input.Text.Trim() : "";
+    }
+
+    private static ImportMode? ShowImportModePrompt(string title, string itemName)
+    {
+        using var form = new Form
+        {
+            Text = title,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MinimizeBox = false,
+            MaximizeBox = false,
+            ClientSize = new Size(560, 360)
+        };
+
+        var label = new Label { Text = "Import Mode:", Bounds = new Rectangle(16, 16, 520, 22) };
+        var modeBox = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Bounds = new Rectangle(16, 42, 220, 28)
+        };
+        modeBox.Items.AddRange(Enum.GetNames<ImportMode>());
+        modeBox.SelectedItem = ImportMode.Merge.ToString();
+
+        var description = new TextBox
+        {
+            Bounds = new Rectangle(16, 84, 528, 210),
+            Multiline = true,
+            ReadOnly = true,
+            BorderStyle = BorderStyle.FixedSingle,
+            ScrollBars = ScrollBars.Vertical
+        };
+        var ok = new Button { Text = "Import", DialogResult = DialogResult.OK, Bounds = new Rectangle(360, 312, 86, 32) };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(454, 312, 86, 32) };
+
+        void UpdateDescription()
+        {
+            var mode = Enum.Parse<ImportMode>(modeBox.SelectedItem?.ToString() ?? nameof(ImportMode.Merge));
+            description.Text = ImportModeDescription(mode, itemName);
+        }
+
+        modeBox.SelectedIndexChanged += (_, _) => UpdateDescription();
+        form.Controls.AddRange([label, modeBox, description, ok, cancel]);
+        form.AcceptButton = ok;
+        form.CancelButton = cancel;
+        UpdateDescription();
+
+        return form.ShowDialog() == DialogResult.OK
+            ? Enum.Parse<ImportMode>(modeBox.SelectedItem?.ToString() ?? nameof(ImportMode.Merge))
+            : null;
+    }
+
+    private static string ImportModeDescription(ImportMode mode, string itemName)
+    {
+        return mode switch
+        {
+            ImportMode.AppendAll =>
+                $"AppendAll:\r\nImports all {itemName} from the source.\r\nExisting band names are duplicated as copies. Existing XIVLauncher account identities cannot be duplicated and are skipped.",
+            ImportMode.AppendNew =>
+                $"AppendNew:\r\nImports only {itemName} that do not already exist.\r\nExisting names or account identities are ignored.",
+            ImportMode.Merge =>
+                $"Merge:\r\nAdds new {itemName} and replaces matching existing {itemName} with the imported data.",
+            ImportMode.ReplaceExisting =>
+                $"ReplaceExisting:\r\nReplaces only matching {itemName} already in your list.\r\nNew source items are ignored.",
+            ImportMode.OverwriteAll =>
+                $"OverwriteAll:\r\nDeletes your current {itemName} list and imports everything from the source.",
+            _ => ""
+        };
     }
 
     private bool TryUpdateXivLauncherAccountMetadata(Account account, AccountIconProfile profile, bool showResult)
@@ -1739,8 +1851,11 @@ internal sealed class MainForm : Form
     private void DeleteAccount(Account account)
     {
         var displayName = AccountDisplayName(account);
+        var detail = IsSharedLaunchMode()
+            ? "This removes the selected Shared account entry from accountsList.json. No backup will be created."
+            : "This deletes only the selected Instanced BAT launcher file. Shared mode accounts are not touched.";
         var result = MessageBox.Show(
-            $"Delete {displayName} from Potato Launcher?\n\nShared mode removes the entry from accountsList.json after making a backup. Instanced mode deletes the selected BAT launcher file.",
+            $"Delete {displayName} from Potato Launcher?\n\n{detail}",
             "Delete account",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
@@ -1784,7 +1899,6 @@ internal sealed class MainForm : Form
 
         if (updatedEntries.Count == entries.Count) throw new InvalidOperationException("No matching XIVLauncher account entry was found.");
 
-        BackupXivLauncherAccountList(accountListPath);
         File.WriteAllText(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
     }
 
@@ -1804,24 +1918,13 @@ internal sealed class MainForm : Form
     private void RemoveAccountReferences(Account account)
     {
         var key = AccountIconKey(account);
-        if (settings.AccountIcons.TryGetValue(key, out var profile))
-        {
-            DeleteIfExists(AccountIconPath(profile));
-            DeleteIfExists(AccountFullImagePath(profile));
-            settings.AccountIcons.Remove(key);
-        }
-        settings.LastConnectedUtc.Remove(key);
-        settings.SharedAccountOrder.RemoveAll(value => value.Equals(key, StringComparison.OrdinalIgnoreCase));
-        settings.InstancedAccountOrder.RemoveAll(value => value.Equals(key, StringComparison.OrdinalIgnoreCase));
-        foreach (var band in settings.Bands.Concat(settings.SharedBands).Concat(settings.InstancedBands))
+        CurrentAccountOrder().RemoveAll(value => value.Equals(key, StringComparison.OrdinalIgnoreCase));
+        accountState.LastConnectedUtc.Remove(key);
+        foreach (var band in CurrentBands())
         {
             band.BatchFiles.RemoveAll(file => file.Equals(account.BatchFile, StringComparison.OrdinalIgnoreCase));
         }
-    }
-
-    private static void DeleteIfExists(string path)
-    {
-        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) File.Delete(path);
+        SaveAccountListState(accountState);
     }
 
     private void ExportAccountList()
@@ -1907,59 +2010,63 @@ internal sealed class MainForm : Form
                 MessageBox.Show("That file does not contain exported Potato Launcher accounts.", "Import accounts", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+            var mode = ShowImportModePrompt("Import accounts", "accounts");
+            if (mode is null) return;
 
             var accountListPath = SharedAccountListPath();
             Directory.CreateDirectory(Path.GetDirectoryName(accountListPath)!);
             var existingEntries = File.Exists(accountListPath)
                 ? JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(File.ReadAllText(accountListPath)) ?? []
                 : [];
-            var updatedEntries = existingEntries
-                .Select(entry => entry.ToDictionary(pair => pair.Key, pair => JsonElementToObject(pair.Value), StringComparer.Ordinal))
-                .ToList();
+            var updatedEntries = mode == ImportMode.OverwriteAll
+                ? new List<Dictionary<string, object?>>()
+                : existingEntries
+                    .Select(entry => entry.ToDictionary(pair => pair.Key, pair => JsonElementToObject(pair.Value), StringComparer.Ordinal))
+                    .ToList();
 
             var added = 0;
-            var filled = 0;
+            var replaced = 0;
+            var skipped = 0;
             foreach (var imported in transfer.Accounts.Where(account => !string.IsNullOrWhiteSpace(account.UserName)))
             {
                 var existing = updatedEntries.FirstOrDefault(entry => IsMatchingAccountEntry(entry, imported.UserName, imported.UseSteamServiceAccount, imported.UseOtp));
-                if (existing is null)
+                if (mode == ImportMode.OverwriteAll)
                 {
-                    updatedEntries.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
-                    {
-                        ["UserName"] = imported.UserName,
-                        ["UseSteamServiceAccount"] = imported.UseSteamServiceAccount,
-                        ["UseOtp"] = imported.UseOtp,
-                        ["LastSuccessfulOtp"] = null,
-                        ["SavePassword"] = false,
-                        ["ChosenCharacterName"] = imported.ChosenCharacterName,
-                        ["ChosenCharacterWorld"] = imported.ChosenCharacterWorld,
-                        ["ThumbnailUrl"] = imported.ThumbnailUrl
-                    });
+                    updatedEntries.Add(CreateAccountListEntry(imported));
                     added++;
                     continue;
                 }
 
-                if (FillBlank(existing, "ChosenCharacterName", imported.ChosenCharacterName)) filled++;
-                if (FillBlank(existing, "ChosenCharacterWorld", imported.ChosenCharacterWorld)) filled++;
-                if (FillBlank(existing, "ThumbnailUrl", imported.ThumbnailUrl)) filled++;
+                if (existing is null)
+                {
+                    if (mode == ImportMode.ReplaceExisting)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    updatedEntries.Add(CreateAccountListEntry(imported));
+                    added++;
+                    continue;
+                }
+
+                if (mode is ImportMode.AppendAll or ImportMode.AppendNew)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (ReplaceAccountMetadata(existing, imported)) replaced++;
             }
 
-            var importedProfiles = 0;
-            foreach (var pair in (transfer.AccountIcons ?? []).Where(pair => !string.IsNullOrWhiteSpace(pair.Key)))
-            {
-                if (!settings.AccountIcons.TryGetValue(pair.Key, out var existingProfile) || string.IsNullOrWhiteSpace(existingProfile.LodestoneId))
-                {
-                    settings.AccountIcons[pair.Key] = pair.Value;
-                    importedProfiles++;
-                }
-            }
+            var importedProfiles = ApplyImportedProfiles(transfer.AccountIcons ?? [], mode.Value);
 
             if (File.Exists(accountListPath)) BackupXivLauncherAccountList(accountListPath);
             File.WriteAllText(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
             SaveSettings(settings);
             LoadAccounts();
             PopulateLists();
-            status.Text = $"Imported accounts: {added} added, {filled} fields filled, {importedProfiles} profiles linked.";
+            status.Text = $"Imported accounts: {added} added, {replaced} updated, {skipped} skipped, {importedProfiles} profiles linked.";
         }
         catch (Exception ex)
         {
@@ -2001,23 +2108,90 @@ internal sealed class MainForm : Form
                 MessageBox.Show("That file does not contain any bands.", "Import bands", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+            var mode = ShowImportModePrompt("Import bands", "bands");
+            if (mode is null) return;
 
-            var target = CurrentBands();
-            foreach (var imported in importedBands)
-            {
-                var band = CloneBand(imported);
-                band.Name = UniqueBandName(string.IsNullOrWhiteSpace(band.Name) ? "Imported Band" : band.Name, target);
-                target.Add(band);
-            }
+            var result = ApplyImportedBands(importedBands, mode.Value);
 
             SaveSettingsFromInputs();
             PopulateLists();
-            status.Text = $"Imported {importedBands.Count} band{(importedBands.Count == 1 ? "" : "s")}.";
+            status.Text = $"Imported bands: {result.added} added, {result.replaced} replaced, {result.skipped} skipped.";
         }
         catch (Exception ex)
         {
             MessageBox.Show($"Could not import bands.\n\n{ex.Message}", "Import bands failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    private int ApplyImportedProfiles(Dictionary<string, AccountIconProfile> importedProfiles, ImportMode mode)
+    {
+        var linked = 0;
+        foreach (var pair in importedProfiles.Where(pair => !string.IsNullOrWhiteSpace(pair.Key)))
+        {
+            var hasExisting = settings.AccountIcons.TryGetValue(pair.Key, out var existingProfile);
+            var shouldApply = mode switch
+            {
+                ImportMode.AppendAll or ImportMode.AppendNew => !hasExisting || string.IsNullOrWhiteSpace(existingProfile?.LodestoneId),
+                ImportMode.Merge or ImportMode.OverwriteAll => true,
+                ImportMode.ReplaceExisting => hasExisting,
+                _ => false
+            };
+            if (!shouldApply) continue;
+            settings.AccountIcons[pair.Key] = CloneProfile(pair.Value);
+            linked++;
+        }
+        return linked;
+    }
+
+    private (int added, int replaced, int skipped) ApplyImportedBands(List<BandConfig> importedBands, ImportMode mode)
+    {
+        var target = CurrentBands();
+        var added = 0;
+        var replaced = 0;
+        var skipped = 0;
+
+        if (mode == ImportMode.OverwriteAll)
+        {
+            target.Clear();
+            target.AddRange(importedBands.Select(CloneBandWithDefaultName));
+            return (target.Count, 0, 0);
+        }
+
+        foreach (var imported in importedBands.Select(CloneBandWithDefaultName))
+        {
+            var existingIndex = target.FindIndex(band => band.Name.Equals(imported.Name, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex < 0)
+            {
+                if (mode == ImportMode.ReplaceExisting)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                target.Add(imported);
+                added++;
+                continue;
+            }
+
+            switch (mode)
+            {
+                case ImportMode.AppendAll:
+                    imported.Name = UniqueBandName(imported.Name, target);
+                    target.Add(imported);
+                    added++;
+                    break;
+                case ImportMode.AppendNew:
+                    skipped++;
+                    break;
+                case ImportMode.Merge:
+                case ImportMode.ReplaceExisting:
+                    target[existingIndex] = imported;
+                    replaced++;
+                    break;
+            }
+        }
+
+        return (added, replaced, skipped);
     }
 
     private static bool IsMatchingAccountEntry(Dictionary<string, object?> entry, string userName, bool useSteam, bool useOtp)
@@ -2028,10 +2202,34 @@ internal sealed class MainForm : Form
             Convert.ToBoolean(entry.GetValueOrDefault("UseOtp") ?? false) == useOtp;
     }
 
-    private static bool FillBlank(Dictionary<string, object?> entry, string key, string value)
+    private static Dictionary<string, object?> CreateAccountListEntry(AccountListTransferEntry imported)
+    {
+        return new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["UserName"] = imported.UserName,
+            ["UseSteamServiceAccount"] = imported.UseSteamServiceAccount,
+            ["UseOtp"] = imported.UseOtp,
+            ["LastSuccessfulOtp"] = null,
+            ["SavePassword"] = false,
+            ["ChosenCharacterName"] = imported.ChosenCharacterName,
+            ["ChosenCharacterWorld"] = imported.ChosenCharacterWorld,
+            ["ThumbnailUrl"] = imported.ThumbnailUrl
+        };
+    }
+
+    private static bool ReplaceAccountMetadata(Dictionary<string, object?> entry, AccountListTransferEntry imported)
+    {
+        var changed = false;
+        changed |= ReplaceIfProvided(entry, "ChosenCharacterName", imported.ChosenCharacterName);
+        changed |= ReplaceIfProvided(entry, "ChosenCharacterWorld", imported.ChosenCharacterWorld);
+        changed |= ReplaceIfProvided(entry, "ThumbnailUrl", imported.ThumbnailUrl);
+        return changed;
+    }
+
+    private static bool ReplaceIfProvided(Dictionary<string, object?> entry, string key, string value)
     {
         if (string.IsNullOrWhiteSpace(value)) return false;
-        if (entry.TryGetValue(key, out var existing) && !string.IsNullOrWhiteSpace(existing?.ToString())) return false;
+        if (entry.TryGetValue(key, out var existing) && string.Equals(existing?.ToString() ?? "", value, StringComparison.Ordinal)) return false;
         entry[key] = value;
         return true;
     }
@@ -2039,6 +2237,29 @@ internal sealed class MainForm : Form
     private static BandConfig CloneBand(BandConfig band)
     {
         return new BandConfig { Name = band.Name, BatchFiles = band.BatchFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList() };
+    }
+
+    private static BandConfig CloneBandWithDefaultName(BandConfig band)
+    {
+        var clone = CloneBand(band);
+        clone.Name = string.IsNullOrWhiteSpace(clone.Name) ? "Imported Band" : clone.Name;
+        return clone;
+    }
+
+    private static AccountIconProfile CloneProfile(AccountIconProfile profile)
+    {
+        return new AccountIconProfile
+        {
+            CharacterName = profile.CharacterName,
+            World = profile.World,
+            LodestoneId = profile.LodestoneId,
+            ProfileUrl = profile.ProfileUrl,
+            IconUrl = profile.IconUrl,
+            IconFileName = profile.IconFileName,
+            FullImageUrl = profile.FullImageUrl,
+            FullImageFileName = profile.FullImageFileName,
+            LastUpdatedUtc = profile.LastUpdatedUtc
+        };
     }
 
     private static string UniqueBandName(string requestedName, List<BandConfig> bands)
@@ -2079,7 +2300,7 @@ internal sealed class MainForm : Form
                 }
             }
 
-            PopulateLists();
+            RefreshAccountRosterOnly();
             status.Text = failed == 0
                 ? $"Updated {refreshed} mapped portrait{(refreshed == 1 ? "" : "s")}."
                 : $"Updated {refreshed} mapped portrait{(refreshed == 1 ? "" : "s")}; {failed} failed.";
@@ -2120,10 +2341,6 @@ internal sealed class MainForm : Form
             if (!quiet && status is not null)
             {
                 status.Text = $"Updated {profile.CharacterName}@{profile.World}.";
-            }
-            if (accountRosterGrid is not null && !accountRosterGrid.IsDisposed)
-            {
-                BeginInvoke(new Action(PopulateLists));
             }
             return true;
         }
@@ -2450,8 +2667,8 @@ internal sealed class MainForm : Form
 
     private void RememberAccountConnected(Account account)
     {
-        settings.LastConnectedUtc[AccountIconKey(account)] = DateTime.UtcNow;
-        SaveSettings(settings);
+        accountState.LastConnectedUtc[AccountIconKey(account)] = DateTime.UtcNow;
+        SaveAccountListState(accountState);
     }
 
     private async Task<GameClientWindow> StartAccountAndWaitForClientAsync(Account account, CancellationToken token)
@@ -3797,10 +4014,72 @@ internal sealed class MainForm : Form
         catch { }
     }
 
+    private static AccountListState LoadAccountListState()
+    {
+        try
+        {
+            var path = AccountListStatePath();
+            if (File.Exists(path)) return JsonSerializer.Deserialize<AccountListState>(File.ReadAllText(path)) ?? new AccountListState();
+        }
+        catch { }
+        var state = MigrateAccountListStateFromSettings();
+        SaveAccountListState(state);
+        return state;
+    }
+
+    private static AccountListState MigrateAccountListStateFromSettings()
+    {
+        var state = new AccountListState();
+        try
+        {
+            var path = SettingsPath();
+            if (!File.Exists(path)) return state;
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return state;
+
+            state.SharedAccountOrder = ReadStringList(document.RootElement, "SharedAccountOrder");
+            state.InstancedAccountOrder = ReadStringList(document.RootElement, "InstancedAccountOrder");
+            if (document.RootElement.TryGetProperty("LastConnectedUtc", out var lastConnected) &&
+                lastConnected.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in lastConnected.EnumerateObject())
+                {
+                    if (property.Value.ValueKind == JsonValueKind.String &&
+                        DateTime.TryParse(property.Value.GetString(), out var value))
+                    {
+                        state.LastConnectedUtc[property.Name] = value;
+                    }
+                }
+            }
+        }
+        catch { }
+        return state;
+    }
+
+    private static List<string> ReadStringList(JsonElement source, string propertyName)
+    {
+        if (!source.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.Array) return [];
+        return property.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+            .Select(item => item.GetString()!)
+            .ToList();
+    }
+
+    private static void SaveAccountListState(AccountListState state)
+    {
+        try
+        {
+            var path = AccountListStatePath();
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch { }
+    }
+
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.36 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -3836,6 +4115,7 @@ internal sealed class MainForm : Form
     }
 
     private static string SettingsPath() => Path.Combine(AppContext.BaseDirectory, "settings.json");
+    private static string AccountListStatePath() => Path.Combine(AppContext.BaseDirectory, "accountList.json");
     private static string GetAssetRoot() => Path.Combine(AppContext.BaseDirectory, "Potato Launcher Assets");
     private static string AccountIconsFolder() => Path.Combine(GetAssetRoot(), "Account Icons");
     private static string GetLoadingGifFolder() => Path.Combine(GetAssetRoot(), "Assets");
@@ -4100,6 +4380,8 @@ internal sealed class AccountRosterGrid : ScrollableControl
     public Account? SelectedAccount => selectedIndex >= 0 && selectedIndex < items.Count ? items[selectedIndex].Account : null;
     private int dragIndex = -1;
     private Point dragStart;
+    private Point dragPoint;
+    private bool dragging;
 
     public ThemePalette Palette
     {
@@ -4162,10 +4444,15 @@ internal sealed class AccountRosterGrid : ScrollableControl
         var origin = AutoScrollPosition;
         for (var index = 0; index < items.Count; index++)
         {
+            if (dragging && index == dragIndex) continue;
             var bounds = TileBounds(index);
             bounds.Offset(origin);
             if (bounds.Bottom < 0 || bounds.Top > ClientSize.Height) continue;
             DrawTile(e.Graphics, index, bounds);
+        }
+        if (dragging && dragIndex >= 0 && dragIndex < items.Count)
+        {
+            DrawTile(e.Graphics, dragIndex, new Rectangle(dragPoint.X - TileWidth / 2, dragPoint.Y - TileHeight / 2, TileWidth, TileHeight), ghost: true);
         }
     }
 
@@ -4180,6 +4467,7 @@ internal sealed class AccountRosterGrid : ScrollableControl
         {
             dragIndex = hit;
             dragStart = e.Location;
+            dragPoint = e.Location;
         }
         Invalidate();
         if (e.Button == MouseButtons.Right)
@@ -4200,36 +4488,49 @@ internal sealed class AccountRosterGrid : ScrollableControl
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        if (e.Button == MouseButtons.Left && dragIndex >= 0 && dragIndex < items.Count && IsDragGesture(dragStart, e.Location))
+        if (e.Button == MouseButtons.Left && dragIndex >= 0 && dragIndex < items.Count)
         {
-            DoDragDrop(items[dragIndex].Account, DragDropEffects.Move);
+            if (dragging || IsDragGesture(dragStart, e.Location))
+            {
+                dragging = true;
+                dragPoint = e.Location;
+                Invalidate();
+                return;
+            }
+        }
+        if (dragging)
+        {
+            dragging = false;
             dragIndex = -1;
+            Invalidate();
             return;
         }
         var hit = HitTest(e.Location);
         tooltip.SetToolTip(this, hit >= 0 ? items[hit].Tooltip : "");
     }
 
-    protected override void OnDragOver(DragEventArgs drgevent)
+    protected override void OnMouseUp(MouseEventArgs e)
     {
-        base.OnDragOver(drgevent);
-        drgevent.Effect = drgevent.Data?.GetDataPresent(typeof(Account)) == true ? DragDropEffects.Move : DragDropEffects.None;
+        base.OnMouseUp(e);
+        if (!dragging || dragIndex < 0 || dragIndex >= items.Count)
+        {
+            dragging = false;
+            dragIndex = -1;
+            return;
+        }
+        var account = items[dragIndex].Account;
+        dragging = false;
+        dragIndex = -1;
+        Invalidate();
+        AccountReordered?.Invoke(this, new AccountReorderEventArgs(account, DropIndex(e.Location)));
     }
 
-    protected override void OnDragDrop(DragEventArgs drgevent)
-    {
-        base.OnDragDrop(drgevent);
-        if (drgevent.Data?.GetData(typeof(Account)) is not Account account) return;
-        var point = PointToClient(new Point(drgevent.X, drgevent.Y));
-        AccountReordered?.Invoke(this, new AccountReorderEventArgs(account, DropIndex(point)));
-    }
-
-    private void DrawTile(Graphics graphics, int index, Rectangle bounds)
+    private void DrawTile(Graphics graphics, int index, Rectangle bounds, bool ghost = false)
     {
         var item = items[index];
         var selected = index == selectedIndex;
-        using var tileBrush = new SolidBrush(selected ? Color.FromArgb(235, palette.Primary) : Color.FromArgb(90, palette.Card));
-        using var borderPen = new Pen(selected ? palette.Secondary : Color.FromArgb(150, palette.Border), selected ? 3 : 1);
+        using var tileBrush = new SolidBrush(ghost ? Color.FromArgb(220, palette.Primary) : selected ? Color.FromArgb(235, palette.Primary) : Color.FromArgb(90, palette.Card));
+        using var borderPen = new Pen(ghost ? palette.Secondary : selected ? palette.Secondary : Color.FromArgb(150, palette.Border), selected || ghost ? 3 : 1);
         using var path = Rounded(bounds, 10);
         graphics.FillPath(tileBrush, path);
         graphics.DrawPath(borderPen, path);
@@ -4251,8 +4552,8 @@ internal sealed class AccountRosterGrid : ScrollableControl
             using var missingPen = new Pen(palette.Danger, 1);
             graphics.FillRectangle(missingBrush, portraitBounds);
             graphics.DrawRectangle(missingPen, portraitBounds);
-            using var refreshFont = new Font(Font.FontFamily, 6.5F, FontStyle.Bold);
-            DrawCenteredText(graphics, "Refresh", portraitBounds, refreshFont, Color.White);
+            using var refreshFont = new Font(Font.FontFamily, 6.2F, FontStyle.Bold);
+            DrawCenteredText(graphics, "No Data Found", portraitBounds, refreshFont, Color.White);
         }
 
         var nameBounds = new Rectangle(bounds.X + 3, bounds.Y + 58, bounds.Width - 6, bounds.Height - 60);

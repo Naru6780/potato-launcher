@@ -1,6 +1,6 @@
 # Potato Launcher Goal
 
-**Current version:** `1.0.35`
+**Current version:** `1.0.36`
 
 Potato Launcher is a cute, portable Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
 
@@ -26,7 +26,7 @@ Bands are named account groups.
 - Band edits autosave.
 - Band names are changed from the band list right-click menu, not from a permanent text box.
 - Launching a band should queue accounts safely and visibly through the Band Manager loading screen while leaving the account roster visible.
-- Bands can be saved/exported as `band.json` beside `settings.json` and imported on another portable copy.
+- Bands can be saved/exported as `band.json` beside `settings.json` and imported on another portable copy with an explicit import mode.
 
 ## Loading Behavior
 
@@ -58,9 +58,9 @@ Mapped Lodestone portraits refresh on every app launch so changed character prof
 
 When the user manually assigns a Lodestone profile to a Shared-mode account, Potato Launcher may backfill XIVLauncher's `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl` fields for that account after creating a backup of `accountsList.json`.
 
-Users can export Shared-mode account metadata and Lodestone profile links, then import them on another machine. Importing should add missing accounts and fill blank metadata only; it must not wipe or replace a friend's existing account list.
+Users can export Shared-mode account metadata and Lodestone profile links, then import them on another machine. Importing must ask for an import mode so the user chooses whether to append, merge, replace matching entries, or overwrite everything.
 
-Users can drag accounts in the account list to define the shared display order. Band Manager mirrors that account order, and band launch order follows the checked member order shown there. Users can also sort accounts alphabetically or by the most recent successful `Character@World` connection recorded by Potato Launcher.
+Users can drag accounts in the account list to define the shared display order. Band Manager mirrors that account order, and band launch order follows the checked member order shown there. Users can also sort accounts alphabetically, by the selected band, or by the most recent successful `Character@World` connection recorded by Potato Launcher. Account order and last-connected data live in portable `accountList.json`, not in `settings.json`.
 
 ## Guardrails
 
