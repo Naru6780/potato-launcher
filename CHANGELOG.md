@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.44 - 2026-05-24
+
+- Smoothed splitter dragging by coalescing raw mouse-move events to the latest pending width.
+- Precomputed splitter drag bounds once per drag instead of recalculating them on every mouse move.
+- Suppressed expensive list repaint churn while dragging, then refreshed the affected content once the drag completes.
+- Avoided deep child invalidation during live resize so panels track the pointer more fluidly.
+
 ## 1.0.43 - 2026-05-24
 
 - Fixed splitter-drag rendering artifacts where panels could collapse into vertical striped stale-paint regions.

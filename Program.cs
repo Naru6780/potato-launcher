@@ -496,6 +496,11 @@ internal sealed class MainForm : Form
     private bool resizingAccountPanel;
     private int accountResizeStartX;
     private int accountResizeStartWidth;
+    private int accountResizeMinWidth;
+    private int accountResizeMaxWidth;
+    private int pendingAccountPanelWidth;
+    private bool accountResizeFrameQueued;
+    private bool accountResizeListsSuspended;
     private bool refreshingStartupPortraits;
 
     public MainForm()
@@ -882,18 +887,25 @@ internal sealed class MainForm : Form
             resizingAccountPanel = true;
             accountResizeStartX = Cursor.Position.X;
             accountResizeStartWidth = accountCard.Width;
+            accountResizeMinWidth = 300;
+            accountResizeMaxWidth = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, int.MaxValue).AccountWidth;
+            pendingAccountPanelWidth = accountResizeStartWidth;
+            accountResizeFrameQueued = false;
+            BeginAccountResizeInteraction();
             accountResizeHandle.Capture = true;
         };
         accountResizeHandle.MouseMove += (_, _) =>
         {
             if (!resizingAccountPanel) return;
-            ResizeAccountPanel(Cursor.Position.X);
+            QueueAccountPanelResize(Cursor.Position.X);
         };
         accountResizeHandle.MouseUp += (_, _) =>
         {
             if (!resizingAccountPanel) return;
+            ApplyQueuedAccountPanelResize();
             resizingAccountPanel = false;
             accountResizeHandle.Capture = false;
+            EndAccountResizeInteraction();
             SaveSettings(settings);
         };
         tab.Controls.Add(accountResizeHandle);
@@ -906,7 +918,7 @@ internal sealed class MainForm : Form
         var oldPanelBounds = Rectangle.Union(accountCard.Bounds, bandCard.Bounds);
         var layout = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, settings.AccountPanelWidth);
 
-        using var redraw = forceRepaint ? BeginRedrawScope(accountCard, bandCard) : BeginRedrawScope(background);
+        using var redraw = forceRepaint ? null : BeginRedrawScope(background);
         background.SuspendLayout();
         accountCard.SuspendLayout();
         bandCard.SuspendLayout();
@@ -957,19 +969,49 @@ internal sealed class MainForm : Form
             var dirty = Rectangle.Union(oldPanelBounds, Rectangle.Union(accountCard.Bounds, bandCard.Bounds));
             dirty.Inflate(32, 32);
             background.Invalidate(dirty, false);
-            accountCard.Invalidate(true);
-            bandCard.Invalidate(true);
+            accountCard.Invalidate(false);
+            bandCard.Invalidate(false);
             accountResizeHandle?.Invalidate();
         }
     }
 
-    private void ResizeAccountPanel(int screenX)
+    private void QueueAccountPanelResize(int screenX)
     {
-        var maxAccountWidth = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, int.MaxValue).AccountWidth;
-        var nextWidth = Math.Clamp(accountResizeStartWidth + screenX - accountResizeStartX, 300, maxAccountWidth);
-        if (nextWidth == settings.AccountPanelWidth) return;
-        settings.AccountPanelWidth = nextWidth;
+        pendingAccountPanelWidth = Math.Clamp(accountResizeStartWidth + screenX - accountResizeStartX, accountResizeMinWidth, accountResizeMaxWidth);
+        if (accountResizeFrameQueued) return;
+        accountResizeFrameQueued = true;
+        BeginInvoke(new Action(ApplyQueuedAccountPanelResize));
+    }
+
+    private void ApplyQueuedAccountPanelResize()
+    {
+        if (!accountResizeFrameQueued && pendingAccountPanelWidth == settings.AccountPanelWidth) return;
+        accountResizeFrameQueued = false;
+        if (pendingAccountPanelWidth == settings.AccountPanelWidth) return;
+        settings.AccountPanelWidth = pendingAccountPanelWidth;
         ApplyLauncherLayout(forceRepaint: true);
+    }
+
+    private void BeginAccountResizeInteraction()
+    {
+        if (accountResizeListsSuspended) return;
+        accountResizeListsSuspended = true;
+        accountList.BeginUpdate();
+        bandList.BeginUpdate();
+        memberList.BeginUpdate();
+    }
+
+    private void EndAccountResizeInteraction()
+    {
+        if (!accountResizeListsSuspended) return;
+        accountResizeListsSuspended = false;
+        memberList.EndUpdate();
+        bandList.EndUpdate();
+        accountList.EndUpdate();
+        accountRosterGrid.Invalidate();
+        memberList.Invalidate();
+        bandList.Invalidate();
+        accountList.Invalidate();
     }
 
     private void ApplyResponsiveLayout()
@@ -4564,7 +4606,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.43 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.44 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
