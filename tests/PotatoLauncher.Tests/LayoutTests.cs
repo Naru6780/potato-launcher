@@ -25,6 +25,17 @@ public class LayoutTests
     }
 
     [Theory]
+    [InlineData(0, 0)]
+    [InlineData(120, 40)]
+    [InlineData(600, 400)]
+    public void LauncherLayoutMetrics_HandlesMinimizedOrTinyClientSizes(int clientWidth, int clientHeight)
+    {
+        var exception = Record.Exception(() => LauncherLayoutMetrics.Calculate(clientWidth, clientHeight, requestedAccountWidth: 330));
+
+        Assert.Null(exception);
+    }
+
+    [Theory]
     [InlineData(560)]
     [InlineData(760)]
     [InlineData(980)]

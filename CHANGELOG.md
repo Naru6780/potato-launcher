@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.50 - 2026-05-25
+
+- Fixed an unhandled exception when minimizing the app by skipping responsive layout while minimized.
+- Made launcher layout metrics safe for minimized or tiny client sizes.
+- Added layout regression coverage for minimized and tiny window dimensions.
+
 ## 1.0.49 - 2026-05-25
 
 - Replaced the Band Manager member `CheckedListBox` with a theme-aware vertical-scrolling checklist so the account list no longer uses a horizontal scrollbar.

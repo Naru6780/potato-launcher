@@ -165,14 +165,16 @@ internal readonly record struct LauncherLayoutMetrics(int Margin, int Top, int G
 {
     public static LauncherLayoutMetrics Calculate(int clientWidth, int clientHeight, int requestedAccountWidth)
     {
-        var margin = Math.Max(24, clientWidth / 24);
+        var safeClientWidth = Math.Max(860, clientWidth);
+        var safeClientHeight = Math.Max(620, clientHeight);
+        var margin = Math.Max(24, safeClientWidth / 24);
         var top = 118;
         var bottomReserved = 76;
         var gap = 20;
-        var contentWidth = clientWidth - margin * 2;
-        var contentHeight = Math.Max(390, clientHeight - top - bottomReserved);
+        var contentWidth = safeClientWidth - margin * 2;
+        var contentHeight = Math.Max(390, safeClientHeight - top - bottomReserved);
         var maxAccountWidth = Math.Max(300, contentWidth - gap - 420);
-        var defaultAccountWidth = Math.Clamp((int)(contentWidth * 0.30), 330, Math.Min(760, maxAccountWidth));
+        var defaultAccountWidth = Math.Clamp((int)(contentWidth * 0.30), 330, Math.Max(330, Math.Min(760, maxAccountWidth)));
         var accountWidth = Math.Clamp(requestedAccountWidth > 0 ? requestedAccountWidth : defaultAccountWidth, 300, maxAccountWidth);
         var bandWidth = Math.Max(420, contentWidth - accountWidth - gap);
         return new LauncherLayoutMetrics(margin, top, gap, contentHeight, accountWidth, bandWidth);
@@ -1147,7 +1149,7 @@ internal sealed class MainForm : Form
 
     private void ApplyResponsiveLayout()
     {
-        if (background is null) return;
+        if (background is null || WindowState == FormWindowState.Minimized || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
 
         ApplyLauncherLayout();
 
@@ -4836,7 +4838,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.49 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.50 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
