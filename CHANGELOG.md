@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.54 - 2026-05-26
+
+- Updated the Windows application icon to use the new yellow-circle mascot artwork.
+- Rebuilt the app icon as a multi-size `.ico` for the executable, taskbar, title bar, and Explorer.
+
 ## 1.0.53 - 2026-05-26
 
 - Fixed the bottom status pill being partially hidden when the window is resized to the minimum allowed size.
