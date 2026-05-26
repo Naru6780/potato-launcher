@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.57 - 2026-05-26
+
+- Updated the official Windows application icon to the provided high-resolution 256x256 `icon-hires.ico` artwork.
+
 ## 1.0.56 - 2026-05-26
 
 - Rebuilt the Windows application icon from the provided `YellowCircle2.ico` file so the full artwork is preserved without cropping.
