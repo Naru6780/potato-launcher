@@ -160,4 +160,19 @@ public class LayoutTests
         Assert.True(metrics.TileHeight > metrics.TileWidth);
         Assert.True(metrics.ColumnCount >= 1);
     }
+
+    [Theory]
+    [InlineData(834, 582)]
+    [InlineData(860, 590)]
+    [InlineData(990, 620)]
+    public void StatusPillLayoutMetrics_KeepsStatusVisibleAtMinimumClientSizes(int clientWidth, int clientHeight)
+    {
+        var launcher = LauncherLayoutMetrics.Calculate(clientWidth, clientHeight, requestedAccountWidth: 0);
+        var status = StatusPillLayoutMetrics.Calculate(clientWidth, clientHeight, launcher);
+
+        Assert.True(status.Bounds.Bottom <= clientHeight - 8);
+        Assert.True(status.Bounds.Left >= 8);
+        Assert.True(status.Bounds.Right <= clientWidth - 8);
+        Assert.InRange(status.Bounds.Width, 300, 370);
+    }
 }

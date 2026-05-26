@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.53 - 2026-05-26
+
+- Fixed the bottom status pill being partially hidden when the window is resized to the minimum allowed size.
+- Added status pill layout metrics that clamp the status message inside the actual visible client area.
+- Added regression coverage for minimum client sizes where window chrome leaves less usable height than the nominal app minimum.
+
 ## 1.0.52 - 2026-05-26
 
 - Reworked the main responsive layout metrics so the launcher content is centered, capped, and balanced across minimum, normal, and maximized window sizes.

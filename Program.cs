@@ -321,6 +321,27 @@ internal readonly record struct LoadingOverlayMetrics(
     }
 }
 
+internal readonly record struct StatusPillLayoutMetrics(Rectangle Bounds, Rectangle LabelBounds)
+{
+    public static StatusPillLayoutMetrics Calculate(int clientWidth, int clientHeight, LauncherLayoutMetrics launcher)
+    {
+        const int height = 30;
+        const int sideMargin = 8;
+        const int bottomMargin = 10;
+        var safeWidth = Math.Max(320, clientWidth);
+        var safeHeight = Math.Max(120, clientHeight);
+        var width = Math.Clamp(safeWidth - sideMargin * 2, 300, 370);
+        var preferredX = (safeWidth - width) / 2;
+        var x = Math.Clamp(preferredX, sideMargin, Math.Max(sideMargin, safeWidth - width - sideMargin));
+        var preferredY = launcher.Top + launcher.ContentHeight + 20;
+        var maxVisibleY = Math.Max(0, safeHeight - height - bottomMargin);
+        var y = Math.Min(preferredY, maxVisibleY);
+        y = Math.Max(0, y);
+        var bounds = new Rectangle(x, y, width, height);
+        return new StatusPillLayoutMetrics(bounds, new Rectangle(10, 4, Math.Max(40, width - 20), 20));
+    }
+}
+
 internal static class AccountIconRefreshPolicy
 {
     public static readonly TimeSpan FreshCacheLifetime = TimeSpan.FromHours(12);
@@ -1223,7 +1244,9 @@ internal sealed class MainForm : Form
             loadingCancel.Bounds = loadingLayout.CancelBounds;
         }
 
-        statusPill.Bounds = new Rectangle(Math.Max(layout.Margin, (ClientSize.Width - 370) / 2), Math.Max(layout.Top + layout.ContentHeight + 24, ClientSize.Height - 56), 370, 30);
+        var statusLayout = StatusPillLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, layout);
+        statusPill.Bounds = statusLayout.Bounds;
+        status.Bounds = statusLayout.LabelBounds;
 
         bandCard.ResumeLayout(false);
         accountCard.ResumeLayout(false);
@@ -4974,7 +4997,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.52 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.53 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
