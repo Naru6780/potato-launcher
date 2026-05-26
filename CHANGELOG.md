@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.56 - 2026-05-26
+
+- Rebuilt the Windows application icon from the provided `YellowCircle2.ico` file so the full artwork is preserved without cropping.
+- Kept the 256x256 icon layer and supporting Windows taskbar/title-bar sizes so Windows can select the largest allowed resource for the current DPI.
+
 ## 1.0.55 - 2026-05-26
 
 - Enlarged the Windows application icon crop so the mascot artwork fills the taskbar and title-bar icon area more prominently.
