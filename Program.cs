@@ -163,21 +163,79 @@ internal sealed class TextUpdateGate(TimeSpan duplicateInterval)
 
 internal readonly record struct LauncherLayoutMetrics(int Margin, int Top, int Gap, int ContentHeight, int AccountWidth, int BandWidth)
 {
+    private const int MaximumContentWidth = 1600;
+
     public static LauncherLayoutMetrics Calculate(int clientWidth, int clientHeight, int requestedAccountWidth)
     {
         var safeClientWidth = Math.Max(860, clientWidth);
         var safeClientHeight = Math.Max(620, clientHeight);
-        var margin = Math.Max(24, safeClientWidth / 24);
-        var top = 118;
-        var bottomReserved = 76;
-        var gap = 20;
-        var contentWidth = safeClientWidth - margin * 2;
-        var contentHeight = Math.Max(390, safeClientHeight - top - bottomReserved);
-        var maxAccountWidth = Math.Max(300, contentWidth - gap - 420);
-        var defaultAccountWidth = Math.Clamp((int)(contentWidth * 0.30), 330, Math.Max(330, Math.Min(760, maxAccountWidth)));
-        var accountWidth = Math.Clamp(requestedAccountWidth > 0 ? requestedAccountWidth : defaultAccountWidth, 300, maxAccountWidth);
+        var outerMargin = Math.Clamp(safeClientWidth / 24, 24, 56);
+        var contentWidth = Math.Min(MaximumContentWidth, safeClientWidth - outerMargin * 2);
+        var margin = Math.Max(24, (safeClientWidth - contentWidth) / 2);
+        var top = Math.Clamp(96 + safeClientHeight / 120, 104, 118);
+        var bottomReserved = 64;
+        var gap = contentWidth >= 1100 ? 22 : 16;
+        var contentHeight = Math.Clamp(safeClientHeight - top - bottomReserved, 390, 920);
+        var minimumBandWidth = contentWidth >= 1100 ? 520 : 420;
+        var minimumAccountWidth = contentWidth >= 1400 ? 420 : contentWidth >= 1100 ? 360 : 300;
+        var maxAccountWidth = Math.Max(minimumAccountWidth, contentWidth - gap - minimumBandWidth);
+        var defaultAccountWidth = Math.Clamp((int)(contentWidth * 0.30), minimumAccountWidth, Math.Max(minimumAccountWidth, Math.Min(680, maxAccountWidth)));
+        var accountWidth = Math.Clamp(requestedAccountWidth > 0 ? requestedAccountWidth : defaultAccountWidth, minimumAccountWidth, maxAccountWidth);
         var bandWidth = Math.Max(420, contentWidth - accountWidth - gap);
         return new LauncherLayoutMetrics(margin, top, gap, contentHeight, accountWidth, bandWidth);
+    }
+}
+
+internal readonly record struct BandActionButtonMetrics(int ButtonHeight, int PanelHeight, int Gap, int[] ButtonWidths, int[] RowWidths)
+{
+    private static readonly int[] BaseWidths = [104, 82, 88, 136, 88];
+
+    public static BandActionButtonMetrics Calculate(int availableWidth)
+    {
+        var safeWidth = Math.Max(300, availableWidth);
+        var scale = Math.Clamp(safeWidth / 760F, 1F, 1.16F);
+        var gap = Math.Clamp((int)MathF.Round(10 * scale), 10, 12);
+        var buttonHeight = Math.Clamp((int)MathF.Round(36 * scale), 36, 42);
+        var widths = BaseWidths.Select(width => Math.Max(82, (int)MathF.Round(width * scale))).ToArray();
+        var rowWidths = new List<int>();
+        var currentRowWidth = 0;
+        foreach (var width in widths)
+        {
+            var nextWidth = currentRowWidth == 0 ? width : currentRowWidth + gap + width;
+            if (currentRowWidth > 0 && nextWidth > safeWidth)
+            {
+                rowWidths.Add(currentRowWidth);
+                currentRowWidth = width;
+            }
+            else
+            {
+                currentRowWidth = nextWidth;
+            }
+        }
+        if (currentRowWidth > 0) rowWidths.Add(currentRowWidth);
+        var panelHeight = rowWidths.Count * buttonHeight + Math.Max(0, rowWidths.Count - 1) * 8;
+        return new BandActionButtonMetrics(buttonHeight, panelHeight, gap, widths, rowWidths.ToArray());
+    }
+}
+
+internal readonly record struct AccountRosterLayoutMetrics(int TileWidth, int TileHeight, int TileGap, int PortraitSize, int ColumnCount)
+{
+    public static AccountRosterLayoutMetrics Calculate(int clientWidth)
+    {
+        var usableWidth = Math.Max(64, clientWidth - SystemInformation.VerticalScrollBarWidth);
+        if (usableWidth < 340)
+        {
+            var compactColumns = Math.Max(1, (usableWidth + 7) / (64 + 7));
+            return new AccountRosterLayoutMetrics(64, 86, 7, 48, compactColumns);
+        }
+
+        var gap = usableWidth >= 560 ? 10 : 8;
+        var columnsWide = usableWidth >= 560 ? 92 : 88;
+        var columns = Math.Clamp(usableWidth / columnsWide, 4, 7);
+        var tileWidth = Math.Clamp((usableWidth - (columns - 1) * gap) / columns, 74, 92);
+        var portraitSize = Math.Clamp(tileWidth - 26, 54, 66);
+        var tileHeight = Math.Clamp(tileWidth + 28, 98, 120);
+        return new AccountRosterLayoutMetrics(tileWidth, tileHeight, gap, portraitSize, columns);
     }
 }
 
@@ -234,18 +292,19 @@ internal readonly record struct LoadingOverlayMetrics(
     public static LoadingOverlayMetrics Calculate(int bandCardWidth, int bandCardHeight)
     {
         const int sidePadding = 18;
-        const int top = 58;
-        const int bottomButtonHeight = 66;
+        const int top = 52;
         const int bottomGap = 12;
 
         var safeWidth = Math.Max(420, bandCardWidth);
         var safeHeight = Math.Max(360, bandCardHeight);
+        var actionButtons = BandActionButtonMetrics.Calculate(safeWidth - sidePadding * 2);
+        var bottomReserved = actionButtons.PanelHeight + 30;
         var overlayWidth = Math.Max(360, safeWidth - sidePadding * 2);
-        var overlayHeight = Math.Max(240, safeHeight - top - bottomButtonHeight - bottomGap);
+        var overlayHeight = Math.Max(210, safeHeight - top - bottomReserved - bottomGap);
         var overlay = new Rectangle(sidePadding, top, overlayWidth, overlayHeight);
 
         var cardMaxWidth = Math.Max(360, overlayWidth - 32);
-        var cardMaxHeight = Math.Max(200, overlayHeight - 32);
+        var cardMaxHeight = Math.Max(160, overlayHeight - 32);
         var cardWidth = Math.Clamp((int)(overlayWidth * 0.34), Math.Min(420, cardMaxWidth), Math.Min(520, cardMaxWidth));
         var cardHeight = Math.Clamp((int)(overlayHeight * 0.52), Math.Min(220, cardMaxHeight), Math.Min(340, cardMaxHeight));
         var card = new Rectangle((overlayWidth - cardWidth) / 2, (overlayHeight - cardHeight) / 2, cardWidth, cardHeight);
@@ -1085,6 +1144,42 @@ internal sealed class MainForm : Form
         tab.Controls.Add(accountResizeHandle);
     }
 
+    private void ApplyTopNavigationLayout(LauncherLayoutMetrics layout)
+    {
+        var scale = Math.Clamp(ClientSize.Width / 1100F, 1F, 1.16F);
+        var buttonHeight = Math.Clamp((int)MathF.Round(34 * scale), 34, 40);
+        var gap = Math.Clamp((int)MathF.Round(12 * scale), 12, 16);
+        var y = Math.Clamp(ClientSize.Height / 32, 20, 28);
+        var x = Math.Max(24, layout.Margin);
+        var buttons = new (Button Button, int BaseWidth)[]
+        {
+            (settingsButton, 102),
+            (killGameButton, 104),
+            (muteMusicButton, 108),
+            (whatsNewButton, 122),
+            (helpButton, 34)
+        };
+
+        foreach (var (button, baseWidth) in buttons)
+        {
+            var width = ReferenceEquals(button, helpButton)
+                ? buttonHeight
+                : Math.Clamp((int)MathF.Round(baseWidth * scale), baseWidth, baseWidth + 26);
+            button.Bounds = new Rectangle(x, y, width, buttonHeight);
+            x += width + gap;
+        }
+    }
+
+    private void ApplyBandActionButtonLayout(BandActionButtonMetrics layout)
+    {
+        var buttons = new[] { newBandButton, saveBandsButton, deleteBandButton, launchBandButton, cancelButton };
+        for (var index = 0; index < buttons.Length; index++)
+        {
+            buttons[index].Size = new Size(layout.ButtonWidths[index], layout.ButtonHeight);
+            buttons[index].Margin = new Padding(0, 0, layout.Gap, 8);
+        }
+    }
+
     private void ApplyLauncherLayout(bool forceRepaint = false)
     {
         if (accountCard is null || bandCard is null || statusPill is null) return;
@@ -1096,6 +1191,7 @@ internal sealed class MainForm : Form
         background.SuspendLayout();
         accountCard.SuspendLayout();
         bandCard.SuspendLayout();
+        ApplyTopNavigationLayout(layout);
         accountCard.SetBounds(layout.Margin, layout.Top, layout.AccountWidth, layout.ContentHeight);
         bandCard.SetBounds(layout.Margin + layout.AccountWidth + layout.Gap, layout.Top, layout.BandWidth, layout.ContentHeight);
         if (accountResizeHandle is not null)
@@ -1107,11 +1203,15 @@ internal sealed class MainForm : Form
         accountList.Bounds = new Rectangle(18, 58, accountCard.Width - 36, accountCard.Height - 82);
         accountRosterGrid.Bounds = accountList.Bounds;
 
+        var actionLayout = BandActionButtonMetrics.Calculate(bandCard.Width - 36);
+        ApplyBandActionButtonLayout(actionLayout);
+        var buttonPanelTop = bandCard.Height - 18 - actionLayout.PanelHeight;
+        bandButtonPanel.Bounds = new Rectangle(18, buttonPanelTop, bandCard.Width - 36, actionLayout.PanelHeight);
+
         var memberLayout = BandMemberListMetrics.Calculate(bandCard.Width);
-        var listHeight = Math.Max(220, bandCard.Height - 144);
+        var listHeight = Math.Max(190, buttonPanelTop - 70);
         bandList.Bounds = new Rectangle(BandMemberListMetrics.LeftPadding, 58, memberLayout.BandListWidth, listHeight);
-        memberList.Bounds = new Rectangle(memberLayout.MemberLeft, 58, memberLayout.MemberWidth, Math.Max(240, bandCard.Height - 144));
-        bandButtonPanel.Bounds = new Rectangle(18, bandCard.Height - 66, bandCard.Width - 36, 54);
+        memberList.Bounds = new Rectangle(memberLayout.MemberLeft, 58, memberLayout.MemberWidth, listHeight);
         if (loadingOverlay is not null)
         {
             var loadingLayout = LoadingOverlayMetrics.Calculate(bandCard.Width, bandCard.Height);
@@ -4874,7 +4974,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.51 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.52 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -5880,10 +5980,6 @@ internal sealed class BandMemberChecklist : ScrollableControl
 
 internal sealed class AccountRosterGrid : ScrollableControl
 {
-    private const int TileWidth = 64;
-    private const int TileHeight = 86;
-    private const int TileGap = 7;
-    private const int PortraitSize = 48;
     private readonly List<AccountRosterItem> items = [];
     private readonly Dictionary<string, Image> imageCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ToolTip tooltip = new();
@@ -5979,7 +6075,8 @@ internal sealed class AccountRosterGrid : ScrollableControl
         }
         if (dragging && dragIndex >= 0 && dragIndex < items.Count)
         {
-            DrawTile(e.Graphics, dragIndex, new Rectangle(dragPoint.X - TileWidth / 2, dragPoint.Y - TileHeight / 2, TileWidth, TileHeight), ghost: true);
+            var layout = CurrentLayout();
+            DrawTile(e.Graphics, dragIndex, new Rectangle(dragPoint.X - layout.TileWidth / 2, dragPoint.Y - layout.TileHeight / 2, layout.TileWidth, layout.TileHeight), ghost: true);
         }
     }
 
@@ -6067,7 +6164,8 @@ internal sealed class AccountRosterGrid : ScrollableControl
         graphics.FillPath(tileBrush, path);
         graphics.DrawPath(borderPen, path);
 
-        var portraitBounds = new Rectangle(bounds.X + (bounds.Width - PortraitSize) / 2, bounds.Y + 6, PortraitSize, PortraitSize);
+        var layout = CurrentLayout();
+        var portraitBounds = new Rectangle(bounds.X + (bounds.Width - layout.PortraitSize) / 2, bounds.Y + 6, layout.PortraitSize, layout.PortraitSize);
         if (!string.IsNullOrWhiteSpace(item.FacePath) && File.Exists(item.FacePath))
         {
             var image = GetImage(item.FacePath);
@@ -6084,12 +6182,13 @@ internal sealed class AccountRosterGrid : ScrollableControl
             using var missingPen = new Pen(palette.Danger, 1);
             graphics.FillRectangle(missingBrush, portraitBounds);
             graphics.DrawRectangle(missingPen, portraitBounds);
-            using var refreshFont = new Font(Font.FontFamily, 6.2F, FontStyle.Bold);
+            using var refreshFont = new Font(Font.FontFamily, Math.Clamp(layout.TileWidth / 11F, 6.2F, 7.6F), FontStyle.Bold);
             DrawCenteredText(graphics, "No Data Found", portraitBounds, refreshFont, Color.White);
         }
 
-        var nameBounds = new Rectangle(bounds.X + 3, bounds.Y + 58, bounds.Width - 6, bounds.Height - 60);
-        using var nameFont = new Font(Font.FontFamily, 7.2F, FontStyle.Bold);
+        var nameTop = portraitBounds.Bottom + 3;
+        var nameBounds = new Rectangle(bounds.X + 3, nameTop, bounds.Width - 6, bounds.Bottom - nameTop - 3);
+        using var nameFont = new Font(Font.FontFamily, Math.Clamp(layout.TileWidth / 9.4F, 7.2F, 9F), FontStyle.Bold);
         DrawCenteredText(graphics, item.DisplayName, nameBounds, nameFont, selected ? Color.White : palette.Text);
     }
 
@@ -6140,7 +6239,7 @@ internal sealed class AccountRosterGrid : ScrollableControl
         if (hit < 0) return items.Count;
         var bounds = TileBounds(hit);
         bounds.Offset(AutoScrollPosition);
-        if (ColumnCount() > 1)
+        if (CurrentLayout().ColumnCount > 1)
         {
             return point.X > bounds.Left + bounds.Width / 2 ? hit + 1 : hit;
         }
@@ -6166,9 +6265,10 @@ internal sealed class AccountRosterGrid : ScrollableControl
     {
         dropIndex = Math.Clamp(dropIndex, 0, items.Count);
         var bounds = TileBounds(dropIndex);
-        var columns = ColumnCount();
+        var layout = CurrentLayout();
+        var columns = layout.ColumnCount;
         var column = dropIndex % columns;
-        var markerX = column == 0 ? bounds.Left - 5 : bounds.Left - TileGap / 2 - 2;
+        var markerX = column == 0 ? bounds.Left - 5 : bounds.Left - layout.TileGap / 2 - 2;
         return new Rectangle(markerX, bounds.Top + 8, 5, bounds.Height - 16);
     }
 
@@ -6180,25 +6280,23 @@ internal sealed class AccountRosterGrid : ScrollableControl
 
     private Rectangle TileBounds(int index)
     {
-        var columns = ColumnCount();
+        var layout = CurrentLayout();
+        var columns = layout.ColumnCount;
         var row = index / columns;
         var column = index % columns;
-        var contentWidth = columns * TileWidth + (columns - 1) * TileGap;
+        var contentWidth = columns * layout.TileWidth + (columns - 1) * layout.TileGap;
         var startX = Math.Max(0, (ClientSize.Width - SystemInformation.VerticalScrollBarWidth - contentWidth) / 2);
-        return new Rectangle(startX + column * (TileWidth + TileGap), TileGap + row * (TileHeight + TileGap), TileWidth, TileHeight);
+        return new Rectangle(startX + column * (layout.TileWidth + layout.TileGap), layout.TileGap + row * (layout.TileHeight + layout.TileGap), layout.TileWidth, layout.TileHeight);
     }
 
-    private int ColumnCount()
-    {
-        var usableWidth = Math.Max(TileWidth, ClientSize.Width - SystemInformation.VerticalScrollBarWidth);
-        return Math.Max(1, (usableWidth + TileGap) / (TileWidth + TileGap));
-    }
+    private AccountRosterLayoutMetrics CurrentLayout() => AccountRosterLayoutMetrics.Calculate(ClientSize.Width);
 
     private void UpdateScrollSize()
     {
-        var columns = ColumnCount();
+        var layout = CurrentLayout();
+        var columns = layout.ColumnCount;
         var rows = items.Count == 0 ? 0 : (int)Math.Ceiling(items.Count / (double)columns);
-        AutoScrollMinSize = new Size(0, rows * (TileHeight + TileGap) + TileGap);
+        AutoScrollMinSize = new Size(0, rows * (layout.TileHeight + layout.TileGap) + layout.TileGap);
     }
 
     private static GraphicsPath Rounded(Rectangle bounds, int radius)

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.52 - 2026-05-26
+
+- Reworked the main responsive layout metrics so the launcher content is centered, capped, and balanced across minimum, normal, and maximized window sizes.
+- Added adaptive top navigation sizing so toolbar buttons scale up modestly on larger windows instead of staying tiny.
+- Added responsive Band Manager action button metrics so bottom controls keep readable sizes and wrap without being clipped.
+- Added responsive account roster tile metrics so portrait cards become more readable as the account panel grows.
+- Capped very tall/wide panel layouts to avoid huge empty boxes with tiny controls inside.
+- Added regression coverage for wide-window layout caps, minimum-window usability, action button wrapping, and account roster scaling.
+
 ## 1.0.51 - 2026-05-26
 
 - Reworked the loading/waiting overlay into a centered Band Manager modal that no longer covers or distorts the bottom controls.

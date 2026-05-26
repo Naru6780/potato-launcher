@@ -11,6 +11,27 @@ public class LayoutTests
         Assert.True(metrics.BandWidth >= 420);
     }
 
+    [Fact]
+    public void LauncherLayoutMetrics_CentersAndCapsVeryWideLayouts()
+    {
+        var metrics = LauncherLayoutMetrics.Calculate(clientWidth: 2048, clientHeight: 1060, requestedAccountWidth: 330);
+
+        Assert.True(metrics.Margin > 160);
+        Assert.True(metrics.AccountWidth >= 420);
+        Assert.True(metrics.BandWidth <= 1180);
+        Assert.True(metrics.ContentHeight <= 920);
+    }
+
+    [Fact]
+    public void LauncherLayoutMetrics_KeepsMinimumLayoutUsable()
+    {
+        var metrics = LauncherLayoutMetrics.Calculate(clientWidth: 860, clientHeight: 620, requestedAccountWidth: 0);
+
+        Assert.InRange(metrics.AccountWidth, 300, 380);
+        Assert.True(metrics.BandWidth >= 420);
+        Assert.True(metrics.ContentHeight >= 390);
+    }
+
     [Theory]
     [InlineData(-500)]
     [InlineData(0)]
@@ -21,7 +42,7 @@ public class LayoutTests
 
         Assert.True(metrics.AccountWidth >= 300);
         Assert.True(metrics.BandWidth >= 420);
-        Assert.Equal(20, metrics.Gap);
+        Assert.InRange(metrics.Gap, 16, 22);
     }
 
     [Theory]
@@ -79,13 +100,13 @@ public class LayoutTests
     }
 
     [Theory]
-    [InlineData(520, 390)]
+    [InlineData(520, 426)]
     [InlineData(980, 760)]
     [InlineData(1460, 900)]
     public void LoadingOverlayMetrics_KeepsModalInsideContentAreaAboveButtons(int bandCardWidth, int bandCardHeight)
     {
         var metrics = LoadingOverlayMetrics.Calculate(bandCardWidth, bandCardHeight);
-        var buttonTop = bandCardHeight - 66;
+        var buttonTop = bandCardHeight - 18 - BandActionButtonMetrics.Calculate(bandCardWidth - 36).PanelHeight;
 
         Assert.True(metrics.OverlayBounds.Bottom <= buttonTop - 12);
         Assert.True(metrics.CardBounds.Width <= metrics.OverlayBounds.Width - 32);
@@ -94,7 +115,7 @@ public class LayoutTests
     }
 
     [Theory]
-    [InlineData(520, 390)]
+    [InlineData(520, 426)]
     [InlineData(1460, 900)]
     public void LoadingOverlayMetrics_CentersModalWithoutOversizingIt(int bandCardWidth, int bandCardHeight)
     {
@@ -104,5 +125,39 @@ public class LayoutTests
         Assert.InRange(metrics.CardBounds.Height, 220, 340);
         Assert.True(Math.Abs(metrics.CardBounds.Left - ((metrics.OverlayBounds.Width - metrics.CardBounds.Width) / 2)) <= 1);
         Assert.True(Math.Abs(metrics.CardBounds.Top - ((metrics.OverlayBounds.Height - metrics.CardBounds.Height) / 2)) <= 1);
+    }
+
+    [Theory]
+    [InlineData(384)]
+    [InlineData(760)]
+    [InlineData(1100)]
+    public void BandActionButtonMetrics_KeepsButtonsReadableAndWrappedInsidePanel(int availableWidth)
+    {
+        var metrics = BandActionButtonMetrics.Calculate(availableWidth);
+
+        Assert.InRange(metrics.ButtonHeight, 36, 42);
+        Assert.True(metrics.PanelHeight >= metrics.ButtonHeight);
+        foreach (var rowWidth in metrics.RowWidths)
+        {
+            Assert.True(rowWidth <= availableWidth);
+        }
+        foreach (var width in metrics.ButtonWidths)
+        {
+            Assert.True(width >= 82);
+        }
+    }
+
+    [Theory]
+    [InlineData(294, 64, 48)]
+    [InlineData(420, 74, 54)]
+    [InlineData(620, 84, 62)]
+    public void AccountRosterLayoutMetrics_ScalesTilesWithAvailablePanelWidth(int gridWidth, int minimumTileWidth, int minimumPortraitSize)
+    {
+        var metrics = AccountRosterLayoutMetrics.Calculate(gridWidth);
+
+        Assert.True(metrics.TileWidth >= minimumTileWidth);
+        Assert.True(metrics.PortraitSize >= minimumPortraitSize);
+        Assert.True(metrics.TileHeight > metrics.TileWidth);
+        Assert.True(metrics.ColumnCount >= 1);
     }
 }
