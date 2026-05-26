@@ -77,4 +77,32 @@ public class LayoutTests
         Assert.True(BandChecklistLayoutMetrics.RowHeight >= 26);
         Assert.True(BandChecklistLayoutMetrics.CheckSize <= BandChecklistLayoutMetrics.RowHeight - 6);
     }
+
+    [Theory]
+    [InlineData(520, 390)]
+    [InlineData(980, 760)]
+    [InlineData(1460, 900)]
+    public void LoadingOverlayMetrics_KeepsModalInsideContentAreaAboveButtons(int bandCardWidth, int bandCardHeight)
+    {
+        var metrics = LoadingOverlayMetrics.Calculate(bandCardWidth, bandCardHeight);
+        var buttonTop = bandCardHeight - 66;
+
+        Assert.True(metrics.OverlayBounds.Bottom <= buttonTop - 12);
+        Assert.True(metrics.CardBounds.Width <= metrics.OverlayBounds.Width - 32);
+        Assert.True(metrics.CardBounds.Height <= metrics.OverlayBounds.Height - 32);
+        Assert.True(metrics.CancelBounds.Bottom <= metrics.CardBounds.Height - 24);
+    }
+
+    [Theory]
+    [InlineData(520, 390)]
+    [InlineData(1460, 900)]
+    public void LoadingOverlayMetrics_CentersModalWithoutOversizingIt(int bandCardWidth, int bandCardHeight)
+    {
+        var metrics = LoadingOverlayMetrics.Calculate(bandCardWidth, bandCardHeight);
+
+        Assert.InRange(metrics.CardBounds.Width, 360, 520);
+        Assert.InRange(metrics.CardBounds.Height, 220, 340);
+        Assert.True(Math.Abs(metrics.CardBounds.Left - ((metrics.OverlayBounds.Width - metrics.CardBounds.Width) / 2)) <= 1);
+        Assert.True(Math.Abs(metrics.CardBounds.Top - ((metrics.OverlayBounds.Height - metrics.CardBounds.Height) / 2)) <= 1);
+    }
 }

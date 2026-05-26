@@ -223,6 +223,45 @@ internal readonly record struct BandChecklistLayoutMetrics(int ColumnCount, int 
     }
 }
 
+internal readonly record struct LoadingOverlayMetrics(
+    Rectangle OverlayBounds,
+    Rectangle CardBounds,
+    Rectangle PictureBounds,
+    Rectangle TitleBounds,
+    Rectangle StatusBounds,
+    Rectangle CancelBounds)
+{
+    public static LoadingOverlayMetrics Calculate(int bandCardWidth, int bandCardHeight)
+    {
+        const int sidePadding = 18;
+        const int top = 58;
+        const int bottomButtonHeight = 66;
+        const int bottomGap = 12;
+
+        var safeWidth = Math.Max(420, bandCardWidth);
+        var safeHeight = Math.Max(360, bandCardHeight);
+        var overlayWidth = Math.Max(360, safeWidth - sidePadding * 2);
+        var overlayHeight = Math.Max(240, safeHeight - top - bottomButtonHeight - bottomGap);
+        var overlay = new Rectangle(sidePadding, top, overlayWidth, overlayHeight);
+
+        var cardMaxWidth = Math.Max(360, overlayWidth - 32);
+        var cardMaxHeight = Math.Max(200, overlayHeight - 32);
+        var cardWidth = Math.Clamp((int)(overlayWidth * 0.34), Math.Min(420, cardMaxWidth), Math.Min(520, cardMaxWidth));
+        var cardHeight = Math.Clamp((int)(overlayHeight * 0.52), Math.Min(220, cardMaxHeight), Math.Min(340, cardMaxHeight));
+        var card = new Rectangle((overlayWidth - cardWidth) / 2, (overlayHeight - cardHeight) / 2, cardWidth, cardHeight);
+
+        var pictureSize = Math.Clamp(cardHeight / 4, 58, 92);
+        var picture = new Rectangle((cardWidth - pictureSize) / 2, Math.Max(18, cardHeight / 10), pictureSize, pictureSize);
+        var titleTop = picture.Bottom + Math.Clamp(cardHeight / 14, 12, 24);
+        var title = new Rectangle(28, titleTop, cardWidth - 56, 44);
+        var cancel = new Rectangle(Math.Max(28, (cardWidth - 154) / 2), cardHeight - 64, 154, 40);
+        var statusTop = title.Bottom + 10;
+        var status = new Rectangle(34, statusTop, cardWidth - 68, Math.Max(32, cancel.Top - statusTop - 12));
+
+        return new LoadingOverlayMetrics(overlay, card, picture, title, status, cancel);
+    }
+}
+
 internal static class AccountIconRefreshPolicy
 {
     public static readonly TimeSpan FreshCacheLifetime = TimeSpan.FromHours(12);
@@ -586,7 +625,7 @@ internal sealed class MainForm : Form
     private Button exportAccountsButton = null!;
     private Button importBandsButton = null!;
     private Button exportBandsButton = null!;
-    private CuteBackgroundPanel loadingOverlay = null!;
+    private LoadingOverlayPanel loadingOverlay = null!;
     private CuteBackgroundPanel launchChoiceOverlay = null!;
     private RoundedPanel loadingCard = null!;
     private RoundedPanel launchChoiceCard = null!;
@@ -1075,21 +1114,13 @@ internal sealed class MainForm : Form
         bandButtonPanel.Bounds = new Rectangle(18, bandCard.Height - 66, bandCard.Width - 36, 54);
         if (loadingOverlay is not null)
         {
-            loadingOverlay.Bounds = new Rectangle(12, 48, bandCard.Width - 24, bandCard.Height - 108);
-            loadingCard.Bounds = new Rectangle(
-                Math.Max(16, (loadingOverlay.Width - Math.Min(520, loadingOverlay.Width - 32)) / 2),
-                Math.Max(16, (loadingOverlay.Height - Math.Min(340, loadingOverlay.Height - 32)) / 2),
-                Math.Min(520, loadingOverlay.Width - 32),
-                Math.Min(340, loadingOverlay.Height - 32));
-            var pictureSize = Math.Clamp(loadingCard.Height / 3, 78, 120);
-            var pictureTop = 22;
-            var titleTop = pictureTop + pictureSize + 10;
-            var statusTop = titleTop + 44;
-            var cancelTop = loadingCard.Height - 54;
-            loadingPicture.Bounds = new Rectangle(Math.Max(20, (loadingCard.Width - pictureSize) / 2), pictureTop, pictureSize, pictureSize);
-            loadingTitle.Bounds = new Rectangle(24, titleTop, loadingCard.Width - 48, 42);
-            loadingStatus.Bounds = new Rectangle(34, statusTop, loadingCard.Width - 68, Math.Max(28, cancelTop - statusTop - 8));
-            loadingCancel.Location = new Point(Math.Max(20, (loadingCard.Width - loadingCancel.Width) / 2), cancelTop);
+            var loadingLayout = LoadingOverlayMetrics.Calculate(bandCard.Width, bandCard.Height);
+            loadingOverlay.Bounds = loadingLayout.OverlayBounds;
+            loadingCard.Bounds = loadingLayout.CardBounds;
+            loadingPicture.Bounds = loadingLayout.PictureBounds;
+            loadingTitle.Bounds = loadingLayout.TitleBounds;
+            loadingStatus.Bounds = loadingLayout.StatusBounds;
+            loadingCancel.Bounds = loadingLayout.CancelBounds;
         }
 
         statusPill.Bounds = new Rectangle(Math.Max(layout.Margin, (ClientSize.Width - 370) / 2), Math.Max(layout.Top + layout.ContentHeight + 24, ClientSize.Height - 56), 370, 30);
@@ -1361,12 +1392,13 @@ internal sealed class MainForm : Form
 
     private void BuildLoadingOverlay()
     {
-        loadingOverlay = new CuteBackgroundPanel { Bounds = new Rectangle(12, 48, 520, 336), Visible = false };
-        loadingCard = new RoundedPanel { Bounds = new Rectangle(28, 18, 464, 300), Radius = 24 };
+        var loadingLayout = LoadingOverlayMetrics.Calculate(520, 426);
+        loadingOverlay = new LoadingOverlayPanel { Bounds = loadingLayout.OverlayBounds, Visible = false, TabStop = true };
+        loadingCard = new RoundedPanel { Bounds = loadingLayout.CardBounds, Radius = 24 };
 
         loadingPicture = new PictureBox
         {
-            Bounds = new Rectangle(172, 28, 120, 120),
+            Bounds = loadingLayout.PictureBounds,
             BackColor = Color.Transparent,
             SizeMode = PictureBoxSizeMode.Zoom
         };
@@ -1376,7 +1408,7 @@ internal sealed class MainForm : Form
             TextAlign = ContentAlignment.MiddleCenter,
             BackColor = Color.Transparent,
             Font = new Font("Segoe UI", 18F, FontStyle.Bold),
-            Bounds = new Rectangle(24, 162, 416, 46)
+            Bounds = loadingLayout.TitleBounds
         };
         loadingStatus = new Label
         {
@@ -1384,9 +1416,9 @@ internal sealed class MainForm : Form
             TextAlign = ContentAlignment.MiddleCenter,
             BackColor = Color.Transparent,
             Font = new Font("Segoe UI", 11F, FontStyle.Bold),
-            Bounds = new Rectangle(34, 218, 396, 62)
+            Bounds = loadingLayout.StatusBounds
         };
-        loadingCancel = Button("Cancel", 155, 242, 154, 42, "Danger");
+        loadingCancel = Button("Cancel", loadingLayout.CancelBounds.X, loadingLayout.CancelBounds.Y, loadingLayout.CancelBounds.Width, loadingLayout.CancelBounds.Height, "Danger");
         loadingCancel.Click += (_, _) => queueCancel?.Cancel();
 
         loadingCard.Controls.AddRange([loadingPicture, loadingTitle, loadingStatus, loadingCancel]);
@@ -3180,7 +3212,6 @@ internal sealed class MainForm : Form
         queueCancel?.Dispose();
         var cancellation = new CancellationTokenSource();
         queueCancel = cancellation;
-        cancelButton.Visible = true;
         launchBandButton.Enabled = false;
         ShowLoadingOverlay($"Loading {band.Name}", $"Queueing {bandAccounts.Count} account{(bandAccounts.Count == 1 ? "" : "s")}...");
         var launchedClients = new List<StartedGameClient>();
@@ -3225,7 +3256,6 @@ internal sealed class MainForm : Form
         finally
         {
             HideLoadingOverlay();
-            cancelButton.Visible = false;
             launchBandButton.Enabled = true;
             cancellation.Dispose();
             if (ReferenceEquals(queueCancel, cancellation)) queueCancel = null;
@@ -3776,6 +3806,7 @@ internal sealed class MainForm : Form
         loadingStatus.Text = detail;
         loadingOverlay.Visible = true;
         loadingOverlay.BringToFront();
+        statusPill.Visible = false;
         loadingOverlay.Focus();
         loadingOverlay.Invalidate(false);
         if (settings.StopMusicWhenAllLoaded) ApplyThemeMusic(settings.Theme);
@@ -3794,6 +3825,8 @@ internal sealed class MainForm : Form
     private void HideLoadingOverlay()
     {
         loadingOverlay.Visible = false;
+        statusPill.Visible = true;
+        statusPill.BringToFront();
         if (settings.StopMusicWhenAllLoaded) themeMusic.Stop();
     }
 
@@ -4646,6 +4679,9 @@ internal sealed class MainForm : Form
                 case BandMemberChecklist checklist:
                     checklist.Palette = palette;
                     break;
+                case LoadingOverlayPanel overlay:
+                    overlay.Palette = palette;
+                    break;
                 case ListBox list:
                     list.BackColor = palette.ListBack;
                     list.ForeColor = palette.Text;
@@ -4838,7 +4874,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.50 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.51 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
@@ -5544,6 +5580,39 @@ internal sealed class BufferedFlowLayoutPanel : FlowLayoutPanel
     {
         base.OnScroll(se);
         Invalidate();
+    }
+}
+
+internal sealed class LoadingOverlayPanel : Panel
+{
+    private ThemePalette palette = new(Color.FromArgb(255,226,242), Color.FromArgb(210,236,255), Color.White, Color.White, Color.Black, Color.Gray, Color.HotPink, Color.CornflowerBlue, Color.IndianRed, Color.White);
+
+    public ThemePalette Palette
+    {
+        get => palette;
+        set
+        {
+            palette = value;
+            Invalidate();
+        }
+    }
+
+    public LoadingOverlayPanel()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw, true);
+        DoubleBuffered = true;
+        BackColor = Color.Transparent;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var veil = new SolidBrush(Color.FromArgb(92, palette.Back1));
+        e.Graphics.FillRectangle(veil, ClientRectangle);
+        using var border = new Pen(Color.FromArgb(90, palette.Border), 1F);
+        e.Graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
     }
 }
 

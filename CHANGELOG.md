@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.51 - 2026-05-26
+
+- Reworked the loading/waiting overlay into a centered Band Manager modal that no longer covers or distorts the bottom controls.
+- Removed bubble animation from the loading overlay so frozen or half-rendered bubbles do not appear during client waiting.
+- Hid the bottom status pill while the loading modal is active so progress text is shown in one clear place.
+- Added layout coverage to keep the loading modal inside the content area above the Band Manager buttons.
+
 ## 1.0.50 - 2026-05-25
 
 - Fixed an unhandled exception when minimizing the app by skipping responsive layout while minimized.
