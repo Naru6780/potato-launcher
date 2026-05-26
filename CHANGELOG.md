@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.55 - 2026-05-26
+
+- Enlarged the Windows application icon crop so the mascot artwork fills the taskbar and title-bar icon area more prominently.
+
 ## 1.0.54 - 2026-05-26
 
 - Updated the Windows application icon to use the new yellow-circle mascot artwork.
