@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.60 - 2026-06-27
+
+- Kept the band launch queue modal below the Band Manager header while preserving enough row space for multiple clients.
+- Updated band launch monitoring so each client can change to initialized as soon as its game window reaches `Character@World`, even while later clients are still launching.
+- Added a selected-band context menu action to terminate only the clients matched to that band, while keeping `Kill FFXIV` as the all-clients emergency button.
+
 ## 1.0.59 - 2026-06-27
 
 - Fixed the band launch loading modal so the queued-character list gets enough space to show multiple clients instead of only the first row.

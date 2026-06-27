@@ -109,7 +109,7 @@ internal static class AppText
         Link each account to a Lodestone character profile URL to show character names and portraits. Use the Lodestone search link in the profile prompt if you need to find the character page.
 
         Bands
-        Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence.
+        Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence. Right-click a band to rename it or terminate the running clients for only that band.
 
         Launching
         OTP-enabled accounts launch with autologin disabled so you can finish login manually. The launch cooldown setting adds a delay between band launches.
@@ -124,7 +124,7 @@ internal static class AppText
         What's new? shows recent FFXIV launcher news. Check for updates downloads the latest Potato Launcher release from GitHub.
 
         Safety tools
-        Kill FFXIV closes running FFXIV game processes. Use it only when a game client is stuck or you intentionally want to close all running clients.
+        Kill FFXIV closes every running FFXIV game process. Per-account and per-band kill actions only target clients Potato Launcher can match to those accounts.
         """);
     }
 
@@ -293,7 +293,7 @@ internal readonly record struct LoadingOverlayMetrics(
     public static LoadingOverlayMetrics Calculate(int bandCardWidth, int bandCardHeight, bool showQueue = false)
     {
         const int sidePadding = 18;
-        var top = showQueue ? 28 : 52;
+        const int top = 52;
         const int bottomGap = 12;
 
         var safeWidth = Math.Max(420, bandCardWidth);
@@ -316,10 +316,10 @@ internal readonly record struct LoadingOverlayMetrics(
 
         if (showQueue)
         {
-            var queueTitle = new Rectangle(28, 18, cardWidth - 56, 34);
-            var queueCancel = new Rectangle(Math.Max(28, (cardWidth - 154) / 2), cardHeight - 48, 154, 36);
-            var queueListTop = queueTitle.Bottom + 6;
-            var queueList = new Rectangle(28, queueListTop, cardWidth - 56, Math.Max(0, queueCancel.Top - queueListTop - 8));
+            var queueTitle = new Rectangle(28, 10, cardWidth - 56, 30);
+            var queueCancel = new Rectangle(Math.Max(28, (cardWidth - 154) / 2), cardHeight - 44, 154, 34);
+            var queueListTop = queueTitle.Bottom + 4;
+            var queueList = new Rectangle(28, queueListTop, cardWidth - 56, Math.Max(0, queueCancel.Top - queueListTop - 6));
             return new LoadingOverlayMetrics(overlay, card, Rectangle.Empty, queueTitle, queueList, Rectangle.Empty, queueCancel);
         }
 
@@ -3293,6 +3293,8 @@ internal sealed class MainForm : Form
         if (bandList.SelectedItem is not BandConfig band) return;
         var menu = new ContextMenuStrip();
         menu.Items.Add("Set name", null, (_, _) => SetSelectedBandName(band));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Kill this band's clients", null, (_, _) => KillBandGameInstances(band));
         menu.Show(owner, location);
     }
 
@@ -3353,7 +3355,7 @@ internal sealed class MainForm : Form
             SetStatus("Choose or create a band first.", force: true);
             return;
         }
-        var bandAccounts = band.BatchFiles.Select(file => accounts.FirstOrDefault(account => account.BatchFile.Equals(file, StringComparison.OrdinalIgnoreCase))).Where(account => account is not null).Cast<Account>().ToList();
+        var bandAccounts = AccountsForBand(band);
         if (bandAccounts.Count == 0)
         {
             SetStatus($"{band.Name} has no accounts selected.", force: true);
@@ -3366,7 +3368,7 @@ internal sealed class MainForm : Form
         launchBandButton.Enabled = false;
         ShowLoadingOverlay($"Loading {band.Name}", $"Queueing {bandAccounts.Count} account{(bandAccounts.Count == 1 ? "" : "s")}...");
         BeginLoadingQueue(bandAccounts);
-        var launchedClients = new List<StartedGameClient>();
+        var readinessTasks = new List<Task>();
         try
         {
             for (var index = 0; index < bandAccounts.Count; index++)
@@ -3377,7 +3379,8 @@ internal sealed class MainForm : Form
                 UpdateLoadingQueueItem(account, "Launching");
                 UpdateLoadingOverlay($"{band.Name}: launching {account.Name} ({index + 1}/{bandAccounts.Count}).");
                 var client = await StartAccountAndWaitForClientAsync(account, cancellation.Token);
-                launchedClients.Add(new StartedGameClient(account, client.ProcessId));
+                var startedClient = new StartedGameClient(account, client.ProcessId);
+                readinessTasks.Add(MonitorBandClientReadinessAsync(startedClient, cancellation.Token));
                 UpdateLoadingQueueItem(account, "Loading");
                 SetStatus($"{band.Name}: started {account.Name} ({index + 1}/{bandAccounts.Count}).");
                 if (index < bandAccounts.Count - 1)
@@ -3385,15 +3388,7 @@ internal sealed class MainForm : Form
                     await WaitForLaunchCooldownAsync(band.Name, cancellation.Token);
                 }
             }
-            for (var index = 0; index < launchedClients.Count; index++)
-            {
-                var client = launchedClients[index];
-                loadingTitle.Text = $"Loading {band.Name}";
-                UpdateLoadingQueueItem(client.Account, "Connecting");
-                UpdateLoadingOverlay($"{band.Name}: waiting {client.Account.Name} to connect ({index + 1}/{launchedClients.Count}).");
-                await WaitForGameClientCharacterTitleAsync(client, cancellation.Token, status => UpdateLoadingQueueItem(client.Account, status));
-                RememberAccountConnected(client.Account);
-            }
+            await Task.WhenAll(readinessTasks);
             SetStatus($"{band.Name} queue complete.", force: true);
             UpdateLoadingOverlay($"{band.Name} queue complete.");
         }
@@ -3420,6 +3415,22 @@ internal sealed class MainForm : Form
             cancellation.Dispose();
             if (ReferenceEquals(queueCancel, cancellation)) queueCancel = null;
         }
+    }
+
+    private List<Account> AccountsForBand(BandConfig band)
+    {
+        return band.BatchFiles
+            .Select(file => accounts.FirstOrDefault(account => account.BatchFile.Equals(file, StringComparison.OrdinalIgnoreCase)))
+            .Where(account => account is not null)
+            .Cast<Account>()
+            .ToList();
+    }
+
+    private async Task MonitorBandClientReadinessAsync(StartedGameClient client, CancellationToken token)
+    {
+        UpdateLoadingQueueItem(client.Account, "Connecting");
+        await WaitForGameClientCharacterTitleAsync(client, token, status => UpdateLoadingQueueItem(client.Account, status));
+        RememberAccountConnected(client.Account);
     }
 
     private async Task<bool> LaunchAccountAsync(Account account, CancellationToken token, bool quiet = false)
@@ -4226,6 +4237,58 @@ internal sealed class MainForm : Form
         SetStatus(killed == 0
             ? $"Could not terminate {displayName}'s FFXIV client."
             : $"Terminated {displayName}'s FFXIV client{(killed == 1 ? "" : "s")}{(failures > 0 ? $" ({failures} failed)" : "")}.",
+            force: true);
+    }
+
+    private void KillBandGameInstances(BandConfig band)
+    {
+        SaveCurrentBand();
+        var bandAccounts = AccountsForBand(band);
+        if (bandAccounts.Count == 0)
+        {
+            SetStatus($"{band.Name} has no accounts selected.", force: true);
+            return;
+        }
+
+        var processIds = new HashSet<int>();
+        foreach (var account in bandAccounts)
+        {
+            foreach (var processId in FindGameClientProcessIdsForAccount(account))
+            {
+                processIds.Add(processId);
+            }
+        }
+
+        if (processIds.Count == 0)
+        {
+            SetStatus($"No running FFXIV clients found for {band.Name}.", force: true);
+            return;
+        }
+
+        var killed = 0;
+        var failures = 0;
+        foreach (var processId in processIds)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                process.Kill(entireProcessTree: true);
+                killed++;
+            }
+            catch
+            {
+                failures++;
+            }
+        }
+
+        foreach (var account in bandAccounts)
+        {
+            runningClientProcessIds.Remove(AccountIconKey(account));
+        }
+
+        SetStatus(killed == 0
+            ? $"Could not terminate any FFXIV clients for {band.Name}."
+            : $"Terminated {killed} FFXIV client{(killed == 1 ? "" : "s")} for {band.Name}{(failures > 0 ? $" ({failures} failed)" : "")}.",
             force: true);
     }
 
@@ -5235,7 +5298,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.59 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.60 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
