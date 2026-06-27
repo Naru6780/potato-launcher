@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.61`
+**Version:** `1.0.62`
 
 Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
@@ -43,5 +43,4 @@ Keep `Potato Launcher.exe` and `Potato Launcher Assets` together in the same fol
 ## Project Notes
 
 - Development context lives in `docs/goal.md`, `docs/research.md`, and `docs/release.md`.
-- Codex handoff rules live in `AGENTS.md`.
 - The latest downloadable build is published as `PotatoLauncher.zip` on GitHub Releases.

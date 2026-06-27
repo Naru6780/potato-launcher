@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.62 - 2026-06-27
+
+- Removed the `Woke Lamat` theme, image, music, and palette from the app package.
+- Removed internal development handoff notes and public documentation wording that was not intended for end users.
+
 ## 1.0.61 - 2026-06-27
 
 - Fixed the band launch queue so every band member gets a stable row immediately instead of one account overwriting or hiding the rest of the queue.
