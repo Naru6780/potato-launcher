@@ -742,7 +742,7 @@ internal sealed class MainForm : Form
     private readonly DispatcherTimer mascotTimer = new();
     private readonly List<BitmapSource> mascotFrames = [];
     private readonly List<int> mascotFrameDelays = [];
-    private readonly Dictionary<string, Label> loadingQueueLabels = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<int, Label> loadingQueueLabels = [];
     private readonly Dictionary<string, int> runningClientProcessIds = new(StringComparer.OrdinalIgnoreCase);
     private ThemePalette palette = Palettes["Pink"];
     private CancellationTokenSource? queueCancel;
@@ -3376,12 +3376,11 @@ internal sealed class MainForm : Form
                 var account = bandAccounts[index];
                 SetRandomLoadingGif();
                 loadingTitle.Text = $"Loading {band.Name}";
-                UpdateLoadingQueueItem(account, "Launching");
                 UpdateLoadingOverlay($"{band.Name}: launching {account.Name} ({index + 1}/{bandAccounts.Count}).");
                 var client = await StartAccountAndWaitForClientAsync(account, cancellation.Token);
                 var startedClient = new StartedGameClient(account, client.ProcessId);
-                readinessTasks.Add(MonitorBandClientReadinessAsync(startedClient, cancellation.Token));
-                UpdateLoadingQueueItem(account, "Loading");
+                UpdateLoadingQueueItem(index, account, "Loading");
+                readinessTasks.Add(MonitorBandClientReadinessAsync(index, startedClient, cancellation.Token));
                 SetStatus($"{band.Name}: started {account.Name} ({index + 1}/{bandAccounts.Count}).");
                 if (index < bandAccounts.Count - 1)
                 {
@@ -3394,9 +3393,9 @@ internal sealed class MainForm : Form
         }
         catch (OperationCanceledException)
         {
-            foreach (var account in bandAccounts)
+            for (var index = 0; index < bandAccounts.Count; index++)
             {
-                UpdateLoadingQueueItem(account, "Cancelled");
+                UpdateLoadingQueueItem(index, bandAccounts[index], "Cancelled");
             }
             SetStatus($"{band.Name} queue cancelled.", force: true);
             UpdateLoadingOverlay($"{band.Name} queue cancelled.");
@@ -3426,10 +3425,12 @@ internal sealed class MainForm : Form
             .ToList();
     }
 
-    private async Task MonitorBandClientReadinessAsync(StartedGameClient client, CancellationToken token)
+    private async Task MonitorBandClientReadinessAsync(int queueIndex, StartedGameClient client, CancellationToken token)
     {
-        UpdateLoadingQueueItem(client.Account, "Connecting");
-        await WaitForGameClientCharacterTitleAsync(client, token, status => UpdateLoadingQueueItem(client.Account, status));
+        UpdateLoadingQueueItem(queueIndex, client.Account, "Loading");
+        await WaitForGameClientCharacterTitleAsync(client, token, status =>
+            UpdateLoadingQueueItem(queueIndex, client.Account, status.Equals("Initialized", StringComparison.OrdinalIgnoreCase) ? "Initialized" : "Loading"));
+        UpdateLoadingQueueItem(queueIndex, client.Account, "Initialized");
         RememberAccountConnected(client.Account);
     }
 
@@ -3754,10 +3755,12 @@ internal sealed class MainForm : Form
         var stableCharacterTitleHits = 0;
         string? stableCharacterTitle = null;
         var sawGameConnection = false;
+        var characterNameCandidates = AccountCharacterNameCandidates(startedClient.Account);
         while (DateTime.UtcNow < deadline)
         {
             token.ThrowIfCancellationRequested();
-            var client = GetGameClientByProcessId(startedClient.ProcessId);
+            var matchedClient = FindGameClientByAccountTitle(startedClient.Account, characterNameCandidates);
+            var client = matchedClient ?? GetGameClientByProcessId(startedClient.ProcessId);
             if (client is null)
             {
                 var message = $"Waiting for {startedClient.Account.Name}'s game client...";
@@ -3775,15 +3778,16 @@ internal sealed class MainForm : Form
             }
 
             var title = client.Value.Title.Trim();
-            if (IsCharacterTitle(title))
+            if (IsMatchingCharacterTitle(title, characterNameCandidates))
             {
+                runningClientProcessIds[AccountIconKey(startedClient.Account)] = processId;
                 stableCharacterTitleHits = title.Equals(stableCharacterTitle, StringComparison.Ordinal)
                     ? stableCharacterTitleHits + 1
                     : 1;
                 stableCharacterTitle = title;
                 var message = $"Detected {title} ({stableCharacterTitleHits}/3).";
                 SetStatus(message);
-                accountStatus?.Invoke($"Initializing ({stableCharacterTitleHits}/3)");
+                accountStatus?.Invoke("Loading");
                 UpdateLoadingOverlay(message);
                 if (stableCharacterTitleHits >= 3)
                 {
@@ -3803,7 +3807,7 @@ internal sealed class MainForm : Form
                     ? $"Waiting {startedClient.Account.Name} to connect..."
                     : $"Waiting for {startedClient.Account.Name}'s data center connection...";
                 SetStatus(message);
-                accountStatus?.Invoke(sawGameConnection ? "Connecting" : "Loading");
+                accountStatus?.Invoke("Loading");
                 UpdateLoadingOverlay(message);
             }
 
@@ -3876,11 +3880,48 @@ internal sealed class MainForm : Form
         }
     }
 
+    private GameClientWindow? FindGameClientByAccountTitle(Account account, HashSet<string>? characterNameCandidates = null)
+    {
+        var candidates = characterNameCandidates ?? AccountCharacterNameCandidates(account);
+        if (candidates.Count == 0) return null;
+
+        foreach (var processName in new[] { "ffxiv", "ffxiv_dx11" })
+        {
+            foreach (var process in Process.GetProcessesByName(processName))
+            {
+                try
+                {
+                    process.Refresh();
+                    var title = process.MainWindowTitle ?? "";
+                    if (GameClientTitleMatchesAccount(title, candidates))
+                    {
+                        return new GameClientWindow(process.Id, process.MainWindowHandle, title);
+                    }
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static bool IsCharacterTitle(string title)
     {
         return TryParseCharacterTitle(title, out _, out _) &&
             !title.Equals("FINAL FANTASY XIV", StringComparison.OrdinalIgnoreCase) &&
             title.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
+    }
+
+    private static bool IsMatchingCharacterTitle(string title, HashSet<string> characterNameCandidates)
+    {
+        if (!IsCharacterTitle(title)) return false;
+        return characterNameCandidates.Count == 0 || GameClientTitleMatchesAccount(title, characterNameCandidates);
     }
 
     private static bool TryParseCharacterTitle(string title, out string characterName, out string world)
@@ -4003,14 +4044,15 @@ internal sealed class MainForm : Form
 
     private void BeginLoadingQueue(IReadOnlyList<Account> queuedAccounts)
     {
-        loadingQueueActive = queuedAccounts.Count > 1;
+        loadingQueueActive = queuedAccounts.Count > 0;
         ApplyLoadingOverlayLayout();
         loadingQueueLabels.Clear();
         loadingQueuePanel.SuspendLayout();
         loadingQueuePanel.Controls.Clear();
         loadingQueuePanel.Visible = loadingQueueActive;
-        foreach (var account in queuedAccounts)
+        for (var index = 0; index < queuedAccounts.Count; index++)
         {
+            var account = queuedAccounts[index];
             var label = new Label
             {
                 AutoSize = false,
@@ -4020,29 +4062,44 @@ internal sealed class MainForm : Form
                 Padding = new Padding(8, 0, 8, 0),
                 TextAlign = ContentAlignment.MiddleLeft,
                 BackColor = Color.FromArgb(55, palette.ListBack),
-                ForeColor = palette.Muted,
+                ForeColor = LoadingQueueStateColor(palette, "Queued"),
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold),
                 Text = LoadingQueueText(account, "Queued")
             };
-            loadingQueueLabels[AccountIconKey(account)] = label;
+            loadingQueueLabels[index] = label;
             loadingQueuePanel.Controls.Add(label);
         }
         loadingQueuePanel.ResumeLayout(false);
     }
 
-    private void UpdateLoadingQueueItem(Account account, string state)
+    private void UpdateLoadingQueueItem(int queueIndex, Account account, string state)
     {
-        if (!loadingQueueLabels.TryGetValue(AccountIconKey(account), out var label)) return;
-        label.Text = LoadingQueueText(account, state);
-        label.ForeColor = state.Equals("Initialized", StringComparison.OrdinalIgnoreCase)
-            ? palette.Primary
-            : state.Equals("Cancelled", StringComparison.OrdinalIgnoreCase) || state.Equals("Failed", StringComparison.OrdinalIgnoreCase)
-                ? palette.Danger
-                : palette.Text;
+        if (!loadingQueueLabels.TryGetValue(queueIndex, out var label)) return;
+        var visibleState = NormalizeLoadingQueueState(state);
+        label.Text = LoadingQueueText(account, visibleState);
+        label.ForeColor = LoadingQueueStateColor(palette, visibleState);
         label.Invalidate();
     }
 
     internal static string LoadingQueueText(Account account, string state) => $"{AccountDisplayName(account)} - {state}";
+
+    internal static string NormalizeLoadingQueueState(string state)
+    {
+        if (state.Equals("Queued", StringComparison.OrdinalIgnoreCase)) return "Queued";
+        if (state.Equals("Initialized", StringComparison.OrdinalIgnoreCase)) return "Initialized";
+        if (state.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)) return "Cancelled";
+        if (state.Equals("Failed", StringComparison.OrdinalIgnoreCase)) return "Failed";
+        return "Loading";
+    }
+
+    internal static Color LoadingQueueStateColor(ThemePalette palette, string state)
+    {
+        var normalized = NormalizeLoadingQueueState(state);
+        if (normalized.Equals("Initialized", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(98, 214, 135);
+        if (normalized.Equals("Loading", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(105, 172, 255);
+        if (normalized.Equals("Cancelled", StringComparison.OrdinalIgnoreCase) || normalized.Equals("Failed", StringComparison.OrdinalIgnoreCase)) return palette.Danger;
+        return Color.White;
+    }
 
     private void ResizeLoadingQueueRows()
     {
@@ -5298,7 +5355,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.60 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.61 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 

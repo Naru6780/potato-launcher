@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.61 - 2026-06-27
+
+- Fixed the band launch queue so every band member gets a stable row immediately instead of one account overwriting or hiding the rest of the queue.
+- Simplified visible queue states to `Queued`, `Loading`, and `Initialized`, with white, blue, and green text so launch progress is easier to read.
+- Made readiness detection match the account's `Character@World` game-window title before marking a row initialized, including already-open matching clients.
+
 ## 1.0.60 - 2026-06-27
 
 - Kept the band launch queue modal below the Band Manager header while preserving enough row space for multiple clients.

@@ -1,3 +1,5 @@
+using System.Drawing;
+
 namespace PotatoLauncher.Tests;
 
 public class AppTextTests
@@ -38,5 +40,27 @@ public class AppTextTests
         var account = new Account("musicapotato17 - Hermes Potato", "02-Hermes.bat", 2, "musicapotato17-False-False");
 
         Assert.Equal("Hermes Potato - Initialized", MainForm.LoadingQueueText(account, "Initialized"));
+    }
+
+    [Theory]
+    [InlineData("Queued", "Queued")]
+    [InlineData("Launching", "Loading")]
+    [InlineData("Connecting", "Loading")]
+    [InlineData("Initializing (2/3)", "Loading")]
+    [InlineData("Initialized", "Initialized")]
+    public void NormalizeLoadingQueueState_UsesOnlyUserFacingQueueStates(string input, string expected)
+    {
+        Assert.Equal(expected, MainForm.NormalizeLoadingQueueState(input));
+    }
+
+    [Fact]
+    public void LoadingQueueStateColor_UsesWhiteBlueAndGreenForQueueProgress()
+    {
+        var palette = new ThemePalette(default, default, default, default, default, default, default, default, Color.Red, default);
+
+        Assert.Equal(Color.White.ToArgb(), MainForm.LoadingQueueStateColor(palette, "Queued").ToArgb());
+        Assert.Equal(Color.FromArgb(105, 172, 255).ToArgb(), MainForm.LoadingQueueStateColor(palette, "Loading").ToArgb());
+        Assert.Equal(Color.FromArgb(98, 214, 135).ToArgb(), MainForm.LoadingQueueStateColor(palette, "Initialized").ToArgb());
+        Assert.Equal(Color.Red.ToArgb(), MainForm.LoadingQueueStateColor(palette, "Cancelled").ToArgb());
     }
 }
