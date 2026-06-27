@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.58 - 2026-06-27
+
+- Added a right-click account action to terminate only that account's FFXIV client when it can be matched by the current launch session or initialized character window title.
+- Reworked the band launch loading modal to show every queued character at once with live per-character status updates from queued/loading to initialized.
+- Added layout coverage for the new multi-character loading queue area.
+
 ## 1.0.57 - 2026-05-26
 
 - Updated the official Windows application icon to the provided high-resolution 256x256 `icon-hires.ico` artwork.

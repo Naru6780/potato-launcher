@@ -31,4 +31,12 @@ public class AppTextTests
         Assert.Contains($"{Environment.NewLine}{Environment.NewLine}Accounts", text);
         Assert.DoesNotContain("\nAccounts", text.Replace(Environment.NewLine, ""));
     }
+
+    [Fact]
+    public void LoadingQueueText_UsesFriendlyAccountNameAndStatus()
+    {
+        var account = new Account("musicapotato17 - Hermes Potato", "02-Hermes.bat", 2, "musicapotato17-False-False");
+
+        Assert.Equal("Hermes Potato - Initialized", MainForm.LoadingQueueText(account, "Initialized"));
+    }
 }

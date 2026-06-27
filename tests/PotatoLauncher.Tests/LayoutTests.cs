@@ -109,9 +109,11 @@ public class LayoutTests
         var buttonTop = bandCardHeight - 18 - BandActionButtonMetrics.Calculate(bandCardWidth - 36).PanelHeight;
 
         Assert.True(metrics.OverlayBounds.Bottom <= buttonTop - 12);
-        Assert.True(metrics.CardBounds.Width <= metrics.OverlayBounds.Width - 32);
-        Assert.True(metrics.CardBounds.Height <= metrics.OverlayBounds.Height - 32);
-        Assert.True(metrics.CancelBounds.Bottom <= metrics.CardBounds.Height - 24);
+        Assert.True(metrics.CardBounds.Width <= metrics.OverlayBounds.Width - 24);
+        Assert.True(metrics.CardBounds.Height <= metrics.OverlayBounds.Height - 16);
+        Assert.True(metrics.QueueBounds.Top >= metrics.TitleBounds.Bottom);
+        Assert.True(metrics.QueueBounds.Bottom <= metrics.StatusBounds.Top);
+        Assert.True(metrics.CancelBounds.Bottom <= metrics.CardBounds.Height - 12);
     }
 
     [Theory]
@@ -121,10 +123,22 @@ public class LayoutTests
     {
         var metrics = LoadingOverlayMetrics.Calculate(bandCardWidth, bandCardHeight);
 
-        Assert.InRange(metrics.CardBounds.Width, 360, 520);
-        Assert.InRange(metrics.CardBounds.Height, 220, 340);
+        Assert.InRange(metrics.CardBounds.Width, 352, 620);
+        Assert.InRange(metrics.CardBounds.Height, 228, 460);
         Assert.True(Math.Abs(metrics.CardBounds.Left - ((metrics.OverlayBounds.Width - metrics.CardBounds.Width) / 2)) <= 1);
         Assert.True(Math.Abs(metrics.CardBounds.Top - ((metrics.OverlayBounds.Height - metrics.CardBounds.Height) / 2)) <= 1);
+    }
+
+    [Theory]
+    [InlineData(520, 426)]
+    [InlineData(980, 760)]
+    public void LoadingOverlayMetrics_ReservesQueueAreaForBandMemberStatuses(int bandCardWidth, int bandCardHeight)
+    {
+        var metrics = LoadingOverlayMetrics.Calculate(bandCardWidth, bandCardHeight);
+
+        Assert.True(metrics.QueueBounds.Width > 0);
+        Assert.True(metrics.QueueBounds.Height >= 36);
+        Assert.True(metrics.StatusBounds.Bottom <= metrics.CancelBounds.Top);
     }
 
     [Theory]
