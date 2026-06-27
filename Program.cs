@@ -290,10 +290,10 @@ internal readonly record struct LoadingOverlayMetrics(
     Rectangle StatusBounds,
     Rectangle CancelBounds)
 {
-    public static LoadingOverlayMetrics Calculate(int bandCardWidth, int bandCardHeight)
+    public static LoadingOverlayMetrics Calculate(int bandCardWidth, int bandCardHeight, bool showQueue = false)
     {
         const int sidePadding = 18;
-        const int top = 52;
+        var top = showQueue ? 28 : 52;
         const int bottomGap = 12;
 
         var safeWidth = Math.Max(420, bandCardWidth);
@@ -306,9 +306,22 @@ internal readonly record struct LoadingOverlayMetrics(
 
         var cardMaxWidth = Math.Max(360, overlayWidth - 24);
         var cardMaxHeight = Math.Max(160, overlayHeight - 16);
-        var cardWidth = Math.Clamp((int)(overlayWidth * 0.46), Math.Min(420, cardMaxWidth), Math.Min(620, cardMaxWidth));
-        var cardHeight = Math.Clamp((int)(overlayHeight * 0.72), Math.Min(240, cardMaxHeight), Math.Min(460, cardMaxHeight));
+        var cardWidth = showQueue
+            ? Math.Clamp((int)(overlayWidth * 0.58), Math.Min(420, cardMaxWidth), Math.Min(720, cardMaxWidth))
+            : Math.Clamp((int)(overlayWidth * 0.46), Math.Min(420, cardMaxWidth), Math.Min(620, cardMaxWidth));
+        var cardHeight = showQueue
+            ? Math.Clamp((int)(overlayHeight * 0.94), Math.Min(260, cardMaxHeight), Math.Min(520, cardMaxHeight))
+            : Math.Clamp((int)(overlayHeight * 0.72), Math.Min(240, cardMaxHeight), Math.Min(460, cardMaxHeight));
         var card = new Rectangle((overlayWidth - cardWidth) / 2, (overlayHeight - cardHeight) / 2, cardWidth, cardHeight);
+
+        if (showQueue)
+        {
+            var queueTitle = new Rectangle(28, 18, cardWidth - 56, 34);
+            var queueCancel = new Rectangle(Math.Max(28, (cardWidth - 154) / 2), cardHeight - 48, 154, 36);
+            var queueListTop = queueTitle.Bottom + 6;
+            var queueList = new Rectangle(28, queueListTop, cardWidth - 56, Math.Max(0, queueCancel.Top - queueListTop - 8));
+            return new LoadingOverlayMetrics(overlay, card, Rectangle.Empty, queueTitle, queueList, Rectangle.Empty, queueCancel);
+        }
 
         var pictureSize = Math.Clamp(cardHeight / 6, 42, 72);
         var picture = new Rectangle((cardWidth - pictureSize) / 2, Math.Max(12, cardHeight / 18), pictureSize, pictureSize);
@@ -733,6 +746,7 @@ internal sealed class MainForm : Form
     private readonly Dictionary<string, int> runningClientProcessIds = new(StringComparer.OrdinalIgnoreCase);
     private ThemePalette palette = Palettes["Pink"];
     private CancellationTokenSource? queueCancel;
+    private bool loadingQueueActive;
     private bool loadingBand;
     private bool themeHasVideo;
     private bool themeHasImage;
@@ -1240,15 +1254,7 @@ internal sealed class MainForm : Form
         memberList.Bounds = new Rectangle(memberLayout.MemberLeft, 58, memberLayout.MemberWidth, listHeight);
         if (loadingOverlay is not null)
         {
-            var loadingLayout = LoadingOverlayMetrics.Calculate(bandCard.Width, bandCard.Height);
-            loadingOverlay.Bounds = loadingLayout.OverlayBounds;
-            loadingCard.Bounds = loadingLayout.CardBounds;
-            loadingPicture.Bounds = loadingLayout.PictureBounds;
-            loadingTitle.Bounds = loadingLayout.TitleBounds;
-            loadingQueuePanel.Bounds = loadingLayout.QueueBounds;
-            ResizeLoadingQueueRows();
-            loadingStatus.Bounds = loadingLayout.StatusBounds;
-            loadingCancel.Bounds = loadingLayout.CancelBounds;
+            ApplyLoadingOverlayLayout();
         }
 
         var statusLayout = StatusPillLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, layout);
@@ -3965,6 +3971,7 @@ internal sealed class MainForm : Form
         loadingStatusUpdateGate.Reset();
         loadingStatus.Text = detail;
         ClearLoadingQueue();
+        ApplyLoadingOverlayLayout();
         loadingOverlay.Visible = true;
         loadingOverlay.BringToFront();
         statusPill.Visible = false;
@@ -3985,23 +3992,25 @@ internal sealed class MainForm : Form
 
     private void BeginLoadingQueue(IReadOnlyList<Account> queuedAccounts)
     {
+        loadingQueueActive = queuedAccounts.Count > 1;
+        ApplyLoadingOverlayLayout();
         loadingQueueLabels.Clear();
         loadingQueuePanel.SuspendLayout();
         loadingQueuePanel.Controls.Clear();
-        loadingQueuePanel.Visible = queuedAccounts.Count > 1;
+        loadingQueuePanel.Visible = loadingQueueActive;
         foreach (var account in queuedAccounts)
         {
             var label = new Label
             {
                 AutoSize = false,
-                Height = 24,
+                Height = 18,
                 Width = Math.Max(120, loadingQueuePanel.ClientSize.Width - 24),
-                Margin = new Padding(0, 0, 0, 4),
+                Margin = new Padding(0, 0, 0, 2),
                 Padding = new Padding(8, 0, 8, 0),
                 TextAlign = ContentAlignment.MiddleLeft,
                 BackColor = Color.FromArgb(55, palette.ListBack),
                 ForeColor = palette.Muted,
-                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
                 Text = LoadingQueueText(account, "Queued")
             };
             loadingQueueLabels[AccountIconKey(account)] = label;
@@ -4033,12 +4042,31 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void ApplyLoadingOverlayLayout()
+    {
+        if (loadingOverlay is null || loadingCard is null || bandCard is null) return;
+        var loadingLayout = LoadingOverlayMetrics.Calculate(bandCard.Width, bandCard.Height, loadingQueueActive);
+        loadingOverlay.Bounds = loadingLayout.OverlayBounds;
+        loadingCard.Bounds = loadingLayout.CardBounds;
+        loadingPicture.Bounds = loadingLayout.PictureBounds;
+        loadingPicture.Visible = !loadingQueueActive;
+        loadingTitle.Bounds = loadingLayout.TitleBounds;
+        loadingQueuePanel.Bounds = loadingLayout.QueueBounds;
+        loadingStatus.Bounds = loadingLayout.StatusBounds;
+        loadingStatus.Visible = !loadingQueueActive;
+        loadingCancel.Bounds = loadingLayout.CancelBounds;
+        ResizeLoadingQueueRows();
+    }
+
     private void ClearLoadingQueue()
     {
         if (loadingQueuePanel is null) return;
+        loadingQueueActive = false;
         loadingQueueLabels.Clear();
         loadingQueuePanel.Controls.Clear();
         loadingQueuePanel.Visible = false;
+        if (loadingPicture is not null) loadingPicture.Visible = true;
+        if (loadingStatus is not null) loadingStatus.Visible = true;
     }
 
     private void HideLoadingOverlay()
@@ -5207,7 +5235,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.58 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.59 (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 

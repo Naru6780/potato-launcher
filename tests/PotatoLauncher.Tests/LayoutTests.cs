@@ -141,6 +141,17 @@ public class LayoutTests
         Assert.True(metrics.StatusBounds.Bottom <= metrics.CancelBounds.Top);
     }
 
+    [Fact]
+    public void LoadingOverlayMetrics_QueueModeShowsSeveralBandMembersAtMinimumSize()
+    {
+        var metrics = LoadingOverlayMetrics.Calculate(520, 426, showQueue: true);
+
+        Assert.True(metrics.PictureBounds.IsEmpty);
+        Assert.True(metrics.StatusBounds.IsEmpty);
+        Assert.True(metrics.QueueBounds.Height >= 140);
+        Assert.True(metrics.QueueBounds.Bottom <= metrics.CancelBounds.Top - 8);
+    }
+
     [Theory]
     [InlineData(384)]
     [InlineData(760)]

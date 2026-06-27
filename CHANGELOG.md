@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.59 - 2026-06-27
+
+- Fixed the band launch loading modal so the queued-character list gets enough space to show multiple clients instead of only the first row.
+- Made the band queue modal use a compact list-first layout while keeping the cancel button visible.
+
 ## 1.0.58 - 2026-06-27
 
 - Added a right-click account action to terminate only that account's FFXIV client when it can be matched by the current launch session or initialized character window title.
