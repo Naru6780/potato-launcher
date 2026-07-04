@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.67 - 2026-07-04
+
+- Fixed the in-app updater to self-update from the latest release zip without using GitHub's rate-limited release API.
+- The updater now checks the downloaded executable version before installing, so it still reports when the app is already current.
+
 ## 1.0.66 - 2026-07-04
 
 - Reworked the band loading screen into a single opaque Band Manager loading surface so the old band editor and action buttons no longer show behind it.

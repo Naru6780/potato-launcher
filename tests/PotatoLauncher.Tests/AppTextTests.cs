@@ -43,6 +43,26 @@ public class AppTextTests
     }
 
     [Fact]
+    public void UpdateUrl_UsesDirectLatestZipDownloadInsteadOfApi()
+    {
+        Assert.Equal("https://github.com/Naru6780/potato-launcher/releases/latest/download/PotatoLauncher.zip", MainForm.LatestReleaseDownloadUrl());
+        Assert.DoesNotContain("api.github.com", MainForm.LatestReleaseDownloadUrl());
+    }
+
+    [Theory]
+    [InlineData("1.0.67.0", 1, 0, 67, 0)]
+    [InlineData("1.0.67", 1, 0, 67, -1)]
+    public void ParseExecutableVersion_ReadsDownloadedAppVersion(string versionText, int major, int minor, int build, int revision)
+    {
+        var version = MainForm.ParseExecutableVersion(versionText);
+
+        Assert.Equal(major, version.Major);
+        Assert.Equal(minor, version.Minor);
+        Assert.Equal(build, version.Build);
+        Assert.Equal(revision, version.Revision);
+    }
+
+    [Fact]
     public void HelpWindowText_UsesWindowsLineBreaksBetweenSections()
     {
         var text = AppText.HelpWindowText();

@@ -601,6 +601,7 @@ internal sealed class MainForm : Form
     private const string GitHubOwner = "Naru6780";
     private const string GitHubRepo = "potato-launcher";
     private const string ReleaseZipName = "PotatoLauncher.zip";
+    private const string ReleaseExeName = "Potato Launcher.exe";
     private static readonly HttpClient LodestoneClient = CreateLodestoneClient();
 
     [DllImport("gdi32.dll")]
@@ -4817,52 +4818,31 @@ internal sealed class MainForm : Form
         var previousStatus = status.Text;
         try
         {
-            status.Text = "Checking GitHub for updates...";
+            status.Text = "Downloading latest Potato Launcher...";
             using var http = new HttpClient();
             http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
-            using var releaseResponse = await http.GetAsync($"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases/latest");
-            releaseResponse.EnsureSuccessStatusCode();
-
-            using var releaseDocument = JsonDocument.Parse(await releaseResponse.Content.ReadAsStringAsync());
-            var root = releaseDocument.RootElement;
-            var tagName = GetJsonString(root, "tag_name");
-            if (string.IsNullOrWhiteSpace(tagName)) throw new InvalidOperationException("The latest GitHub release has no tag.");
-            var latestVersion = ParseReleaseVersion(tagName);
-            var currentVersion = CurrentAppVersion();
-            if (latestVersion.CompareTo(currentVersion) <= 0)
-            {
-                status.Text = $"Potato Launcher is up to date ({currentVersion}).";
-                MessageBox.Show($"Potato Launcher is already up to date.\n\nCurrent version: {currentVersion}", "No update needed", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
-            {
-                throw new InvalidOperationException("The latest GitHub release has no downloadable assets.");
-            }
-
-            var asset = assets.EnumerateArray()
-                .FirstOrDefault(item => ReleaseZipName.Equals(GetJsonString(item, "name"), StringComparison.OrdinalIgnoreCase));
-            if (asset.ValueKind == JsonValueKind.Undefined)
-            {
-                throw new InvalidOperationException($"The latest GitHub release does not include {ReleaseZipName}.");
-            }
-
-            var downloadUrl = GetJsonString(asset, "browser_download_url");
-            if (string.IsNullOrWhiteSpace(downloadUrl)) throw new InvalidOperationException("The GitHub release asset has no download URL.");
-
-            status.Text = $"Downloading Potato Launcher {latestVersion}...";
             var tempRoot = Path.Combine(Path.GetTempPath(), $"PotatoLauncherUpdate-{Guid.NewGuid():N}");
             var zipPath = Path.Combine(tempRoot, ReleaseZipName);
             var extractPath = Path.Combine(tempRoot, "extract");
             Directory.CreateDirectory(tempRoot);
-            await using (var downloadStream = await http.GetStreamAsync(downloadUrl))
+            await using (var downloadStream = await http.GetStreamAsync(LatestReleaseDownloadUrl()))
             await using (var fileStream = File.Create(zipPath))
             {
                 await downloadStream.CopyToAsync(fileStream);
             }
 
             System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, extractPath);
+            var latestVersion = ReadPackagedAppVersion(extractPath);
+            var currentVersion = CurrentAppVersion();
+            if (latestVersion.CompareTo(currentVersion) <= 0)
+            {
+                TryDeleteDirectory(tempRoot);
+                status.Text = $"Potato Launcher is up to date ({currentVersion}).";
+                MessageBox.Show($"Potato Launcher is already up to date.\n\nCurrent version: {currentVersion}", "No update needed", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            status.Text = $"Installing Potato Launcher {latestVersion}...";
             StartHiddenUpdater(tempRoot, extractPath);
             Application.Exit();
         }
@@ -4939,12 +4919,32 @@ internal sealed class MainForm : Form
         return $"v{version.Major}.{version.Minor}.{version.Build}";
     }
 
-    private static Version ParseReleaseVersion(string tagName)
+    internal static string LatestReleaseDownloadUrl() => $"https://github.com/{GitHubOwner}/{GitHubRepo}/releases/latest/download/{ReleaseZipName}";
+
+    internal static Version ParseExecutableVersion(string? versionText)
     {
-        var normalized = tagName.Trim().TrimStart('v', 'V');
-        return Version.TryParse(normalized, out var version)
+        return Version.TryParse(versionText, out var version)
             ? version
-            : throw new InvalidOperationException($"The latest GitHub release tag is not a valid version: {tagName}");
+            : throw new InvalidOperationException($"The downloaded Potato Launcher version is not valid: {versionText}");
+    }
+
+    private static Version ReadPackagedAppVersion(string extractPath)
+    {
+        var exePath = Directory.GetFiles(extractPath, ReleaseExeName, SearchOption.AllDirectories).FirstOrDefault()
+            ?? throw new InvalidOperationException($"The downloaded update is missing {ReleaseExeName}.");
+        var versionInfo = FileVersionInfo.GetVersionInfo(exePath);
+        return ParseExecutableVersion(versionInfo.FileVersion ?? versionInfo.ProductVersion);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+        }
     }
 
     private static void StartHiddenUpdater(string tempRoot, string extractPath)
