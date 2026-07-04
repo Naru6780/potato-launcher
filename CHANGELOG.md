@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.72 - 2026-07-04
+
+- Made the news bandroll expand dynamically into the available top-row space on wide and maximized windows.
+- Restyled shared app buttons as rounded gradient pills with role-specific colors.
+
 ## 1.0.71 - 2026-07-04
 
 - Restyled the top `News` button as a rounded gradient pill so it matches the animated news bandroll.

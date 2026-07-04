@@ -1219,9 +1219,9 @@ internal sealed class MainForm : Form
             var mascotReserve = Math.Clamp(ClientSize.Width / 11, 84, 120);
             var right = ClientSize.Width - Math.Max(24, layout.Margin) - mascotReserve;
             var available = right - x;
-            if (available >= 230)
+            if (available >= 260)
             {
-                var width = Math.Clamp(available - gap, 230, 360);
+                var width = Math.Clamp(available - gap, 260, Math.Max(420, ClientSize.Width / 2));
                 var height = Math.Clamp((int)MathF.Round(buttonHeight * 1.55F), 52, 64);
                 newsBandroll.Bounds = new Rectangle(right - width, Math.Max(12, y - 8), width, height);
                 newsBandroll.Visible = newsBandroll.HasSlides;
@@ -5655,9 +5655,14 @@ internal sealed class MainForm : Form
     private Label Label(string text, int x, int y, int width, int height) => new() { Text = text, Bounds = new Rectangle(x, y, width, height), BackColor = Color.Transparent };
     private Button Button(string text, int x, int y, int width, int height, string role)
     {
-        var button = new Button { Text = text, Bounds = new Rectangle(x, y, width, height), Tag = role, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
-        button.FlatAppearance.BorderSize = 0;
-        return button;
+        return new NewsPillButton
+        {
+            Text = text,
+            Bounds = new Rectangle(x, y, width, height),
+            Tag = role,
+            Palette = palette,
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Bold)
+        };
     }
 
     private Button NewsPillButton(int x, int y, int width, int height)
@@ -7027,8 +7032,9 @@ internal sealed class NewsPillButton : Button
         e.Graphics.FillPath(shadowBrush, shadowPath);
 
         using var pillPath = RoundedRectangle(bounds, bounds.Height / 2);
-        var left = hovered ? ControlPaint.Light(Palette.Primary, 0.18F) : Palette.Primary;
-        var right = hovered ? ControlPaint.Light(Palette.Secondary, 0.15F) : Palette.Secondary;
+        var (baseLeft, baseRight) = ButtonGradientColors();
+        var left = hovered ? ControlPaint.Light(baseLeft, 0.18F) : baseLeft;
+        var right = hovered ? ControlPaint.Light(baseRight, 0.15F) : baseRight;
         if (pressed)
         {
             left = ControlPaint.Dark(left, 0.08F);
@@ -7047,7 +7053,42 @@ internal sealed class NewsPillButton : Button
 
         using var textBrush = new SolidBrush(Color.White);
         using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
-        e.Graphics.DrawString(Text, Font, textBrush, bounds, format);
+        using var textFont = FittedFont(e.Graphics, Text, Font, bounds.Size);
+        e.Graphics.DrawString(Text, textFont, textBrush, bounds, format);
+    }
+
+    private (Color Left, Color Right) ButtonGradientColors()
+    {
+        return (Tag?.ToString() ?? "Primary") switch
+        {
+            "Secondary" => (Palette.Secondary, Blend(Palette.Secondary, Palette.Primary, 0.28F)),
+            "Danger" => (Palette.Danger, Blend(Palette.Danger, Palette.Primary, 0.18F)),
+            _ => (Palette.Primary, Palette.Secondary)
+        };
+    }
+
+    private static Font FittedFont(Graphics graphics, string text, Font baseFont, Size bounds)
+    {
+        var fontSize = baseFont.Size;
+        while (fontSize > 7F)
+        {
+            var proposed = new Font(baseFont.FontFamily, fontSize, baseFont.Style);
+            var measured = graphics.MeasureString(text, proposed);
+            if (measured.Width <= bounds.Width - 14 && measured.Height <= bounds.Height - 4) return proposed;
+            proposed.Dispose();
+            fontSize -= 0.5F;
+        }
+        return new Font(baseFont.FontFamily, 7F, baseFont.Style);
+    }
+
+    private static Color Blend(Color left, Color right, float amount)
+    {
+        amount = Math.Clamp(amount, 0F, 1F);
+        return Color.FromArgb(
+            (int)MathF.Round(left.A + (right.A - left.A) * amount),
+            (int)MathF.Round(left.R + (right.R - left.R) * amount),
+            (int)MathF.Round(left.G + (right.G - left.G) * amount),
+            (int)MathF.Round(left.B + (right.B - left.B) * amount));
     }
 
     private void UpdateButtonRegion()

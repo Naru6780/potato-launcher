@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.71`
+**Version:** `1.0.72`
 
 Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
@@ -19,7 +19,7 @@ Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 - Right-click account roster options for setting/opening Lodestone profiles, sorting, and deleting accounts.
 - Drag account ordering that also drives Band Manager display and launch order.
 - Built-in help window for quick feature explanations.
-- Slick gradient `News` pill plus animated top-right image bandroll for featured Lodestone updates.
+- Slick rounded gradient buttons plus animated top-right image bandroll for featured Lodestone updates.
 - Sort accounts alphabetically, by last connected, or by the selected band.
 - Manual Lodestone profile assignment can backfill XIVLauncher character metadata with a backup.
 - Account metadata export/import with append, merge, replace, and overwrite modes.
