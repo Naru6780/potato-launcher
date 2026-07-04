@@ -290,6 +290,10 @@ internal sealed class IntegratedOptimizerService : IDisposable
             if (Settings.OptimizerEnabled)
             {
                 ApplyCpuLanes(clients);
+            }
+
+            if (Settings.WorkingSetTrimEnabled)
+            {
                 TrimWorkingSets(clients);
             }
 

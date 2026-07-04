@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.76 - 2026-07-04
+
+- Removed the confusing main-client checkbox column from the Optimizer metrics grid.
+- Added lower-panel client and role dropdowns for choosing whether each client is `Main` or `Follower`.
+- Added a lower-panel summary of current main clients.
+- Let automatic memory trimming run from the `Trim memory` toggle independently of CPU/priority optimization, so main clients are included when they exceed the trim threshold.
+
 ## 1.0.75 - 2026-07-04
 
 - Added whole-system CPU, GPU, and RAM totals to the Optimizer header while keeping separate loaded-client totals.

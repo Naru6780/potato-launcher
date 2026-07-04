@@ -18,6 +18,9 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly ComboBox mainProcessors = new();
     private readonly ComboBox followerProcessors = new();
     private readonly ComboBox followerPriority = new();
+    private readonly ComboBox roleClientInput = new();
+    private readonly ComboBox roleInput = new();
+    private readonly Label mainClientsLabel = new();
     private readonly NumericUpDown reservedProcessors = new();
     private readonly NumericUpDown trimTrigger = new();
     private readonly Button applyButton = new();
@@ -78,7 +81,7 @@ internal sealed class OptimizerMonitorForm : Form
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 190));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 236));
         Controls.Add(root);
 
         var header = new OptimizerPanel { Dock = DockStyle.Fill, Radius = 20 };
@@ -170,7 +173,6 @@ internal sealed class OptimizerMonitorForm : Form
         {
             if (grid.IsCurrentCellDirty) grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
         };
-        grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Main", HeaderText = "Main", Width = 54, FillWeight = 42 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Client", HeaderText = "Client", ReadOnly = true, FillWeight = 175 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Pid", HeaderText = "PID", ReadOnly = true, FillWeight = 60 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Cpu", HeaderText = "CPU", ReadOnly = true, FillWeight = 70 });
@@ -178,6 +180,7 @@ internal sealed class OptimizerMonitorForm : Form
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Ram", HeaderText = "RAM", ReadOnly = true, FillWeight = 86 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Private", HeaderText = "Private", ReadOnly = true, FillWeight = 86 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Threads", HeaderText = "Threads", ReadOnly = true, FillWeight = 72 });
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Role", HeaderText = "Role", ReadOnly = true, FillWeight = 78 });
         grid.Columns.Add(new DataGridViewComboBoxColumn { Name = "Priority", HeaderText = "Priority", FillWeight = 116, FlatStyle = FlatStyle.Flat });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Affinity", HeaderText = "Affinity", ReadOnly = true, FillWeight = 130 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Trim", HeaderText = "Last trim", ReadOnly = true, FillWeight = 96 });
@@ -190,6 +193,9 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+        controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+        controlGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         controls.Controls.Add(controlGrid);
 
         assignmentMode.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -214,6 +220,21 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.Settings.FollowerPriorityClass = (ProcessPriorityClass)followerPriority.SelectedItem!;
             optimizer.SaveSettings();
         };
+        roleClientInput.DropDownStyle = ComboBoxStyle.DropDownList;
+        roleClientInput.SelectedIndexChanged += (_, _) => SyncRoleInputFromSelectedClient();
+        roleInput.DropDownStyle = ComboBoxStyle.DropDownList;
+        roleInput.Items.AddRange(["Main", "Follower"]);
+        roleInput.SelectedIndexChanged += (_, _) =>
+        {
+            if (refreshing) return;
+            if (roleClientInput.SelectedItem is not RoleClientItem item) return;
+            optimizer.SetMainClient(item.ProcessId, string.Equals(roleInput.SelectedItem?.ToString(), "Main", StringComparison.OrdinalIgnoreCase));
+            RefreshView();
+        };
+        mainClientsLabel.Dock = DockStyle.Fill;
+        mainClientsLabel.AutoEllipsis = true;
+        mainClientsLabel.BackColor = Color.Transparent;
+        mainClientsLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         ConfigureStepper(reservedProcessors, 0, Math.Max(0, Environment.ProcessorCount - 1));
         ConfigureStepper(trimTrigger, 128, 32768);
         reservedProcessors.ValueChanged += (_, _) =>
@@ -235,6 +256,10 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.Controls.Add(Field("Follower priority", followerPriority), 3, 0);
         controlGrid.Controls.Add(Field("Reserved logical processors", reservedProcessors), 0, 1);
         controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 1, 1);
+        controlGrid.Controls.Add(Field("Client", roleClientInput), 2, 1);
+        controlGrid.Controls.Add(Field("Selected client role", roleInput), 3, 1);
+        controlGrid.Controls.Add(mainClientsLabel, 0, 2);
+        controlGrid.SetColumnSpan(mainClientsLabel, 2);
 
         applyButton.Text = "Apply now";
         applyButton.Click += (_, _) => { optimizer.ApplyNow(); RefreshView(); };
@@ -243,7 +268,7 @@ internal sealed class OptimizerMonitorForm : Form
         trimButton.Text = "Trim now";
         trimButton.Click += (_, _) => { optimizer.TrimNow(); RefreshView(); };
         var buttonRow = ButtonRow();
-        controlGrid.Controls.Add(buttonRow, 2, 1);
+        controlGrid.Controls.Add(buttonRow, 2, 2);
         controlGrid.SetColumnSpan(buttonRow, 2);
     }
 
@@ -309,6 +334,7 @@ internal sealed class OptimizerMonitorForm : Form
             SetStepperValueIfIdle(trimTrigger, settings.TrimTriggerMBPerClient);
 
             var snapshots = optimizer.GetSnapshots();
+            UpdateRoleControls(snapshots);
             UpdateGrid(snapshots);
             var system = optimizer.GetSystemMetrics();
             var clientRam = snapshots.Sum(snapshot => snapshot.WorkingSetBytes) / 1024d / 1024d;
@@ -384,6 +410,7 @@ internal sealed class OptimizerMonitorForm : Form
         SetCell(row, "Ram", $"{snapshot.WorkingSetBytes / 1024d / 1024d:0} MB");
         SetCell(row, "Private", $"{snapshot.PrivateBytes / 1024d / 1024d:0} MB");
         SetCell(row, "Threads", snapshot.ThreadCount);
+        SetCell(row, "Role", snapshot.IsMain ? "Main" : "Follower");
         SetCell(row, "Priority", overridePriority?.ToString() ?? "Default");
         SetCell(row, "Affinity", snapshot.AffinityMask.HasValue ? ProcessorAffinity.FormatMask(snapshot.AffinityMask.Value) : "N/A");
         SetCell(row, "Trim", snapshot.LastTrimUtc.HasValue ? snapshot.LastTrimUtc.Value.ToLocalTime().ToString("HH:mm:ss") : "-");
@@ -474,12 +501,6 @@ internal sealed class OptimizerMonitorForm : Form
         if (refreshing || e.RowIndex < 0 || e.RowIndex >= grid.Rows.Count) return;
         if (grid.Rows[e.RowIndex].Tag is not OptimizerClientSnapshot snapshot) return;
         var columnName = grid.Columns[e.ColumnIndex].Name;
-        if (columnName == "Main")
-        {
-            optimizer.SetMainClient(snapshot.ProcessId, grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value is true);
-            return;
-        }
-
         if (columnName == "Priority")
         {
             var text = grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString();
@@ -502,6 +523,52 @@ internal sealed class OptimizerMonitorForm : Form
         if (mainProcessors.SelectedItem is int mainCount) optimizer.Settings.MainLogicalProcessors = mainCount;
         if (followerProcessors.SelectedItem is int followerCount) optimizer.Settings.FollowerLogicalProcessors = followerCount;
         optimizer.SaveSettings();
+    }
+
+    private void UpdateRoleControls(IReadOnlyList<OptimizerClientSnapshot> snapshots)
+    {
+        var selectedProcessId = roleClientInput.SelectedItem is RoleClientItem current ? current.ProcessId : (int?)null;
+        if (!roleClientInput.Focused && !roleClientInput.DroppedDown)
+        {
+            roleClientInput.BeginUpdate();
+            try
+            {
+                roleClientInput.Items.Clear();
+                foreach (var item in snapshots.Select(snapshot => new RoleClientItem(snapshot.ProcessId, snapshot.ClientName, snapshot.IsMain)))
+                {
+                    roleClientInput.Items.Add(item);
+                }
+
+                var selectedItem = roleClientInput.Items
+                    .OfType<RoleClientItem>()
+                    .FirstOrDefault(item => selectedProcessId.HasValue && item.ProcessId == selectedProcessId.Value)
+                    ?? roleClientInput.Items.OfType<RoleClientItem>().FirstOrDefault();
+                roleClientInput.SelectedItem = selectedItem;
+            }
+            finally
+            {
+                roleClientInput.EndUpdate();
+            }
+        }
+
+        SyncRoleInputFromSelectedClient();
+        var mainNames = snapshots.Where(snapshot => snapshot.IsMain).Select(snapshot => snapshot.ClientName).ToList();
+        mainClientsLabel.Text = mainNames.Count == 0
+            ? "Main clients: none"
+            : $"Main clients: {string.Join(", ", mainNames)}";
+    }
+
+    private void SyncRoleInputFromSelectedClient()
+    {
+        if (refreshing && roleInput.Focused) return;
+        if (roleClientInput.SelectedItem is not RoleClientItem item)
+        {
+            roleInput.SelectedItem = null;
+            return;
+        }
+
+        var target = item.IsMain ? "Main" : "Follower";
+        if (!Equals(roleInput.SelectedItem, target)) roleInput.SelectedItem = target;
     }
 
     private void ApplyThemeRecursive(Control control)
@@ -582,6 +649,14 @@ internal sealed class OptimizerMonitorForm : Form
             path.AddArc(rect, 90, 90);
             path.CloseFigure();
             return path;
+        }
+    }
+
+    private sealed record RoleClientItem(int ProcessId, string ClientName, bool IsMain)
+    {
+        public override string ToString()
+        {
+            return ClientName;
         }
     }
 }
