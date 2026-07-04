@@ -1905,7 +1905,7 @@ internal sealed class MainForm : Form
             {
                 var line = rawLine.Trim();
                 if (line.Length == 0 || line.StartsWith("rem ", StringComparison.OrdinalIgnoreCase) || line.Equals("rem", StringComparison.OrdinalIgnoreCase)) continue;
-                var setMatch = System.Text.RegularExpressions.Regex.Match(line, @"^set\s+([^=]+)=(.*)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                var setMatch = Regex.Match(line, @"^set\s+([^=]+)=(.*)$", RegexOptions.IgnoreCase);
                 if (setMatch.Success)
                 {
                     variables[setMatch.Groups[1].Value.Trim()] = setMatch.Groups[2].Value.Trim();
@@ -1913,12 +1913,12 @@ internal sealed class MainForm : Form
                 }
 
                 var expanded = ExpandBatchVariables(line, variables);
-                var accountMatch = System.Text.RegularExpressions.Regex.Match(expanded, @"-{1,2}account(?:=|\s+)(?:""([^""]+)""|(\S+))", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                var accountMatch = Regex.Match(expanded, @"-{1,2}account(?:=|\s+)(?:""([^""]+)""|(\S+))", RegexOptions.IgnoreCase);
                 if (accountMatch.Success)
                 {
                     accountKey = (accountMatch.Groups[1].Success ? accountMatch.Groups[1].Value : accountMatch.Groups[2].Value).Trim();
                 }
-                var roamingMatch = System.Text.RegularExpressions.Regex.Match(expanded, @"-{1,2}roamingPath(?:=|\s+)(?:""([^""]+)""|(\S+))", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                var roamingMatch = Regex.Match(expanded, @"-{1,2}roamingPath(?:=|\s+)(?:""([^""]+)""|(\S+))", RegexOptions.IgnoreCase);
                 if (roamingMatch.Success)
                 {
                     roamingPath = (roamingMatch.Groups[1].Success ? roamingMatch.Groups[1].Value : roamingMatch.Groups[2].Value).Trim();
@@ -1932,7 +1932,7 @@ internal sealed class MainForm : Form
 
     private static string ExpandBatchVariables(string text, Dictionary<string, string> variables)
     {
-        return System.Text.RegularExpressions.Regex.Replace(text, "%([^%]+)%", match =>
+        return Regex.Replace(text, "%([^%]+)%", match =>
             variables.TryGetValue(match.Groups[1].Value, out var value) ? value : match.Value);
     }
 
@@ -2298,15 +2298,6 @@ internal sealed class MainForm : Form
     private AccountIconProfile? GetAccountIconProfile(Account account)
     {
         return settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile) ? profile : null;
-    }
-
-    private AccountIconProfile GetOrCreateAccountIconProfile(Account account)
-    {
-        var key = AccountIconKey(account);
-        if (settings.AccountIcons.TryGetValue(key, out var profile)) return profile;
-        profile = new AccountIconProfile();
-        settings.AccountIcons[key] = profile;
-        return profile;
     }
 
     private static string AccountProfileUrl(AccountIconProfile profile)
@@ -3310,7 +3301,7 @@ internal sealed class MainForm : Form
         return
             band.Name is "Band 1" or "Band 2" &&
             band.BatchFiles.Count == 8 &&
-            band.BatchFiles.All(file => System.Text.RegularExpressions.Regex.IsMatch(file, @"^(0[1-9]|1[0-6])-", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+            band.BatchFiles.All(file => Regex.IsMatch(file, @"^(0[1-9]|1[0-6])-", RegexOptions.IgnoreCase));
     }
 
     private void NormalizeBand(BandConfig band)
@@ -3755,22 +3746,6 @@ internal sealed class MainForm : Form
     {
         if (argument.Length == 0) return "\"\"";
         return argument.Any(char.IsWhiteSpace) ? $"\"{argument.Replace("\"", "\\\"")}\"" : argument;
-    }
-
-    private async Task<LauncherWindow?> WaitForLauncherAsync(HashSet<int> existingProcessIds, CancellationToken token)
-    {
-        var deadline = DateTime.UtcNow.AddMinutes(5);
-        while (DateTime.UtcNow < deadline)
-        {
-            token.ThrowIfCancellationRequested();
-            var windows = GetLauncherWindows();
-            var fresh = windows.FirstOrDefault(window => !existingProcessIds.Contains(window.ProcessId));
-            if (fresh.Handle != IntPtr.Zero) return fresh;
-            var any = windows.FirstOrDefault();
-            if (any.Handle != IntPtr.Zero) return any;
-            await Task.Delay(400, token);
-        }
-        return null;
     }
 
     private async Task WaitForLauncherHandoffAsync(Process? launcherProcess, HashSet<int> existingProcessIds, string accountName, CancellationToken token)
@@ -5493,7 +5468,7 @@ internal sealed class MainForm : Form
     private static HttpClient CreateLodestoneClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher/1.0.62 (+https://github.com/Naru6780/potato-launcher)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher (+https://github.com/Naru6780/potato-launcher)");
         return client;
     }
 
