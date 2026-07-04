@@ -31,8 +31,8 @@ internal sealed class OptimizerMonitorForm : Form
         this.palette = palette;
         Text = "Potato Optimizer";
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(1080, 700);
-        MinimumSize = new Size(900, 560);
+        Size = new Size(1120, 740);
+        MinimumSize = new Size(940, 640);
         Font = new Font("Segoe UI", 10F);
         DoubleBuffered = true;
         BuildUi();
@@ -58,8 +58,12 @@ internal sealed class OptimizerMonitorForm : Form
         grid.DefaultCellStyle.SelectionForeColor = Color.White;
         grid.ColumnHeadersDefaultCellStyle.BackColor = NativeGridColor(palette.Card);
         grid.ColumnHeadersDefaultCellStyle.ForeColor = palette.Text;
+        grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = NativeGridColor(palette.Card);
+        grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = palette.Text;
         grid.RowHeadersDefaultCellStyle.BackColor = NativeGridColor(palette.Card);
         grid.RowHeadersDefaultCellStyle.ForeColor = palette.Text;
+        grid.RowHeadersDefaultCellStyle.SelectionBackColor = NativeGridColor(palette.Card);
+        grid.RowHeadersDefaultCellStyle.SelectionForeColor = palette.Text;
     }
 
     private void BuildUi()
@@ -72,9 +76,9 @@ internal sealed class OptimizerMonitorForm : Form
             Padding = new Padding(18),
             BackColor = Color.Transparent
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 84));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 178));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 190));
         Controls.Add(root);
 
         var header = new OptimizerPanel { Dock = DockStyle.Fill, Radius = 20 };
@@ -96,6 +100,7 @@ internal sealed class OptimizerMonitorForm : Form
         summaryLabel.Dock = DockStyle.Fill;
         summaryLabel.BackColor = Color.Transparent;
         summaryLabel.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
+        summaryLabel.AutoEllipsis = true;
         var titleStack = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent };
         titleStack.Controls.Add(summaryLabel);
         titleStack.Controls.Add(title);
@@ -128,10 +133,16 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.Settings.WorkingSetTrimEnabled = trimEnabled.Checked;
             optimizer.SaveSettings();
         };
-        var toggles = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent };
-        toggles.Controls.Add(trimEnabled);
-        toggles.Controls.Add(cpuPriorityEnabled);
+        var toggles = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.Transparent,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false
+        };
         toggles.Controls.Add(optimizerEnabled);
+        toggles.Controls.Add(cpuPriorityEnabled);
+        toggles.Controls.Add(trimEnabled);
         headerLayout.Controls.Add(toggles, 1, 0);
 
         gpuStatusLabel.Dock = DockStyle.Fill;
@@ -153,6 +164,7 @@ internal sealed class OptimizerMonitorForm : Form
         grid.RowHeadersVisible = false;
         grid.RowTemplate.Height = 32;
         grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        grid.MultiSelect = false;
         grid.CellValueChanged += GridCellValueChanged;
         grid.CurrentCellDirtyStateChanged += (_, _) =>
         {
@@ -289,20 +301,26 @@ internal sealed class OptimizerMonitorForm : Form
             optimizerEnabled.Checked = settings.OptimizerEnabled;
             cpuPriorityEnabled.Checked = settings.CpuPriorityManagementEnabled;
             trimEnabled.Checked = settings.WorkingSetTrimEnabled;
-            assignmentMode.SelectedItem = settings.CpuAssignmentMode;
-            mainProcessors.SelectedItem = settings.MainLogicalProcessors;
-            followerProcessors.SelectedItem = settings.FollowerLogicalProcessors;
-            followerPriority.SelectedItem = settings.FollowerPriorityClass;
-            reservedProcessors.Value = Math.Clamp(settings.SystemReservedLogicalProcessors, (int)reservedProcessors.Minimum, (int)reservedProcessors.Maximum);
-            trimTrigger.Value = Math.Clamp(settings.TrimTriggerMBPerClient, (int)trimTrigger.Minimum, (int)trimTrigger.Maximum);
+            SetSelectedItemIfIdle(assignmentMode, settings.CpuAssignmentMode);
+            SetSelectedItemIfIdle(mainProcessors, settings.MainLogicalProcessors);
+            SetSelectedItemIfIdle(followerProcessors, settings.FollowerLogicalProcessors);
+            SetSelectedItemIfIdle(followerPriority, settings.FollowerPriorityClass);
+            SetStepperValueIfIdle(reservedProcessors, settings.SystemReservedLogicalProcessors);
+            SetStepperValueIfIdle(trimTrigger, settings.TrimTriggerMBPerClient);
 
             var snapshots = optimizer.GetSnapshots();
             UpdateGrid(snapshots);
-            var totalRam = snapshots.Sum(snapshot => snapshot.WorkingSetBytes) / 1024d / 1024d;
-            var totalCpu = snapshots.Sum(snapshot => snapshot.CpuPercent);
+            var system = optimizer.GetSystemMetrics();
+            var clientRam = snapshots.Sum(snapshot => snapshot.WorkingSetBytes) / 1024d / 1024d;
+            var clientCpu = snapshots.Sum(snapshot => snapshot.CpuPercent);
             var gpuValues = snapshots.Where(snapshot => snapshot.GpuPercent.HasValue).Select(snapshot => snapshot.GpuPercent!.Value).ToList();
-            var gpuText = gpuValues.Count == 0 ? "GPU N/A" : $"GPU {gpuValues.Sum():0.0}%";
-            summaryLabel.Text = $"{snapshots.Count} client(s)  |  CPU {totalCpu:0.0}%  |  {gpuText}  |  RAM {totalRam:0} MB";
+            var clientGpuText = gpuValues.Count == 0 ? "GPU N/A" : $"GPU {gpuValues.Sum():0.0}%";
+            var systemGpuText = system.GpuPercent.HasValue ? $"GPU {system.GpuPercent.Value:0.0}%" : "GPU N/A";
+            var systemRamPercent = system.TotalMemoryBytes <= 0 ? 0 : system.UsedMemoryBytes / (double)system.TotalMemoryBytes * 100;
+            summaryLabel.Text =
+                $"Clients: {snapshots.Count} | CPU {clientCpu:0.0}% | {clientGpuText} | RAM {FormatMb(clientRam)}" +
+                Environment.NewLine +
+                $"System: CPU {system.CpuPercent:0.0}% | {systemGpuText} | RAM {FormatMb(system.UsedMemoryBytes)} / {FormatMb(system.TotalMemoryBytes)} ({systemRamPercent:0}%)";
             gpuStatusLabel.Text = optimizer.GpuStatusText;
         }
         finally
@@ -313,35 +331,142 @@ internal sealed class OptimizerMonitorForm : Form
 
     private void UpdateGrid(IReadOnlyList<OptimizerClientSnapshot> snapshots)
     {
-        grid.Rows.Clear();
         var priorityColumn = (DataGridViewComboBoxColumn)grid.Columns["Priority"];
-        priorityColumn.Items.Clear();
+        EnsurePriorityItems(priorityColumn);
+
+        var selectedProcessId = SelectedProcessId();
+        var selectedColumnName = grid.CurrentCell is null ? "" : grid.Columns[grid.CurrentCell.ColumnIndex].Name;
+        var firstDisplayedRow = FirstDisplayedRowIndex();
+        var needsRebuild = grid.Rows.Count != snapshots.Count;
+        if (!needsRebuild)
+        {
+            for (var index = 0; index < snapshots.Count; index++)
+            {
+                if (grid.Rows[index].Tag is not OptimizerClientSnapshot rowSnapshot ||
+                    rowSnapshot.ProcessId != snapshots[index].ProcessId)
+                {
+                    needsRebuild = true;
+                    break;
+                }
+            }
+        }
+
+        if (needsRebuild)
+        {
+            grid.Rows.Clear();
+            foreach (var snapshot in snapshots)
+            {
+                var rowIndex = grid.Rows.Add();
+                UpdateRow(grid.Rows[rowIndex], snapshot);
+            }
+        }
+        else
+        {
+            for (var index = 0; index < snapshots.Count; index++)
+            {
+                UpdateRow(grid.Rows[index], snapshots[index]);
+            }
+        }
+
+        RestoreGridPosition(selectedProcessId, selectedColumnName, firstDisplayedRow);
+    }
+
+    private void UpdateRow(DataGridViewRow row, OptimizerClientSnapshot snapshot)
+    {
+        var defaultPriority = snapshot.IsMain ? ProcessPriorityClass.AboveNormal : optimizer.Settings.FollowerPriorityClass;
+        var overridePriority = optimizer.Settings.GetClientPriorityOverride(snapshot.ClientName);
+        row.Tag = snapshot;
+        SetCell(row, "Main", snapshot.IsMain);
+        SetCell(row, "Client", snapshot.ClientName);
+        SetCell(row, "Pid", snapshot.ProcessId);
+        SetCell(row, "Cpu", $"{snapshot.CpuPercent:0.0}%");
+        SetCell(row, "Gpu", snapshot.GpuPercent.HasValue ? $"{snapshot.GpuPercent.Value:0.0}%" : "N/A");
+        SetCell(row, "Ram", $"{snapshot.WorkingSetBytes / 1024d / 1024d:0} MB");
+        SetCell(row, "Private", $"{snapshot.PrivateBytes / 1024d / 1024d:0} MB");
+        SetCell(row, "Threads", snapshot.ThreadCount);
+        SetCell(row, "Priority", overridePriority?.ToString() ?? "Default");
+        SetCell(row, "Affinity", snapshot.AffinityMask.HasValue ? ProcessorAffinity.FormatMask(snapshot.AffinityMask.Value) : "N/A");
+        SetCell(row, "Trim", snapshot.LastTrimUtc.HasValue ? snapshot.LastTrimUtc.Value.ToLocalTime().ToString("HH:mm:ss") : "-");
+        row.Cells["Priority"].ToolTipText = overridePriority is null ? $"Default ({defaultPriority})" : "Priority override";
+    }
+
+    private static void EnsurePriorityItems(DataGridViewComboBoxColumn priorityColumn)
+    {
+        if (priorityColumn.Items.Count > 0) return;
         priorityColumn.Items.Add("Default");
         foreach (var priority in OptimizerSettings.AllowedClientPriorityOverrides)
         {
             priorityColumn.Items.Add(priority.ToString());
         }
+    }
 
-        foreach (var snapshot in snapshots)
+    private static void SetCell(DataGridViewRow row, string columnName, object value)
+    {
+        var cell = row.Cells[columnName];
+        if (!Equals(cell.Value, value)) cell.Value = value;
+    }
+
+    private int? SelectedProcessId()
+    {
+        if (grid.CurrentRow?.Tag is OptimizerClientSnapshot currentSnapshot) return currentSnapshot.ProcessId;
+        return grid.SelectedRows.Count > 0 && grid.SelectedRows[0].Tag is OptimizerClientSnapshot selectedSnapshot
+            ? selectedSnapshot.ProcessId
+            : null;
+    }
+
+    private int FirstDisplayedRowIndex()
+    {
+        try
         {
-            var defaultPriority = snapshot.IsMain ? ProcessPriorityClass.AboveNormal : optimizer.Settings.FollowerPriorityClass;
-            var overridePriority = optimizer.Settings.GetClientPriorityOverride(snapshot.ClientName);
-            var rowIndex = grid.Rows.Add(
-                snapshot.IsMain,
-                snapshot.ClientName,
-                snapshot.ProcessId,
-                $"{snapshot.CpuPercent:0.0}%",
-                snapshot.GpuPercent.HasValue ? $"{snapshot.GpuPercent.Value:0.0}%" : "N/A",
-                $"{snapshot.WorkingSetBytes / 1024d / 1024d:0} MB",
-                $"{snapshot.PrivateBytes / 1024d / 1024d:0} MB",
-                snapshot.ThreadCount,
-                overridePriority?.ToString() ?? "Default",
-                snapshot.AffinityMask.HasValue ? ProcessorAffinity.FormatMask(snapshot.AffinityMask.Value) : "N/A",
-                snapshot.LastTrimUtc.HasValue ? snapshot.LastTrimUtc.Value.ToLocalTime().ToString("HH:mm:ss") : "-");
-            var row = grid.Rows[rowIndex];
-            row.Tag = snapshot;
-            row.Cells["Priority"].ToolTipText = overridePriority is null ? $"Default ({defaultPriority})" : "Priority override";
+            return grid.Rows.Count == 0 ? -1 : grid.FirstDisplayedScrollingRowIndex;
         }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    private void RestoreGridPosition(int? selectedProcessId, string selectedColumnName, int firstDisplayedRow)
+    {
+        if (firstDisplayedRow >= 0 && firstDisplayedRow < grid.Rows.Count)
+        {
+            try { grid.FirstDisplayedScrollingRowIndex = firstDisplayedRow; } catch { }
+        }
+
+        grid.ClearSelection();
+        if (!selectedProcessId.HasValue) return;
+
+        foreach (DataGridViewRow row in grid.Rows)
+        {
+            if (row.Tag is not OptimizerClientSnapshot snapshot || snapshot.ProcessId != selectedProcessId.Value) continue;
+            var column = grid.Columns.Contains(selectedColumnName) ? grid.Columns[selectedColumnName] : grid.Columns["Client"];
+            row.Selected = true;
+            if (column is not null) grid.CurrentCell = row.Cells[column.Index];
+            return;
+        }
+    }
+
+    private static void SetSelectedItemIfIdle(ComboBox comboBox, object value)
+    {
+        if (comboBox.Focused || comboBox.DroppedDown) return;
+        if (!Equals(comboBox.SelectedItem, value)) comboBox.SelectedItem = value;
+    }
+
+    private static void SetStepperValueIfIdle(NumericUpDown stepper, int value)
+    {
+        if (stepper.Focused) return;
+        var clamped = Math.Clamp(value, (int)stepper.Minimum, (int)stepper.Maximum);
+        if (stepper.Value != clamped) stepper.Value = clamped;
+    }
+
+    private static string FormatMb(double megabytes)
+    {
+        return $"{megabytes:0} MB";
+    }
+
+    private static string FormatMb(long bytes)
+    {
+        return $"{bytes / 1024d / 1024d:0} MB";
     }
 
     private void GridCellValueChanged(object? sender, DataGridViewCellEventArgs e)

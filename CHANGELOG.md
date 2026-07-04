@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.75 - 2026-07-04
+
+- Added whole-system CPU, GPU, and RAM totals to the Optimizer header while keeping separate loaded-client totals.
+- Fixed Optimizer header clipping so the enable, CPU/priority, and trim toggles remain visible.
+- Reworked Optimizer grid refreshes so selecting a client row no longer snaps back to the first client every second.
+- Removed the native blue header selection flash from the Optimizer grid.
+
 ## 1.0.74 - 2026-07-04
 
 - Fixed the Optimizer window crash on light/translucent themes by using opaque colors for native grid backgrounds.

@@ -164,6 +164,12 @@ internal sealed record OptimizerClientSnapshot(
     long? AffinityMask,
     DateTime? LastTrimUtc);
 
+internal sealed record SystemMetricsSnapshot(
+    double CpuPercent,
+    double? GpuPercent,
+    long UsedMemoryBytes,
+    long TotalMemoryBytes);
+
 internal sealed class IntegratedOptimizerService : IDisposable
 {
     private static readonly string[] FfxivProcessNames = ["ffxiv_dx11", "ffxiv"];
@@ -171,6 +177,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly Dictionary<int, ProcessCpuSample> cpuSamples = [];
     private readonly Dictionary<int, DateTime> lastTrimByClientId = [];
     private readonly GpuUsageSampler gpuSampler = new();
+    private readonly SystemUsageSampler systemSampler = new();
     private DateTime lastCpuLaneUtc = DateTime.MinValue;
     private DateTime lastTrimSweepUtc = DateTime.MinValue;
     private bool appliedClientScheduling;
@@ -268,6 +275,11 @@ internal sealed class IntegratedOptimizerService : IDisposable
     public string GpuStatusText => gpuSampler.IsAvailable
         ? "GPU counters active"
         : string.IsNullOrWhiteSpace(gpuSampler.LastError) ? "GPU counters unavailable" : gpuSampler.LastError;
+
+    public SystemMetricsSnapshot GetSystemMetrics()
+    {
+        return systemSampler.GetSnapshot(gpuSampler.GetTotalUsage());
+    }
 
     private void Tick()
     {
@@ -462,6 +474,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     {
         timer.Stop();
         timer.Dispose();
+        systemSampler.Dispose();
         gpuSampler.Dispose();
         if (appliedClientScheduling) RestoreClients();
     }
@@ -517,6 +530,52 @@ internal sealed class IntegratedOptimizerService : IDisposable
     }
 
     private sealed record ProcessCpuSample(DateTime SampledUtc, TimeSpan TotalProcessorTime);
+}
+
+internal sealed class SystemUsageSampler : IDisposable
+{
+    private readonly PerformanceCounter? cpuCounter;
+
+    public SystemUsageSampler()
+    {
+        try
+        {
+            cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total", readOnly: true);
+            _ = cpuCounter.NextValue();
+        }
+        catch
+        {
+            cpuCounter?.Dispose();
+            cpuCounter = null;
+        }
+    }
+
+    public SystemMetricsSnapshot GetSnapshot(double? gpuPercent)
+    {
+        var memory = NativeMethods.GetMemoryStatus();
+        return new SystemMetricsSnapshot(
+            GetCpuPercent(),
+            gpuPercent,
+            Math.Max(0, (long)(memory.TotalPhysical - memory.AvailablePhysical)),
+            Math.Max(0, (long)memory.TotalPhysical));
+    }
+
+    private double GetCpuPercent()
+    {
+        try
+        {
+            return cpuCounter is null ? 0 : Math.Round(Math.Clamp(cpuCounter.NextValue(), 0, 100), 1);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    public void Dispose()
+    {
+        cpuCounter?.Dispose();
+    }
 }
 
 internal sealed record CpuAffinityAssignment(Process Process, ProcessPriorityClass PriorityClass, long AffinityMask);
@@ -869,9 +928,37 @@ internal static class NativeMethods
     [DllImport("psapi.dll", SetLastError = true)]
     private static extern bool EmptyWorkingSet(IntPtr hProcess);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
+
     public static bool TryEmptyWorkingSet(IntPtr processHandle)
     {
         try { return EmptyWorkingSet(processHandle); } catch { return false; }
+    }
+
+    public static MemoryStatus GetMemoryStatus()
+    {
+        var status = new MemoryStatusEx();
+        status.Length = (uint)Marshal.SizeOf<MemoryStatusEx>();
+        return GlobalMemoryStatusEx(ref status)
+            ? new MemoryStatus(status.TotalPhysical, status.AvailablePhysical)
+            : new MemoryStatus(0, 0);
+    }
+
+    public readonly record struct MemoryStatus(ulong TotalPhysical, ulong AvailablePhysical);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MemoryStatusEx
+    {
+        public uint Length;
+        public uint MemoryLoad;
+        public ulong TotalPhysical;
+        public ulong AvailablePhysical;
+        public ulong TotalPageFile;
+        public ulong AvailablePageFile;
+        public ulong TotalVirtual;
+        public ulong AvailableVirtual;
+        public ulong AvailableExtendedVirtual;
     }
 }
 
@@ -890,6 +977,7 @@ internal sealed class GpuUsageSampler : IDisposable
 {
     private readonly Dictionary<string, PerformanceCounter> countersByInstance = [];
     private DateTime lastRefreshUtc = DateTime.MinValue;
+    private double? lastTotalUsage;
 
     public bool IsAvailable { get; private set; }
     public string LastError { get; private set; } = "";
@@ -897,30 +985,40 @@ internal sealed class GpuUsageSampler : IDisposable
     public IReadOnlyDictionary<int, double> GetUsageByProcessId(IEnumerable<int> processIds)
     {
         var wanted = processIds.ToHashSet();
-        if (wanted.Count == 0) return new Dictionary<int, double>();
 
         try
         {
             RefreshCountersIfNeeded();
             var usage = new Dictionary<int, double>();
+            var total = 0d;
             foreach (var (instance, counter) in countersByInstance)
             {
+                var value = Math.Max(0, counter.NextValue());
+                total += value;
                 var processId = TryParseGpuEngineProcessId(instance);
                 if (processId is null || !wanted.Contains(processId.Value)) continue;
-                var value = Math.Max(0, counter.NextValue());
                 usage[processId.Value] = usage.GetValueOrDefault(processId.Value) + value;
             }
 
             IsAvailable = countersByInstance.Count > 0;
             LastError = IsAvailable ? "GPU counters active" : "GPU counters unavailable";
+            lastTotalUsage = IsAvailable ? Math.Round(Math.Min(100, total), 1) : null;
             return usage.ToDictionary(entry => entry.Key, entry => Math.Round(Math.Min(100, entry.Value), 1));
         }
         catch (Exception ex)
         {
             IsAvailable = false;
             LastError = $"GPU counters unavailable: {ex.Message}";
+            lastTotalUsage = null;
             return new Dictionary<int, double>();
         }
+    }
+
+    public double? GetTotalUsage()
+    {
+        if (lastTotalUsage.HasValue) return lastTotalUsage.Value;
+        _ = GetUsageByProcessId([]);
+        return lastTotalUsage;
     }
 
     private void RefreshCountersIfNeeded()

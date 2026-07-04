@@ -66,4 +66,16 @@ public class OptimizerCoreTests
         Assert.Equal(20, color.G);
         Assert.Equal(30, color.B);
     }
+
+    [Fact]
+    public void SystemUsageSampler_ReturnsMemoryTotals()
+    {
+        using var sampler = new SystemUsageSampler();
+
+        var snapshot = sampler.GetSnapshot(gpuPercent: 12.5);
+
+        Assert.True(snapshot.TotalMemoryBytes >= 0);
+        Assert.InRange(snapshot.UsedMemoryBytes, 0, Math.Max(0, snapshot.TotalMemoryBytes));
+        Assert.Equal(12.5, snapshot.GpuPercent);
+    }
 }
