@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.66 - 2026-07-04
+
+- Reworked the band loading screen into a single opaque Band Manager loading surface so the old band editor and action buttons no longer show behind it.
+- Centered the loading icon, title, queue list, countdown, and cancel action into one composed loading layout.
+
 ## 1.0.65 - 2026-07-04
 
 - Removed routine waiting messages from the band loading modal and kept cooldown feedback to a simple seconds countdown.

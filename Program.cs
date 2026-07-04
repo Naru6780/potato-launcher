@@ -308,33 +308,30 @@ internal readonly record struct LoadingOverlayMetrics(
         var safeWidth = Math.Max(420, bandCardWidth);
         var safeHeight = Math.Max(360, bandCardHeight);
         var actionButtons = BandActionButtonMetrics.Calculate(safeWidth - sidePadding * 2);
-        var bottomReserved = actionButtons.PanelHeight + 30;
+        var bottomReserved = showQueue ? 18 : actionButtons.PanelHeight + 30;
         var overlayWidth = Math.Max(360, safeWidth - sidePadding * 2);
         var overlayHeight = Math.Max(210, safeHeight - top - bottomReserved - bottomGap);
         var overlay = new Rectangle(sidePadding, top, overlayWidth, overlayHeight);
 
         var cardMaxWidth = Math.Max(360, overlayWidth - 24);
         var cardMaxHeight = Math.Max(160, overlayHeight - 16);
-        var cardWidth = showQueue
-            ? Math.Clamp((int)(overlayWidth * 0.58), Math.Min(420, cardMaxWidth), Math.Min(720, cardMaxWidth))
-            : Math.Clamp((int)(overlayWidth * 0.46), Math.Min(420, cardMaxWidth), Math.Min(620, cardMaxWidth));
-        var cardHeight = showQueue
-            ? Math.Clamp((int)(overlayHeight * 0.94), Math.Min(260, cardMaxHeight), Math.Min(520, cardMaxHeight))
-            : Math.Clamp((int)(overlayHeight * 0.72), Math.Min(240, cardMaxHeight), Math.Min(460, cardMaxHeight));
-        var card = new Rectangle((overlayWidth - cardWidth) / 2, (overlayHeight - cardHeight) / 2, cardWidth, cardHeight);
 
         if (showQueue)
         {
-            var queuePictureSize = Math.Clamp(cardHeight / 7, 38, 58);
-            var queuePicture = new Rectangle(28, 12, queuePictureSize, queuePictureSize);
-            var queueTitle = new Rectangle(queuePicture.Right + 12, 12, cardWidth - queuePicture.Right - 40, 34);
-            var queueCancel = new Rectangle(Math.Max(28, (cardWidth - 154) / 2), cardHeight - 44, 154, 34);
-            var queueStatus = new Rectangle(34, queueCancel.Top - 28, cardWidth - 68, 24);
-            var queueListTop = Math.Max(queuePicture.Bottom, queueTitle.Bottom) + 8;
-            var queueList = new Rectangle(28, queueListTop, cardWidth - 56, Math.Max(0, queueStatus.Top - queueListTop - 6));
-            return new LoadingOverlayMetrics(overlay, card, queuePicture, queueTitle, queueList, queueStatus, queueCancel);
+            var queueCard = new Rectangle(0, 0, overlayWidth, overlayHeight);
+            var queuePictureSize = Math.Clamp(overlayHeight / 10, 44, 72);
+            var queuePicture = new Rectangle((overlayWidth - queuePictureSize) / 2, 22, queuePictureSize, queuePictureSize);
+            var queueTitle = new Rectangle(34, queuePicture.Bottom + 8, overlayWidth - 68, 34);
+            var queueCancel = new Rectangle(Math.Max(34, (overlayWidth - 154) / 2), overlayHeight - 54, 154, 34);
+            var queueStatus = new Rectangle(44, queueCancel.Top - 30, overlayWidth - 88, 24);
+            var queueListTop = queueTitle.Bottom + 16;
+            var queueList = new Rectangle(44, queueListTop, overlayWidth - 88, Math.Max(0, queueStatus.Top - queueListTop - 10));
+            return new LoadingOverlayMetrics(overlay, queueCard, queuePicture, queueTitle, queueList, queueStatus, queueCancel);
         }
 
+        var cardWidth = Math.Clamp((int)(overlayWidth * 0.46), Math.Min(420, cardMaxWidth), Math.Min(620, cardMaxWidth));
+        var cardHeight = Math.Clamp((int)(overlayHeight * 0.72), Math.Min(240, cardMaxHeight), Math.Min(460, cardMaxHeight));
+        var card = new Rectangle((overlayWidth - cardWidth) / 2, (overlayHeight - cardHeight) / 2, cardWidth, cardHeight);
         var pictureSize = Math.Clamp(cardHeight / 6, 42, 72);
         var picture = new Rectangle((cardWidth - pictureSize) / 2, Math.Max(12, cardHeight / 18), pictureSize, pictureSize);
         var titleTop = picture.Bottom + 8;
@@ -6133,8 +6130,8 @@ internal sealed class LoadingOverlayPanel : Panel
         base.OnPaint(e);
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var veil = new SolidBrush(Color.FromArgb(92, palette.Back1));
-        e.Graphics.FillRectangle(veil, ClientRectangle);
+        using var background = new SolidBrush(palette.Card);
+        e.Graphics.FillRectangle(background, ClientRectangle);
         using var border = new Pen(Color.FromArgb(90, palette.Border), 1F);
         e.Graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
     }

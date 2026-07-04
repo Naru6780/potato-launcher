@@ -145,8 +145,13 @@ public class LayoutTests
     public void LoadingOverlayMetrics_QueueModeShowsSeveralBandMembersAtMinimumSize()
     {
         var metrics = LoadingOverlayMetrics.Calculate(520, 426, showQueue: true);
+        var buttonTop = 426 - 18 - BandActionButtonMetrics.Calculate(520 - 36).PanelHeight;
 
         Assert.True(metrics.OverlayBounds.Top >= 52);
+        Assert.True(metrics.OverlayBounds.Bottom > buttonTop);
+        Assert.Equal(0, metrics.CardBounds.Left);
+        Assert.Equal(0, metrics.CardBounds.Top);
+        Assert.Equal(metrics.OverlayBounds.Size, metrics.CardBounds.Size);
         Assert.False(metrics.PictureBounds.IsEmpty);
         Assert.False(metrics.StatusBounds.IsEmpty);
         Assert.True(metrics.QueueBounds.Height >= 96);
