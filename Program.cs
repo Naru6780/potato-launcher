@@ -88,6 +88,13 @@ internal static class AppText
     public const string LodestoneCharacterSearchUrl = "https://na.finalfantasyxiv.com/lodestone/character/";
     public const string LodestoneHelperLinkText = "Open Lodestone character search";
 
+    public static string WindowTitle(string version)
+    {
+        return string.IsNullOrWhiteSpace(version)
+            ? "Potato Launcher"
+            : $"Potato Launcher v{version}";
+    }
+
     public static string MissingAccountIconStatus(int missingCount)
     {
         return missingCount == 1
@@ -795,7 +802,7 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        Text = "Potato Launcher";
+        Text = AppText.WindowTitle(Application.ProductVersion);
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(990, 700);
         MinimumSize = new Size(860, 620);

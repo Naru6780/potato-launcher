@@ -24,6 +24,15 @@ public class AppTextTests
         Assert.Equal("Open Lodestone character search", AppText.LodestoneHelperLinkText);
     }
 
+    [Theory]
+    [InlineData("1.0.64", "Potato Launcher v1.0.64")]
+    [InlineData("", "Potato Launcher")]
+    [InlineData("   ", "Potato Launcher")]
+    public void WindowTitle_IncludesVersionWhenAvailable(string version, string expected)
+    {
+        Assert.Equal(expected, AppText.WindowTitle(version));
+    }
+
     [Fact]
     public void HelpWindowText_UsesWindowsLineBreaksBetweenSections()
     {

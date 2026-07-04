@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.64 - 2026-07-04
+
+- Added the app version to the window title bar so users can confirm they are running the updated build.
+
 ## 1.0.63 - 2026-07-04
 
 - Fixed the band loading screen so every queued account remains visible as its own row.
