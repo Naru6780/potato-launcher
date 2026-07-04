@@ -316,11 +316,14 @@ internal readonly record struct LoadingOverlayMetrics(
 
         if (showQueue)
         {
-            var queueTitle = new Rectangle(28, 10, cardWidth - 56, 30);
+            var queuePictureSize = Math.Clamp(cardHeight / 7, 38, 58);
+            var queuePicture = new Rectangle(28, 12, queuePictureSize, queuePictureSize);
+            var queueTitle = new Rectangle(queuePicture.Right + 12, 12, cardWidth - queuePicture.Right - 40, 34);
             var queueCancel = new Rectangle(Math.Max(28, (cardWidth - 154) / 2), cardHeight - 44, 154, 34);
-            var queueListTop = queueTitle.Bottom + 4;
-            var queueList = new Rectangle(28, queueListTop, cardWidth - 56, Math.Max(0, queueCancel.Top - queueListTop - 6));
-            return new LoadingOverlayMetrics(overlay, card, Rectangle.Empty, queueTitle, queueList, Rectangle.Empty, queueCancel);
+            var queueStatus = new Rectangle(34, queueCancel.Top - 28, cardWidth - 68, 24);
+            var queueListTop = Math.Max(queuePicture.Bottom, queueTitle.Bottom) + 8;
+            var queueList = new Rectangle(28, queueListTop, cardWidth - 56, Math.Max(0, queueStatus.Top - queueListTop - 6));
+            return new LoadingOverlayMetrics(overlay, card, queuePicture, queueTitle, queueList, queueStatus, queueCancel);
         }
 
         var pictureSize = Math.Clamp(cardHeight / 6, 42, 72);
@@ -725,7 +728,7 @@ internal sealed class MainForm : Form
     private RoundedPanel launchChoiceCard = null!;
     private PictureBox loadingPicture = null!;
     private Label loadingTitle = null!;
-    private FlowLayoutPanel loadingQueuePanel = null!;
+    private Panel loadingQueuePanel = null!;
     private Label loadingStatus = null!;
     private Button loadingCancel = null!;
     private RoundedPanel newsOverlay = null!;
@@ -1545,12 +1548,10 @@ internal sealed class MainForm : Form
             Font = new Font("Segoe UI", 18F, FontStyle.Bold),
             Bounds = loadingLayout.TitleBounds
         };
-        loadingQueuePanel = new FlowLayoutPanel
+        loadingQueuePanel = new Panel
         {
             Bounds = loadingLayout.QueueBounds,
             BackColor = Color.Transparent,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
             AutoScroll = true,
             Visible = false
         };
@@ -3387,8 +3388,15 @@ internal sealed class MainForm : Form
                 }
             }
             await Task.WhenAll(readinessTasks);
-            SetStatus($"{band.Name} queue complete.", force: true);
-            UpdateLoadingOverlay($"{band.Name} queue complete.");
+            var loadedMessage = $"All of {band.Name} is loaded.";
+            SetStatus(loadedMessage, force: true);
+            UpdateLoadingOverlay(loadedMessage, force: true);
+            await Task.Delay(800);
+            ClearLoadingQueue();
+            ApplyLoadingOverlayLayout();
+            loadingTitle.Text = loadedMessage;
+            UpdateLoadingOverlay(loadedMessage, force: true);
+            await Task.Delay(700);
         }
         catch (OperationCanceledException)
         {
@@ -4048,6 +4056,7 @@ internal sealed class MainForm : Form
         loadingQueueLabels.Clear();
         loadingQueuePanel.SuspendLayout();
         loadingQueuePanel.Controls.Clear();
+        loadingQueuePanel.AutoScrollPosition = Point.Empty;
         loadingQueuePanel.Visible = loadingQueueActive;
         for (var index = 0; index < queuedAccounts.Count; index++)
         {
@@ -4055,9 +4064,9 @@ internal sealed class MainForm : Form
             var label = new Label
             {
                 AutoSize = false,
-                Height = 18,
-                Width = Math.Max(120, loadingQueuePanel.ClientSize.Width - 24),
-                Margin = new Padding(0, 0, 0, 2),
+                Height = 22,
+                Width = LoadingQueueRowWidth(),
+                Location = LoadingQueueRowLocation(index),
                 Padding = new Padding(8, 0, 8, 0),
                 TextAlign = ContentAlignment.MiddleLeft,
                 BackColor = Color.FromArgb(55, palette.ListBack),
@@ -4068,6 +4077,7 @@ internal sealed class MainForm : Form
             loadingQueueLabels[index] = label;
             loadingQueuePanel.Controls.Add(label);
         }
+        UpdateLoadingQueueScrollSize();
         loadingQueuePanel.ResumeLayout(false);
     }
 
@@ -4103,10 +4113,29 @@ internal sealed class MainForm : Form
     private void ResizeLoadingQueueRows()
     {
         if (loadingQueuePanel is null) return;
-        foreach (Control control in loadingQueuePanel.Controls)
+        for (var index = 0; index < loadingQueuePanel.Controls.Count; index++)
         {
-            control.Width = Math.Max(120, loadingQueuePanel.ClientSize.Width - 24);
+            var control = loadingQueuePanel.Controls[index];
+            control.Width = LoadingQueueRowWidth();
+            control.Location = LoadingQueueRowLocation(index);
         }
+        UpdateLoadingQueueScrollSize();
+    }
+
+    private int LoadingQueueRowWidth() => Math.Max(120, loadingQueuePanel.ClientSize.Width - 6);
+
+    private static Point LoadingQueueRowLocation(int index) => new(0, index * 24);
+
+    private void UpdateLoadingQueueScrollSize()
+    {
+        var rowCount = loadingQueuePanel?.Controls.Count ?? 0;
+        if (loadingQueuePanel is null || rowCount == 0)
+        {
+            if (loadingQueuePanel is not null) loadingQueuePanel.AutoScrollMinSize = Size.Empty;
+            return;
+        }
+
+        loadingQueuePanel.AutoScrollMinSize = new Size(0, LoadingQueueRowLocation(rowCount).Y);
     }
 
     private void ApplyLoadingOverlayLayout()
@@ -4116,11 +4145,11 @@ internal sealed class MainForm : Form
         loadingOverlay.Bounds = loadingLayout.OverlayBounds;
         loadingCard.Bounds = loadingLayout.CardBounds;
         loadingPicture.Bounds = loadingLayout.PictureBounds;
-        loadingPicture.Visible = !loadingQueueActive;
+        loadingPicture.Visible = !loadingLayout.PictureBounds.IsEmpty;
         loadingTitle.Bounds = loadingLayout.TitleBounds;
         loadingQueuePanel.Bounds = loadingLayout.QueueBounds;
         loadingStatus.Bounds = loadingLayout.StatusBounds;
-        loadingStatus.Visible = !loadingQueueActive;
+        loadingStatus.Visible = !loadingLayout.StatusBounds.IsEmpty;
         loadingCancel.Bounds = loadingLayout.CancelBounds;
         ResizeLoadingQueueRows();
     }

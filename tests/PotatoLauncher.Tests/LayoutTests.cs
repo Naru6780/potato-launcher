@@ -147,10 +147,11 @@ public class LayoutTests
         var metrics = LoadingOverlayMetrics.Calculate(520, 426, showQueue: true);
 
         Assert.True(metrics.OverlayBounds.Top >= 52);
-        Assert.True(metrics.PictureBounds.IsEmpty);
-        Assert.True(metrics.StatusBounds.IsEmpty);
-        Assert.True(metrics.QueueBounds.Height >= 140);
-        Assert.True(metrics.QueueBounds.Bottom <= metrics.CancelBounds.Top - 6);
+        Assert.False(metrics.PictureBounds.IsEmpty);
+        Assert.False(metrics.StatusBounds.IsEmpty);
+        Assert.True(metrics.QueueBounds.Height >= 96);
+        Assert.True(metrics.QueueBounds.Bottom <= metrics.StatusBounds.Top - 6);
+        Assert.True(metrics.StatusBounds.Bottom <= metrics.CancelBounds.Top);
     }
 
     [Theory]

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.63 - 2026-07-04
+
+- Fixed the band loading screen so every queued account remains visible as its own row.
+- Restored the animated loading icon during band queue loading.
+- Added a final all-loaded message after every band client reaches the initialized title-bar state.
+
 ## 1.0.62 - 2026-06-27
 
 - Removed the `Woke Lamat` theme, image, music, and palette from the app package.
