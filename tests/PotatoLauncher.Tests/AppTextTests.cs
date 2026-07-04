@@ -50,8 +50,8 @@ public class AppTextTests
     }
 
     [Theory]
-    [InlineData("1.0.67.0", 1, 0, 67, 0)]
-    [InlineData("1.0.67", 1, 0, 67, -1)]
+    [InlineData("1.0.68.0", 1, 0, 68, 0)]
+    [InlineData("1.0.68", 1, 0, 68, -1)]
     public void ParseExecutableVersion_ReadsDownloadedAppVersion(string versionText, int major, int minor, int build, int revision)
     {
         var version = MainForm.ParseExecutableVersion(versionText);

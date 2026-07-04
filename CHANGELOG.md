@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.68 - 2026-07-04
+
+- Added automatic Lodestone portrait discovery for Shared XIVLauncher accounts when character name and world are already known.
+- Shared account loading now seeds missing portrait metadata from XIVLauncher account data, while keeping manual Lodestone links as the fallback.
+
 ## 1.0.67 - 2026-07-04
 
 - Fixed the in-app updater to self-update from the latest release zip without using GitHub's rate-limited release API.
