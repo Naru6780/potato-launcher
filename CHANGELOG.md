@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.78 - 2026-07-04
+
+- Simplified the Optimizer header to `Auto CPU Optimization` and `Auto RAM Optimization`.
+- Renamed manual actions to `Optimize CPU Now` and `Optimize RAM Now`.
+- Added an Optimizer `Save` button for persisting CPU lane, priority, role, and trim settings.
+- Restyled Optimizer action buttons as the same rounded gradient pills used by the main launcher.
+
 ## 1.0.77 - 2026-07-04
 
 - Fixed an Optimizer crash caused by one leftover update path still writing to the removed `Main` grid column.

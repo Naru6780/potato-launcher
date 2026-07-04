@@ -12,7 +12,6 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly Label summaryLabel = new();
     private readonly Label gpuStatusLabel = new();
     private readonly CheckBox optimizerEnabled = new();
-    private readonly CheckBox cpuPriorityEnabled = new();
     private readonly CheckBox trimEnabled = new();
     private readonly ComboBox assignmentMode = new();
     private readonly ComboBox mainProcessors = new();
@@ -23,9 +22,10 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly Label mainClientsLabel = new();
     private readonly NumericUpDown reservedProcessors = new();
     private readonly NumericUpDown trimTrigger = new();
-    private readonly Button applyButton = new();
-    private readonly Button restoreButton = new();
-    private readonly Button trimButton = new();
+    private readonly Button applyButton = new NewsPillButton();
+    private readonly Button saveButton = new NewsPillButton();
+    private readonly Button restoreButton = new NewsPillButton();
+    private readonly Button trimButton = new NewsPillButton();
     private bool refreshing;
 
     public OptimizerMonitorForm(IntegratedOptimizerService optimizer, ThemePalette palette)
@@ -109,25 +109,16 @@ internal sealed class OptimizerMonitorForm : Form
         titleStack.Controls.Add(title);
         headerLayout.Controls.Add(titleStack, 0, 0);
 
-        optimizerEnabled.Text = "Enable optimizer";
+        optimizerEnabled.Text = "Auto CPU Optimization";
         optimizerEnabled.Dock = DockStyle.Top;
         optimizerEnabled.Height = 26;
         optimizerEnabled.CheckedChanged += (_, _) =>
         {
             if (refreshing) return;
-            optimizer.SetOptimizerEnabled(optimizerEnabled.Checked);
+            optimizer.SetCpuOptimizationEnabled(optimizerEnabled.Checked);
             RefreshView();
         };
-        cpuPriorityEnabled.Text = "Manage CPU / priority";
-        cpuPriorityEnabled.Dock = DockStyle.Top;
-        cpuPriorityEnabled.Height = 26;
-        cpuPriorityEnabled.CheckedChanged += (_, _) =>
-        {
-            if (refreshing) return;
-            optimizer.Settings.CpuPriorityManagementEnabled = cpuPriorityEnabled.Checked;
-            optimizer.SaveSettings();
-        };
-        trimEnabled.Text = "Trim memory";
+        trimEnabled.Text = "Auto RAM Optimization";
         trimEnabled.Dock = DockStyle.Top;
         trimEnabled.Height = 26;
         trimEnabled.CheckedChanged += (_, _) =>
@@ -144,7 +135,6 @@ internal sealed class OptimizerMonitorForm : Form
             WrapContents = false
         };
         toggles.Controls.Add(optimizerEnabled);
-        toggles.Controls.Add(cpuPriorityEnabled);
         toggles.Controls.Add(trimEnabled);
         headerLayout.Controls.Add(toggles, 1, 0);
 
@@ -259,29 +249,37 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.Controls.Add(Field("Client", roleClientInput), 2, 1);
         controlGrid.Controls.Add(Field("Selected client role", roleInput), 3, 1);
         controlGrid.Controls.Add(mainClientsLabel, 0, 2);
-        controlGrid.SetColumnSpan(mainClientsLabel, 2);
+        controlGrid.SetColumnSpan(mainClientsLabel, 1);
 
-        applyButton.Text = "Apply now";
+        applyButton.Text = "Optimize CPU Now";
+        applyButton.Tag = "Secondary";
         applyButton.Click += (_, _) => { optimizer.ApplyNow(); RefreshView(); };
-        restoreButton.Text = "Restore clients";
-        restoreButton.Click += (_, _) => { optimizer.RestoreClients(); RefreshView(); };
-        trimButton.Text = "Trim now";
+        saveButton.Text = "Save";
+        saveButton.Tag = "Secondary";
+        saveButton.Click += (_, _) =>
+        {
+            optimizer.SaveSettings();
+            RefreshView();
+        };
+        trimButton.Text = "Optimize RAM Now";
+        trimButton.Tag = "Secondary";
         trimButton.Click += (_, _) => { optimizer.TrimNow(); RefreshView(); };
+        restoreButton.Text = "Restore clients";
+        restoreButton.Tag = "Danger";
+        restoreButton.Click += (_, _) => { optimizer.RestoreClients(); RefreshView(); };
         var buttonRow = ButtonRow();
-        controlGrid.Controls.Add(buttonRow, 2, 2);
-        controlGrid.SetColumnSpan(buttonRow, 2);
+        controlGrid.Controls.Add(buttonRow, 1, 2);
+        controlGrid.SetColumnSpan(buttonRow, 3);
     }
 
     private FlowLayoutPanel ButtonRow()
     {
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Color.Transparent };
-        foreach (var button in new[] { applyButton, trimButton, restoreButton })
+        foreach (var button in new[] { applyButton, trimButton, saveButton, restoreButton })
         {
-            button.Width = 130;
-            button.Height = 34;
+            button.Width = 150;
+            button.Height = 36;
             button.Margin = new Padding(0, 10, 10, 0);
-            button.FlatStyle = FlatStyle.Flat;
-            button.FlatAppearance.BorderSize = 0;
             button.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
             panel.Controls.Add(button);
         }
@@ -323,8 +321,7 @@ internal sealed class OptimizerMonitorForm : Form
         {
             var settings = optimizer.Settings;
             settings.Normalize();
-            optimizerEnabled.Checked = settings.OptimizerEnabled;
-            cpuPriorityEnabled.Checked = settings.CpuPriorityManagementEnabled;
+            optimizerEnabled.Checked = settings.OptimizerEnabled && settings.CpuPriorityManagementEnabled;
             trimEnabled.Checked = settings.WorkingSetTrimEnabled;
             SetSelectedItemIfIdle(assignmentMode, settings.CpuAssignmentMode);
             SetSelectedItemIfIdle(mainProcessors, settings.MainLogicalProcessors);
@@ -593,8 +590,12 @@ internal sealed class OptimizerMonitorForm : Form
                 numeric.BackColor = palette.ListBack;
                 numeric.ForeColor = palette.Text;
                 break;
+            case NewsPillButton pill:
+                pill.Palette = palette;
+                pill.ForeColor = Color.White;
+                break;
             case Button button:
-                button.BackColor = button == restoreButton ? palette.Danger : palette.Secondary;
+                button.BackColor = ReferenceEquals(button, restoreButton) ? palette.Danger : palette.Secondary;
                 button.ForeColor = Color.White;
                 break;
         }

@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.77`
+**Version:** `1.0.78`
 
 Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
@@ -21,7 +21,7 @@ Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 - Built-in help window for quick feature explanations.
 - Slick rounded gradient buttons plus animated top-right image bandroll for featured Lodestone updates.
 - Built-in Optimizer monitor with per-client CPU, GPU, memory, priority, and affinity metrics.
-- Optional Optimizer controls for CPU lanes, client priority, and working-set trims.
+- Simplified Optimizer controls with Auto CPU Optimization, Auto RAM Optimization, saved CPU lane/priority settings, and one-click CPU/RAM optimization buttons.
 - Sort accounts alphabetically, by last connected, or by the selected band.
 - Manual Lodestone profile assignment can backfill XIVLauncher character metadata with a backup.
 - Account metadata export/import with append, merge, replace, and overwrite modes.

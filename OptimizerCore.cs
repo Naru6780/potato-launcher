@@ -260,6 +260,14 @@ internal sealed class IntegratedOptimizerService : IDisposable
         if (!enabled) RestoreClients();
     }
 
+    public void SetCpuOptimizationEnabled(bool enabled)
+    {
+        Settings.OptimizerEnabled = enabled;
+        Settings.CpuPriorityManagementEnabled = enabled;
+        Settings.Save();
+        if (!enabled) RestoreClients();
+    }
+
     public void SetMainClient(int processId, bool isMain)
     {
         Settings.ManualMainClientIds.RemoveAll(id => id == processId);
