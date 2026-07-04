@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.81 - 2026-07-04
+
+- Kept the animated news bandroll visible at the minimum app window size by adding a compact top-right layout instead of hiding it.
+- Added a regression test for the minimum-size top navigation bandroll layout.
+
 ## 1.0.80 - 2026-07-04
 
 - Added Windows notification feedback for Optimizer save, CPU optimization, RAM optimization, and restore actions.

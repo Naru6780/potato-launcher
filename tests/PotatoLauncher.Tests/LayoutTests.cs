@@ -206,4 +206,22 @@ public class LayoutTests
         Assert.True(status.Bounds.Right <= clientWidth - 8);
         Assert.InRange(status.Bounds.Width, 300, 370);
     }
+
+    [Fact]
+    public void TopNavigationBandrollMetrics_RemainsVisibleAtMinimumWindowSize()
+    {
+        const int clientWidth = 860;
+        const int clientHeight = 620;
+        const int buttonHeight = 34;
+        const int gap = 12;
+        var launcher = LauncherLayoutMetrics.Calculate(clientWidth, clientHeight, requestedAccountWidth: 0);
+        var leftEdge = Math.Max(24, launcher.Margin) + 102 + 104 + 108 + 68 + 96 + buttonHeight + gap * 6;
+
+        var bandroll = TopNavigationBandrollMetrics.Calculate(clientWidth, clientHeight, leftEdge, buttonHeight, topY: 20, launcher.Margin);
+
+        Assert.True(bandroll.Visible);
+        Assert.False(bandroll.Bounds.IsEmpty);
+        Assert.True(bandroll.Bounds.Right <= clientWidth - 24);
+        Assert.True(bandroll.Bounds.Width >= 72);
+    }
 }

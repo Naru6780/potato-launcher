@@ -1230,20 +1230,9 @@ internal sealed class MainForm : Form
 
         if (newsBandroll is not null)
         {
-            var mascotReserve = Math.Clamp(ClientSize.Width / 11, 84, 120);
-            var right = ClientSize.Width - Math.Max(24, layout.Margin) - mascotReserve;
-            var available = right - x;
-            if (available >= 260)
-            {
-                var width = Math.Clamp(available - gap, 260, Math.Max(420, ClientSize.Width / 2));
-                var height = Math.Clamp((int)MathF.Round(buttonHeight * 1.55F), 52, 64);
-                newsBandroll.Bounds = new Rectangle(right - width, Math.Max(12, y - 8), width, height);
-                newsBandroll.Visible = newsBandroll.HasSlides;
-            }
-            else
-            {
-                newsBandroll.Visible = false;
-            }
+            var bandroll = TopNavigationBandrollMetrics.Calculate(ClientSize.Width, ClientSize.Height, x, buttonHeight, y, layout.Margin);
+            newsBandroll.Bounds = bandroll.Bounds;
+            newsBandroll.Visible = bandroll.Visible && newsBandroll.HasSlides;
         }
     }
 
@@ -7165,6 +7154,30 @@ internal sealed class NewsPillButton : Button
         path.AddArc(rect, 90, 90);
         path.CloseFigure();
         return path;
+    }
+}
+
+internal readonly record struct TopNavigationBandrollMetrics(Rectangle Bounds, bool Visible)
+{
+    public static TopNavigationBandrollMetrics Calculate(int clientWidth, int clientHeight, int leftEdge, int buttonHeight, int topY, int margin)
+    {
+        var mascotReserve = Math.Clamp(clientWidth / 11, 84, 120);
+        var right = clientWidth - Math.Max(24, margin) - mascotReserve;
+        var available = right - leftEdge;
+        if (available <= 0) return new TopNavigationBandrollMetrics(Rectangle.Empty, false);
+
+        var normalHeight = Math.Clamp((int)MathF.Round(buttonHeight * 1.55F), 52, 64);
+        var compactHeight = Math.Clamp(buttonHeight, 32, 40);
+        var maxWidth = Math.Max(420, clientWidth / 2);
+        var width = available >= 260
+            ? Math.Clamp(available - 12, 260, maxWidth)
+            : Math.Clamp(available - 4, 72, Math.Max(72, available));
+        var height = available >= 180 ? normalHeight : compactHeight;
+        if (width < 72) return new TopNavigationBandrollMetrics(Rectangle.Empty, false);
+
+        return new TopNavigationBandrollMetrics(
+            new Rectangle(right - width, Math.Max(12, topY + (buttonHeight - height) / 2), width, height),
+            true);
     }
 }
 
