@@ -50,15 +50,15 @@ internal sealed class OptimizerMonitorForm : Form
         {
             ApplyThemeRecursive(control);
         }
-        grid.BackgroundColor = palette.Card;
-        grid.GridColor = Color.FromArgb(110, palette.Border);
-        grid.DefaultCellStyle.BackColor = palette.ListBack;
+        grid.BackgroundColor = NativeGridColor(palette.Card);
+        grid.GridColor = NativeGridColor(palette.Border);
+        grid.DefaultCellStyle.BackColor = NativeGridColor(palette.ListBack);
         grid.DefaultCellStyle.ForeColor = palette.Text;
         grid.DefaultCellStyle.SelectionBackColor = palette.Secondary;
         grid.DefaultCellStyle.SelectionForeColor = Color.White;
-        grid.ColumnHeadersDefaultCellStyle.BackColor = palette.Card;
+        grid.ColumnHeadersDefaultCellStyle.BackColor = NativeGridColor(palette.Card);
         grid.ColumnHeadersDefaultCellStyle.ForeColor = palette.Text;
-        grid.RowHeadersDefaultCellStyle.BackColor = palette.Card;
+        grid.RowHeadersDefaultCellStyle.BackColor = NativeGridColor(palette.Card);
         grid.RowHeadersDefaultCellStyle.ForeColor = palette.Text;
     }
 
@@ -412,6 +412,11 @@ internal sealed class OptimizerMonitorForm : Form
         {
             ApplyThemeRecursive(child);
         }
+    }
+
+    internal static Color NativeGridColor(Color color)
+    {
+        return Color.FromArgb(255, color.R, color.G, color.B);
     }
 
     private sealed class OptimizerPanel : Panel

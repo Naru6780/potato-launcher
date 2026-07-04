@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Drawing;
 
 namespace PotatoLauncher.Tests;
 
@@ -53,5 +54,16 @@ public class OptimizerCoreTests
     public void ExtractCharacterName_RemovesCommonWindowTitlePrefixes(string title, string expected)
     {
         Assert.Equal(expected, IntegratedOptimizerService.ExtractCharacterName(title));
+    }
+
+    [Fact]
+    public void NativeGridColor_ForcesOpaqueColorForWinFormsGridProperties()
+    {
+        var color = OptimizerMonitorForm.NativeGridColor(Color.FromArgb(42, 10, 20, 30));
+
+        Assert.Equal(255, color.A);
+        Assert.Equal(10, color.R);
+        Assert.Equal(20, color.G);
+        Assert.Equal(30, color.B);
     }
 }

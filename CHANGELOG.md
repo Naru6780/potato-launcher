@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.74 - 2026-07-04
+
+- Fixed the Optimizer window crash on light/translucent themes by using opaque colors for native grid backgrounds.
+
 ## 1.0.73 - 2026-07-04
 
 - Added a built-in Optimizer monitor window with per-client CPU, GPU, memory, priority, affinity, thread, and handle metrics.
