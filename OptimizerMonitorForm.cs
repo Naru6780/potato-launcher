@@ -34,8 +34,8 @@ internal sealed class OptimizerMonitorForm : Form
         this.palette = palette;
         Text = "Potato Optimizer";
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(1120, 740);
-        MinimumSize = new Size(940, 640);
+        Size = new Size(1120, 780);
+        MinimumSize = new Size(940, 680);
         Font = new Font("Segoe UI", 10F);
         DoubleBuffered = true;
         BuildUi();
@@ -79,16 +79,15 @@ internal sealed class OptimizerMonitorForm : Form
             Padding = new Padding(18),
             BackColor = Color.Transparent
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 236));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 276));
         Controls.Add(root);
 
         var header = new OptimizerPanel { Dock = DockStyle.Fill, Radius = 20 };
         root.Controls.Add(header, 0, 0);
-        var headerLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Padding = new Padding(18, 12, 18, 12), BackColor = Color.Transparent };
+        var headerLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(18, 12, 18, 12), BackColor = Color.Transparent };
         headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 240));
         headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230));
         header.Controls.Add(headerLayout);
 
@@ -110,7 +109,8 @@ internal sealed class OptimizerMonitorForm : Form
         headerLayout.Controls.Add(titleStack, 0, 0);
 
         optimizerEnabled.Text = "Auto CPU Optimization";
-        optimizerEnabled.Dock = DockStyle.Top;
+        optimizerEnabled.Dock = DockStyle.None;
+        optimizerEnabled.Width = 230;
         optimizerEnabled.Height = 26;
         optimizerEnabled.CheckedChanged += (_, _) =>
         {
@@ -119,7 +119,8 @@ internal sealed class OptimizerMonitorForm : Form
             RefreshView();
         };
         trimEnabled.Text = "Auto RAM Optimization";
-        trimEnabled.Dock = DockStyle.Top;
+        trimEnabled.Dock = DockStyle.None;
+        trimEnabled.Width = 230;
         trimEnabled.Height = 26;
         trimEnabled.CheckedChanged += (_, _) =>
         {
@@ -127,22 +128,12 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.Settings.WorkingSetTrimEnabled = trimEnabled.Checked;
             optimizer.SaveSettings();
         };
-        var toggles = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Color.Transparent,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false
-        };
-        toggles.Controls.Add(optimizerEnabled);
-        toggles.Controls.Add(trimEnabled);
-        headerLayout.Controls.Add(toggles, 1, 0);
 
         gpuStatusLabel.Dock = DockStyle.Fill;
         gpuStatusLabel.TextAlign = ContentAlignment.MiddleRight;
         gpuStatusLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         gpuStatusLabel.BackColor = Color.Transparent;
-        headerLayout.Controls.Add(gpuStatusLabel, 2, 0);
+        headerLayout.Controls.Add(gpuStatusLabel, 1, 0);
 
         grid.AllowUserToAddRows = false;
         grid.AllowUserToDeleteRows = false;
@@ -178,13 +169,14 @@ internal sealed class OptimizerMonitorForm : Form
 
         var controls = new OptimizerPanel { Dock = DockStyle.Fill, Radius = 20 };
         root.Controls.Add(controls, 0, 2);
-        var controlGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 3, Padding = new Padding(18, 14, 18, 14), BackColor = Color.Transparent };
+        var controlGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 4, Padding = new Padding(18, 14, 18, 14), BackColor = Color.Transparent };
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
-        controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+        controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         controls.Controls.Add(controlGrid);
 
@@ -240,15 +232,18 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.SaveSettings();
         };
 
-        controlGrid.Controls.Add(Field("CPU lanes", assignmentMode), 0, 0);
-        controlGrid.Controls.Add(Field("Main logical processors", mainProcessors), 1, 0);
-        controlGrid.Controls.Add(Field("Follower logical processors", followerProcessors), 2, 0);
-        controlGrid.Controls.Add(Field("Follower priority", followerPriority), 3, 0);
-        controlGrid.Controls.Add(Field("Reserved logical processors", reservedProcessors), 0, 1);
-        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 1, 1);
-        controlGrid.Controls.Add(Field("Client", roleClientInput), 2, 1);
-        controlGrid.Controls.Add(Field("Selected client role", roleInput), 3, 1);
-        controlGrid.Controls.Add(mainClientsLabel, 0, 2);
+        var autoOptions = AutoOptionsRow();
+        controlGrid.Controls.Add(autoOptions, 0, 0);
+        controlGrid.SetColumnSpan(autoOptions, 4);
+        controlGrid.Controls.Add(Field("CPU lanes", assignmentMode), 0, 1);
+        controlGrid.Controls.Add(Field("Main logical processors", mainProcessors), 1, 1);
+        controlGrid.Controls.Add(Field("Follower logical processors", followerProcessors), 2, 1);
+        controlGrid.Controls.Add(Field("Follower priority", followerPriority), 3, 1);
+        controlGrid.Controls.Add(Field("Reserved logical processors", reservedProcessors), 0, 2);
+        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 1, 2);
+        controlGrid.Controls.Add(Field("Client", roleClientInput), 2, 2);
+        controlGrid.Controls.Add(Field("Selected client role", roleInput), 3, 2);
+        controlGrid.Controls.Add(mainClientsLabel, 0, 3);
         controlGrid.SetColumnSpan(mainClientsLabel, 1);
 
         applyButton.Text = "Optimize CPU Now";
@@ -268,8 +263,25 @@ internal sealed class OptimizerMonitorForm : Form
         restoreButton.Tag = "Danger";
         restoreButton.Click += (_, _) => { optimizer.RestoreClients(); RefreshView(); };
         var buttonRow = ButtonRow();
-        controlGrid.Controls.Add(buttonRow, 1, 2);
+        controlGrid.Controls.Add(buttonRow, 1, 3);
         controlGrid.SetColumnSpan(buttonRow, 3);
+    }
+
+    private FlowLayoutPanel AutoOptionsRow()
+    {
+        var panel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = Color.Transparent,
+            Padding = new Padding(0, 3, 0, 0)
+        };
+        optimizerEnabled.Margin = new Padding(0, 3, 22, 0);
+        trimEnabled.Margin = new Padding(0, 3, 22, 0);
+        panel.Controls.Add(optimizerEnabled);
+        panel.Controls.Add(trimEnabled);
+        return panel;
     }
 
     private FlowLayoutPanel ButtonRow()

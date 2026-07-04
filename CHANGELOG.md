@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.79 - 2026-07-04
+
+- Moved the Optimizer `Auto CPU Optimization` and `Auto RAM Optimization` checkboxes into the lower control panel so they are always visible.
+- Gave the Optimizer controls more vertical space to prevent the auto toggles and action buttons from crowding each other.
+
 ## 1.0.78 - 2026-07-04
 
 - Simplified the Optimizer header to `Auto CPU Optimization` and `Auto RAM Optimization`.
