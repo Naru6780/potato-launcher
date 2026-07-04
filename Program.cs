@@ -68,6 +68,7 @@ internal sealed class AppSettings
     public string AccountDisplayMode { get; set; } = "Text";
     public int AccountPanelWidth { get; set; }
     public bool RandomizeThemeAtLaunch { get; set; }
+    public bool NotificationsEnabled { get; set; } = true;
     public string LastShownChangelogVersion { get; set; } = "";
     public Dictionary<string, AccountIconProfile> AccountIcons { get; set; } = [];
     public List<BandConfig> Bands { get; set; } = [];
@@ -705,6 +706,7 @@ internal sealed class MainForm : Form
     private Label launchCooldownLabel = null!;
     private NumericUpDown launchCooldownInput = null!;
     private CheckBox randomizeThemeInput = null!;
+    private CheckBox notificationsEnabledInput = null!;
     private Button settingsButton = null!;
     private Button killGameButton = null!;
     private Button whatsNewButton = null!;
@@ -1489,6 +1491,10 @@ internal sealed class MainForm : Form
         randomizeThemeInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(randomizeThemeInput);
 
+        notificationsEnabledInput = new CheckBox { Text = "Enable notifications", Checked = settings.NotificationsEnabled, Bounds = new Rectangle(24, 594, 250, 28), BackColor = Color.Transparent };
+        notificationsEnabledInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
+        settingsDrawer.Controls.Add(notificationsEnabledInput);
+
         updateButton = Button("Check for updates", 24, 606, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
@@ -1527,7 +1533,8 @@ internal sealed class MainForm : Form
             SetY(launchCooldownLabel, 628);
             SetY(launchCooldownInput, 650);
             SetY(randomizeThemeInput, 686);
-            SetY(updateButton, 718);
+            SetY(notificationsEnabledInput, 718);
+            SetY(updateButton, 754);
         }
         else
         {
@@ -1546,7 +1553,8 @@ internal sealed class MainForm : Form
             SetY(launchCooldownLabel, 628);
             SetY(launchCooldownInput, 650);
             SetY(randomizeThemeInput, 686);
-            SetY(updateButton, 718);
+            SetY(notificationsEnabledInput, 718);
+            SetY(updateButton, 754);
         }
     }
 
@@ -4109,6 +4117,7 @@ internal sealed class MainForm : Form
         var now = DateTime.UtcNow;
         if ((now - lastSaveNotificationUtc).TotalMilliseconds < 1200) return;
         lastSaveNotificationUtc = now;
+        if (!settings.NotificationsEnabled) return;
         AppNotification.Show(this, "Potato Launcher", message);
     }
 
@@ -4426,7 +4435,7 @@ internal sealed class MainForm : Form
             return;
         }
 
-        optimizerMonitor = new OptimizerMonitorForm(optimizerService, palette);
+        optimizerMonitor = new OptimizerMonitorForm(optimizerService, palette, () => settings.NotificationsEnabled);
         optimizerMonitor.FormClosed += (_, _) => optimizerMonitor = null;
         optimizerMonitor.Show(this);
     }
@@ -4947,6 +4956,7 @@ internal sealed class MainForm : Form
         settings.LaunchCooldownSeconds = (int)(launchCooldownInput?.Value ?? settings.LaunchCooldownSeconds);
         settings.AccountDisplayMode = NormalizeAccountDisplayMode(accountDisplayInput?.SelectedItem?.ToString() ?? settings.AccountDisplayMode);
         settings.RandomizeThemeAtLaunch = randomizeThemeInput?.Checked ?? settings.RandomizeThemeAtLaunch;
+        settings.NotificationsEnabled = notificationsEnabledInput?.Checked ?? settings.NotificationsEnabled;
         SaveSettings(settings);
         if (showFeedback) ShowSaveFeedback("Settings saved.");
     }

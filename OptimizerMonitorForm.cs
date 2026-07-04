@@ -7,6 +7,7 @@ namespace PotatoLauncher;
 internal sealed class OptimizerMonitorForm : Form
 {
     private readonly IntegratedOptimizerService optimizer;
+    private readonly Func<bool> notificationsEnabled;
     private ThemePalette palette;
     private readonly DataGridView grid = new();
     private readonly Label summaryLabel = new();
@@ -28,9 +29,10 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly Button trimButton = new NewsPillButton();
     private bool refreshing;
 
-    public OptimizerMonitorForm(IntegratedOptimizerService optimizer, ThemePalette palette)
+    public OptimizerMonitorForm(IntegratedOptimizerService optimizer, ThemePalette palette, Func<bool>? notificationsEnabled = null)
     {
         this.optimizer = optimizer;
+        this.notificationsEnabled = notificationsEnabled ?? (() => true);
         this.palette = palette;
         Text = "Potato Optimizer";
         StartPosition = FormStartPosition.CenterParent;
@@ -302,6 +304,7 @@ internal sealed class OptimizerMonitorForm : Form
 
     private void ShowFeedback(string message)
     {
+        if (!notificationsEnabled()) return;
         AppNotification.Show(this, "Potato Optimizer", message);
     }
 
