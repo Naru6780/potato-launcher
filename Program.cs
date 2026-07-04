@@ -777,6 +777,7 @@ internal sealed class MainForm : Form
     private bool accountResizeListsSuspended;
     private readonly TextUpdateGate statusUpdateGate = new(TimeSpan.FromMilliseconds(750));
     private readonly TextUpdateGate loadingStatusUpdateGate = new(TimeSpan.FromMilliseconds(250));
+    private DateTime lastSaveNotificationUtc = DateTime.MinValue;
 
     public MainForm()
     {
@@ -1400,7 +1401,7 @@ internal sealed class MainForm : Form
         launchModeInput.SelectedItem = IsSharedLaunchMode() ? "Shared" : "Instanced";
         launchModeInput.SelectedIndexChanged += (_, _) =>
         {
-            SaveSettingsFromInputs();
+            SaveSettingsFromInputs(showFeedback: true);
             UpdateLaunchModeUi();
             LoadAccounts();
             PopulateLists();
@@ -1409,16 +1410,16 @@ internal sealed class MainForm : Form
 
         folderLabel = Label("Instanced folder", 24, 146, 220, 24);
         folderInput = new TextBox { Text = settings.DalamudFolder, Bounds = new Rectangle(24, 174, 332, 29) };
-        folderInput.Leave += (_, _) => SaveAndRescan();
+        folderInput.Leave += (_, _) => SaveAndRescan(showFeedback: true);
         browseBatButton = Button("Browse", 24, 212, 96, 32, "Secondary");
-        browseBatButton.Click += (_, _) => BrowseFolder(folderInput, "Choose the folder containing XIVLauncher .bat files", SaveAndRescan);
+        browseBatButton.Click += (_, _) => BrowseFolder(folderInput, "Choose the folder containing XIVLauncher .bat files", () => SaveAndRescan(showFeedback: true));
         settingsDrawer.Controls.AddRange([folderLabel, folderInput, browseBatButton]);
 
         sharedProfileLabel = Label("Shared folder", 24, 146, 260, 24);
         sharedProfileInput = new TextBox { Text = settings.SharedProfileFolder, Bounds = new Rectangle(24, 174, 332, 29) };
-        sharedProfileInput.Leave += (_, _) => { SaveSettingsFromInputs(); SaveAndRescan(); };
+        sharedProfileInput.Leave += (_, _) => SaveAndRescan(showFeedback: true);
         browseSharedProfileButton = Button("Browse", 24, 212, 96, 32, "Secondary");
-        browseSharedProfileButton.Click += (_, _) => BrowseFolder(sharedProfileInput, "Choose the folder containing accountsList.json", SaveAndRescan);
+        browseSharedProfileButton.Click += (_, _) => BrowseFolder(sharedProfileInput, "Choose the folder containing accountsList.json", () => SaveAndRescan(showFeedback: true));
         settingsDrawer.Controls.AddRange([sharedProfileLabel, sharedProfileInput, browseSharedProfileButton]);
 
         accountDisplayLabel = Label("Account list display", 24, 270, 220, 24);
@@ -1427,7 +1428,7 @@ internal sealed class MainForm : Form
         accountDisplayInput.SelectedItem = NormalizeAccountDisplayMode(settings.AccountDisplayMode);
         accountDisplayInput.SelectedIndexChanged += (_, _) =>
         {
-            SaveSettingsFromInputs();
+            SaveSettingsFromInputs(showFeedback: true);
             UpdateAccountDisplayMode();
         };
         settingsDrawer.Controls.AddRange([accountDisplayLabel, accountDisplayInput]);
@@ -1446,13 +1447,13 @@ internal sealed class MainForm : Form
         themeInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 608, 260, 29) };
         themeInput.Items.AddRange(Palettes.Keys.ToArray());
         themeInput.SelectedItem = Palettes.ContainsKey(NormalizeThemeName(settings.Theme)) ? NormalizeThemeName(settings.Theme) : "Pink";
-        themeInput.SelectedIndexChanged += (_, _) => { SaveSettingsFromInputs(); ApplyTheme(settings.Theme); };
+        themeInput.SelectedIndexChanged += (_, _) => { SaveSettingsFromInputs(showFeedback: true); ApplyTheme(settings.Theme); };
         settingsDrawer.Controls.AddRange([themeLabel, themeInput]);
 
         muteMusicInput = new CheckBox { Text = "Mute theme music", Checked = settings.MusicMuted, Bounds = new Rectangle(24, 420, 220, 28), BackColor = Color.Transparent };
         muteMusicInput.CheckedChanged += (_, _) =>
         {
-            SaveSettingsFromInputs();
+            SaveSettingsFromInputs(showFeedback: true);
             UpdateMuteMusicButton();
             ApplyThemeMusic(settings.Theme);
         };
@@ -1461,7 +1462,7 @@ internal sealed class MainForm : Form
         stopMusicWhenLoadedInput = new CheckBox { Text = "Stop music when all loaded", Checked = settings.StopMusicWhenAllLoaded, Bounds = new Rectangle(24, 454, 260, 28), BackColor = Color.Transparent };
         stopMusicWhenLoadedInput.CheckedChanged += (_, _) =>
         {
-            SaveSettingsFromInputs();
+            SaveSettingsFromInputs(showFeedback: true);
             ApplyThemeMusic(settings.Theme);
         };
         settingsDrawer.Controls.Add(stopMusicWhenLoadedInput);
@@ -1478,7 +1479,7 @@ internal sealed class MainForm : Form
         musicVolumeInput.ValueChanged += (_, _) =>
         {
             musicVolumeLabel.Text = $"Music volume: {musicVolumeInput.Value}%";
-            SaveSettingsFromInputs();
+            SaveSettingsFromInputs(showFeedback: true);
             themeMusic.Volume = MusicVolume();
         };
         settingsDrawer.Controls.AddRange([musicVolumeLabel, musicVolumeInput]);
@@ -1492,11 +1493,11 @@ internal sealed class MainForm : Form
             Value = Math.Clamp(settings.LaunchCooldownSeconds, 0, 300),
             Bounds = new Rectangle(24, 522, 96, 29)
         };
-        launchCooldownInput.ValueChanged += (_, _) => SaveSettingsFromInputs();
+        launchCooldownInput.ValueChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(launchCooldownInput);
 
         randomizeThemeInput = new CheckBox { Text = "Randomize theme at launch", Checked = settings.RandomizeThemeAtLaunch, Bounds = new Rectangle(24, 560, 250, 28), BackColor = Color.Transparent };
-        randomizeThemeInput.CheckedChanged += (_, _) => SaveSettingsFromInputs();
+        randomizeThemeInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(randomizeThemeInput);
 
         updateButton = Button("Check for updates", 24, 606, 180, 34, "Secondary");
@@ -2705,7 +2706,7 @@ internal sealed class MainForm : Form
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
             File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
-            status.Text = $"Exported {transfer.Accounts.Count} account entries.";
+            ShowSaveFeedback($"Exported {transfer.Accounts.Count} account entries.");
         }
         catch (Exception ex)
         {
@@ -2813,7 +2814,7 @@ internal sealed class MainForm : Form
         var path = BandExportPath();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
-        status.Text = $"Saved {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")} to {Path.GetFileName(path)}.";
+        ShowSaveFeedback($"Saved {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")} to {Path.GetFileName(path)}.");
     }
 
     private void ExportBandsAs()
@@ -2832,8 +2833,8 @@ internal sealed class MainForm : Form
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
-        File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
-        status.Text = $"Exported {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")}.";
+            File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
+            ShowSaveFeedback($"Exported {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")}.");
     }
 
     private void ImportBands()
@@ -4113,6 +4114,15 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void ShowSaveFeedback(string message)
+    {
+        SetStatus(message, force: true);
+        var now = DateTime.UtcNow;
+        if ((now - lastSaveNotificationUtc).TotalMilliseconds < 1200) return;
+        lastSaveNotificationUtc = now;
+        AppNotification.Show(this, "Potato Launcher", message);
+    }
+
     private async Task WaitForLauncherCloseAsync(LauncherWindow launcher, CancellationToken token)
     {
         var deadline = DateTime.UtcNow.AddMinutes(5);
@@ -4922,20 +4932,20 @@ internal sealed class MainForm : Form
         if (accounts.Count > 0) return;
         if (IsSharedLaunchMode())
         {
-            BrowseFolder(sharedProfileInput, "Choose the XIVLauncher folder containing accountsList.json", SaveAndRescan);
+            BrowseFolder(sharedProfileInput, "Choose the XIVLauncher folder containing accountsList.json", () => SaveAndRescan(showFeedback: true));
             return;
         }
-        BrowseFolder(folderInput, "Choose the folder containing your instanced launcher .bat files", SaveAndRescan);
+        BrowseFolder(folderInput, "Choose the folder containing your instanced launcher .bat files", () => SaveAndRescan(showFeedback: true));
     }
 
-    private void SaveAndRescan()
+    private void SaveAndRescan(bool showFeedback = false)
     {
-        SaveSettingsFromInputs();
+        SaveSettingsFromInputs(showFeedback);
         LoadAccounts();
         PopulateLists();
     }
 
-    private void SaveSettingsFromInputs()
+    private void SaveSettingsFromInputs(bool showFeedback = false)
     {
         settings.DalamudFolder = folderInput.Text.Trim();
         settings.SharedProfileFolder = sharedProfileInput.Text.Trim();
@@ -4949,6 +4959,7 @@ internal sealed class MainForm : Form
         settings.AccountDisplayMode = NormalizeAccountDisplayMode(accountDisplayInput?.SelectedItem?.ToString() ?? settings.AccountDisplayMode);
         settings.RandomizeThemeAtLaunch = randomizeThemeInput?.Checked ?? settings.RandomizeThemeAtLaunch;
         SaveSettings(settings);
+        if (showFeedback) ShowSaveFeedback("Settings saved.");
     }
 
     private void ToggleMusicMute()
@@ -4958,7 +4969,7 @@ internal sealed class MainForm : Form
         {
             muteMusicInput.Checked = settings.MusicMuted;
         }
-        SaveSettingsFromInputs();
+        SaveSettingsFromInputs(showFeedback: true);
         UpdateMuteMusicButton();
         ApplyThemeMusic(settings.Theme);
     }

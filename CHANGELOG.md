@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.80 - 2026-07-04
+
+- Added Windows notification feedback for Optimizer save, CPU optimization, RAM optimization, and restore actions.
+- Added save notifications for main launcher settings changes and explicit account/band export/save actions.
+- Kept background autosaves quiet while still updating the in-app status pill for user-triggered saves.
+
 ## 1.0.79 - 2026-07-04
 
 - Moved the Optimizer `Auto CPU Optimization` and `Auto RAM Optimization` checkboxes into the lower control panel so they are always visible.

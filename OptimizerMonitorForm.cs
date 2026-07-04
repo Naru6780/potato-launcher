@@ -248,20 +248,36 @@ internal sealed class OptimizerMonitorForm : Form
 
         applyButton.Text = "Optimize CPU Now";
         applyButton.Tag = "Secondary";
-        applyButton.Click += (_, _) => { optimizer.ApplyNow(); RefreshView(); };
+        applyButton.Click += (_, _) =>
+        {
+            optimizer.ApplyNow();
+            RefreshView();
+            ShowFeedback("CPU optimization applied.");
+        };
         saveButton.Text = "Save";
         saveButton.Tag = "Secondary";
         saveButton.Click += (_, _) =>
         {
             optimizer.SaveSettings();
             RefreshView();
+            ShowFeedback("Optimizer settings saved.");
         };
         trimButton.Text = "Optimize RAM Now";
         trimButton.Tag = "Secondary";
-        trimButton.Click += (_, _) => { optimizer.TrimNow(); RefreshView(); };
+        trimButton.Click += (_, _) =>
+        {
+            optimizer.TrimNow();
+            RefreshView();
+            ShowFeedback("RAM optimization applied.");
+        };
         restoreButton.Text = "Restore clients";
         restoreButton.Tag = "Danger";
-        restoreButton.Click += (_, _) => { optimizer.RestoreClients(); RefreshView(); };
+        restoreButton.Click += (_, _) =>
+        {
+            optimizer.RestoreClients();
+            RefreshView();
+            ShowFeedback("Client optimization restored.");
+        };
         var buttonRow = ButtonRow();
         controlGrid.Controls.Add(buttonRow, 1, 3);
         controlGrid.SetColumnSpan(buttonRow, 3);
@@ -282,6 +298,11 @@ internal sealed class OptimizerMonitorForm : Form
         panel.Controls.Add(optimizerEnabled);
         panel.Controls.Add(trimEnabled);
         return panel;
+    }
+
+    private void ShowFeedback(string message)
+    {
+        AppNotification.Show(this, "Potato Optimizer", message);
     }
 
     private FlowLayoutPanel ButtonRow()
