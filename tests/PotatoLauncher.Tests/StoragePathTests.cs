@@ -19,6 +19,7 @@ public class StoragePathTests
 
         Assert.Equal(Path.Combine(root, "settings.json"), MainForm.SettingsPath());
         Assert.Equal(Path.Combine(root, "accountList.json"), MainForm.AccountListStatePath());
+        Assert.Equal(Path.Combine(root, "optimizer.json"), MainForm.OptimizerSettingsPath());
         Assert.Equal(Path.Combine(root, "band.json"), MainForm.BandExportPath());
         Assert.Equal(Path.Combine(root, "Account Icons"), MainForm.AccountIconsFolder());
     }

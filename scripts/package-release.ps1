@@ -12,7 +12,7 @@ $releasePath = Join-Path $repoRoot $ReleaseDir
 $assetsSource = Join-Path $repoRoot "Potato Launcher Assets"
 $assetsPublish = Join-Path $publishPath "Potato Launcher Assets"
 $zipPath = Join-Path $releasePath "PotatoLauncher.zip"
-$persistedFiles = @("settings.json", "accountList.json", "band.json")
+$persistedFiles = @("settings.json", "accountList.json", "optimizer.json", "band.json")
 
 function Assert-UnderRepo([string]$PathToCheck) {
     $fullPath = [System.IO.Path]::GetFullPath($PathToCheck)

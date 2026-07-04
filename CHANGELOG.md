@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.73 - 2026-07-04
+
+- Added a built-in Optimizer monitor window with per-client CPU, GPU, memory, priority, affinity, thread, and handle metrics.
+- Added optional Optimizer controls for CPU lane assignment, follower priority, manual main-client selection, working-set trims, apply-now, trim-now, and restore actions.
+- Stored Optimizer preferences in `%APPDATA%\Potato Launcher\optimizer.json` so installs and updates preserve them.
+
 ## 1.0.72 - 2026-07-04
 
 - Made the news bandroll expand dynamically into the available top-row space on wide and maximized windows.

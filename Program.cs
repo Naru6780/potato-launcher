@@ -146,6 +146,9 @@ internal static class AppText
 
         Safety tools
         Kill FFXIV closes every running FFXIV game process. Per-account and per-band kill actions only target clients Potato Launcher can match to those accounts.
+
+        Optimizer
+        Optimizer opens a live monitor for running FFXIV clients. It can show per-client CPU, GPU, memory, priority, and affinity, and can apply CPU lanes, priority rules, and working-set trims when enabled.
         """);
     }
 
@@ -705,6 +708,7 @@ internal sealed class MainForm : Form
     private Button settingsButton = null!;
     private Button killGameButton = null!;
     private Button whatsNewButton = null!;
+    private Button optimizerButton = null!;
     private Button helpButton = null!;
     private Button muteMusicButton = null!;
     private AppToolTip? appToolTip;
@@ -746,6 +750,8 @@ internal sealed class MainForm : Form
     private readonly List<int> mascotFrameDelays = [];
     private readonly Dictionary<int, Label> loadingQueueLabels = [];
     private readonly Dictionary<string, int> runningClientProcessIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IntegratedOptimizerService optimizerService = new(OptimizerSettings.Load());
+    private OptimizerMonitorForm? optimizerMonitor;
     private ThemePalette palette = Palettes["Pink"];
     private CancellationTokenSource? queueCancel;
     private bool loadingQueueActive;
@@ -822,9 +828,13 @@ internal sealed class MainForm : Form
         whatsNewButton = NewsPillButton(394, 24, 68, 34);
         whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
         background.Controls.Add(whatsNewButton);
-        helpButton = Button("?", 476, 24, 34, 34, "Secondary");
+        optimizerButton = Button("Optimizer", 476, 24, 96, 34, "Primary");
+        optimizerButton.Click += (_, _) => ShowOptimizerMonitor();
+        background.Controls.Add(optimizerButton);
+        helpButton = Button("?", 586, 24, 34, 34, "Secondary");
         appToolTip = new AppToolTip(this);
         appToolTip.Attach(helpButton, "Help", "Open the Potato Launcher feature guide.");
+        appToolTip.Attach(optimizerButton, "Optimizer", "Monitor FFXIV clients and manage CPU, priority, and memory optimization.");
         helpButton.Click += (_, _) => ShowHelpWindow();
         background.Controls.Add(helpButton);
         newsBandroll = new NewsBandrollControl { Bounds = new Rectangle(620, 24, 320, 34), Visible = false };
@@ -843,6 +853,8 @@ internal sealed class MainForm : Form
         {
             themeMusic.Stop();
             themeMusic.Close();
+            optimizerMonitor?.Close();
+            optimizerService.Dispose();
             appToolTip?.Dispose();
             mascotOverlay?.Close();
         };
@@ -1202,6 +1214,7 @@ internal sealed class MainForm : Form
             (killGameButton, 104),
             (muteMusicButton, 108),
             (whatsNewButton, 68),
+            (optimizerButton, 96),
             (helpButton, 34)
         };
 
@@ -4403,6 +4416,22 @@ internal sealed class MainForm : Form
         form.ShowDialog(this);
     }
 
+    private void ShowOptimizerMonitor()
+    {
+        if (optimizerMonitor is { IsDisposed: false })
+        {
+            optimizerMonitor.ApplyTheme(palette);
+            optimizerMonitor.Show();
+            optimizerMonitor.WindowState = FormWindowState.Normal;
+            optimizerMonitor.BringToFront();
+            return;
+        }
+
+        optimizerMonitor = new OptimizerMonitorForm(optimizerService, palette);
+        optimizerMonitor.FormClosed += (_, _) => optimizerMonitor = null;
+        optimizerMonitor.Show(this);
+    }
+
     private void StyleHelpText(RichTextBox helpText)
     {
         using var headingFont = new Font(helpText.Font, FontStyle.Bold);
@@ -4416,7 +4445,8 @@ internal sealed class MainForm : Form
             "Display and themes",
             "Import and export",
             "News and updates",
-            "Safety tools"
+            "Safety tools",
+            "Optimizer"
         })
         {
             var index = helpText.Text.IndexOf(heading, StringComparison.Ordinal);
@@ -5123,6 +5153,7 @@ internal sealed class MainForm : Form
             ApplyThemeAssets(themeName);
             ApplyThemeMusic(themeName);
             ApplyThemeRecursive(this);
+            optimizerMonitor?.ApplyTheme(palette);
             background.Invalidate();
             loadingOverlay.Invalidate();
             launchChoiceOverlay.Invalidate();
@@ -5589,6 +5620,12 @@ internal sealed class MainForm : Form
         return Path.Combine(PersistentDataRoot(), "accountList.json");
     }
 
+    internal static string OptimizerSettingsPath()
+    {
+        EnsurePersistentDataMigrated();
+        return Path.Combine(PersistentDataRoot(), "optimizer.json");
+    }
+
     private static string GetAssetRoot() => Path.Combine(AppContext.BaseDirectory, "Potato Launcher Assets");
     internal static string AccountIconsFolder()
     {
@@ -5624,6 +5661,7 @@ internal sealed class MainForm : Form
         Directory.CreateDirectory(dataRoot);
         CopyPortableFileIfMissing("settings.json");
         CopyPortableFileIfMissing("accountList.json");
+        CopyPortableFileIfMissing("optimizer.json");
         CopyPortableFileIfMissing("band.json");
         CopyPortableAccountIconsIfMissing();
 
