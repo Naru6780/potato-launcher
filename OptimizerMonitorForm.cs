@@ -402,7 +402,6 @@ internal sealed class OptimizerMonitorForm : Form
         var defaultPriority = snapshot.IsMain ? ProcessPriorityClass.AboveNormal : optimizer.Settings.FollowerPriorityClass;
         var overridePriority = optimizer.Settings.GetClientPriorityOverride(snapshot.ClientName);
         row.Tag = snapshot;
-        SetCell(row, "Main", snapshot.IsMain);
         SetCell(row, "Client", snapshot.ClientName);
         SetCell(row, "Pid", snapshot.ProcessId);
         SetCell(row, "Cpu", $"{snapshot.CpuPercent:0.0}%");

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.77 - 2026-07-04
+
+- Fixed an Optimizer crash caused by one leftover update path still writing to the removed `Main` grid column.
+
 ## 1.0.76 - 2026-07-04
 
 - Removed the confusing main-client checkbox column from the Optimizer metrics grid.
