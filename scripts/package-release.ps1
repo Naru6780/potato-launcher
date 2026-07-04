@@ -26,6 +26,9 @@ Assert-UnderRepo $releasePath
 Assert-UnderRepo $assetsPublish
 
 Set-Location $repoRoot
+if (Test-Path -LiteralPath $publishPath) {
+    Remove-Item -LiteralPath $publishPath -Recurse -Force
+}
 dotnet publish .\PotatoLauncher.csproj -c $Configuration -o $publishPath
 
 foreach ($fileName in $persistedFiles) {
@@ -47,11 +50,12 @@ try {
     $entries = $zip.Entries | Select-Object -ExpandProperty FullName
     $hasExe = $entries -contains "Potato Launcher.exe"
     $hasAssets = [bool]($entries | Where-Object { $_ -like "Potato Launcher Assets/*" -or $_ -like "Potato Launcher Assets\*" } | Select-Object -First 1)
-    $hasPersistedFiles = [bool]($entries | Where-Object { $persistedFiles -contains $_ } | Select-Object -First 1)
+    $persistedEntries = @($entries | Where-Object { $persistedFiles -contains (Split-Path $_ -Leaf) })
+    $hasPersistedFiles = $persistedEntries.Count -gt 0
 
     if (-not $hasExe) { throw "Release zip is missing Potato Launcher.exe." }
     if (-not $hasAssets) { throw "Release zip is missing Potato Launcher Assets." }
-    if ($hasPersistedFiles) { throw "Release zip contains persisted user data." }
+    if ($hasPersistedFiles) { throw "Release zip contains persisted user data: $($persistedEntries -join ', ')" }
 
     [pscustomobject]@{
         Zip = $zipPath

@@ -1,8 +1,8 @@
 # Potato Launcher
 
-**Version:** `1.0.62`
+**Version:** `1.0.69`
 
-Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
+Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
 ## Features
 
@@ -23,24 +23,24 @@ Portable Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 - Manual Lodestone profile assignment can backfill XIVLauncher character metadata with a backup.
 - Account metadata export/import with append, merge, replace, and overwrite modes.
 - Band `band.json` save/import support plus browse-based band export with append, merge, replace, and overwrite import modes.
-- Account order and last-connected state live in portable `accountList.json`, separate from `settings.json`.
+- Account order and last-connected state live in `%APPDATA%\Potato Launcher\accountList.json`, separate from `settings.json`.
 - Account export/import carries custom account order and last-connected state.
 - The Accounts panel can be resized with the splitter between Accounts and Band Manager.
 - Roster drag-and-drop shows an insertion marker while moving accounts.
 - Configurable launch cooldown for band queues.
 - Theme folders with background images and per-theme music playlists.
 - Built-in FFXIV news panel and emergency `Kill FFXIV` button.
-- Portable settings stored beside the executable.
+- Settings, bands, account order, and portrait cache are stored in `%APPDATA%\Potato Launcher` so app updates preserve them.
 - Built-in GitHub release updater.
 - Resizable main window with adaptive account, band, overlay, and drawer layout.
 
-## Portable install
+## Install
 
-Download the latest `PotatoLauncher.zip` from Releases, extract it anywhere, and run `Potato Launcher.exe`.
+Download `PotatoLauncherSetup.exe` from Releases and run it. The installer lets you choose where Potato Launcher is installed and can create Start Menu and Desktop shortcuts.
 
-Keep `Potato Launcher.exe` and `Potato Launcher Assets` together in the same folder.
+The portable zip is still available as `PotatoLauncher.zip`. Extract it anywhere and run `Potato Launcher.exe`; keep `Potato Launcher.exe` and `Potato Launcher Assets` together in the same folder.
 
 ## Project Notes
 
 - Development context lives in `docs/goal.md`, `docs/research.md`, and `docs/release.md`.
-- The latest downloadable build is published as `PotatoLauncher.zip` on GitHub Releases.
+- The latest downloadable builds are published as `PotatoLauncherSetup.exe` and `PotatoLauncher.zip` on GitHub Releases.
