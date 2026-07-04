@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.69 - 2026-07-04
+
+- Moved settings, account order, bands, and portrait cache to `%APPDATA%\Potato Launcher` so app updates preserve user data.
+- Startup portrait refresh now updates only accounts that already have linked Lodestone profiles; manual refresh still auto-detects profiles from name and world.
+- Fixed the loading screen to cover the full Band Manager surface, including the action buttons underneath.
+- Improved queued-account text contrast on light themes and removed git metadata from the window title.
+
 ## 1.0.68 - 2026-07-04
 
 - Added automatic Lodestone portrait discovery for Shared XIVLauncher accounts when character name and world are already known.

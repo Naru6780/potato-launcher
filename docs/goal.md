@@ -1,8 +1,8 @@
 # Potato Launcher Goal
 
-**Current version:** `1.0.62`
+**Current version:** `1.0.69`
 
-Potato Launcher is a cute, portable Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
+Potato Launcher is a cute Final Fantasy XIV launcher helper for people who run many XIVLauncher accounts.
 
 The user-facing goal is simple: choose accounts or a named band, click launch, and let Potato Launcher sequence clients without forcing the user to manually babysit every XIVLauncher window.
 
@@ -15,7 +15,7 @@ On first run, the app asks which launch method to use:
 - `Instanced`: launch accounts from a folder of user-created BAT files.
 - `Shared`: launch accounts from XIVLauncher's shared `accountsList.json`.
 
-The chosen method is saved in portable `settings.json` beside the executable. Users can change the method later in Settings.
+The chosen method is saved in `%APPDATA%\Potato Launcher\settings.json`. Users can change the method later in Settings.
 
 ## Band Manager
 
@@ -26,7 +26,7 @@ Bands are named account groups.
 - Band edits autosave.
 - Band names are changed from the band list right-click menu, not from a permanent text box.
 - Launching a band should queue accounts safely and visibly through the Band Manager loading screen while leaving the account roster visible.
-- Bands can be saved/exported as `band.json` beside `settings.json` and imported on another portable copy with an explicit import mode.
+- Bands can be saved/exported as `band.json` and imported on another copy with an explicit import mode.
 
 ## Loading Behavior
 
@@ -50,17 +50,17 @@ Default color themes are simple built-ins and are excluded from random theme sel
 
 ## Account Icons
 
-Users can switch the account list between text and compact roster display in Settings. Roster mode uses real Lodestone character portraits only: Potato Launcher stores profile mappings from manual profile URLs or imports, then refreshes the matching Lodestone face and full-body portraits into the portable account icon cache. Missing mappings are reported instead of using fake icons or guessed profile matches.
+Users can switch the account list between text and compact roster display in Settings. Roster mode uses real Lodestone character portraits only: Potato Launcher stores profile mappings from manual profile URLs, imports, or exact manual auto-detection, then refreshes the matching Lodestone face and full-body portraits into the AppData account icon cache. Missing mappings are reported instead of using fake icons.
 
 Users can right-click an account to set or open the Lodestone profile URL. Manual profile URLs are treated as authoritative and are fetched directly from the character profile page.
 
-Mapped Lodestone portraits refresh on every app launch so changed character profile images are picked up without manual refresh.
+Mapped Lodestone portraits refresh on every app launch so changed character profile images are picked up without manual refresh. Accounts without saved Lodestone profiles are not auto-detected on startup; the account context menu refresh action can perform that first-time exact detection from character name and world.
 
 When the user manually assigns a Lodestone profile to a Shared-mode account, Potato Launcher may backfill XIVLauncher's `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl` fields for that account after creating a backup of `accountsList.json`.
 
 Users can export Shared-mode account metadata, custom account order, last-connected state, and Lodestone profile links, then import them on another machine. Importing must ask for an import mode so the user chooses whether to append, merge, replace matching entries, or overwrite everything.
 
-Users can drag accounts in the account list to define the shared display order. Band Manager mirrors that account order, and band launch order follows the checked member order shown there. Users can also sort accounts alphabetically, by the selected band, or by the most recent successful `Character@World` connection recorded by Potato Launcher. Account order and last-connected data live in portable `accountList.json`, not in `settings.json`.
+Users can drag accounts in the account list to define the shared display order. Band Manager mirrors that account order, and band launch order follows the checked member order shown there. Users can also sort accounts alphabetically, by the selected band, or by the most recent successful `Character@World` connection recorded by Potato Launcher. Account order and last-connected data live in `%APPDATA%\Potato Launcher\accountList.json`, not in `settings.json`.
 
 Roster dragging should show a clear insertion marker before the user releases the mouse.
 
@@ -68,5 +68,5 @@ Roster dragging should show a clear insertion marker before the user releases th
 
 - Do not inject into FFXIV or read game memory without an explicit user decision.
 - Do not store passwords or manipulate XIVLauncher password data.
-- Keep settings and folders portable.
+- Keep user settings and generated data outside the updateable app folder.
 - Keep the UI simple; avoid exposing XIVLauncher settings that XIVLauncher already handles.

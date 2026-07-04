@@ -1,3 +1,5 @@
+using System.Drawing;
+
 namespace PotatoLauncher.Tests;
 
 public class LayoutTests
@@ -103,12 +105,11 @@ public class LayoutTests
     [InlineData(520, 426)]
     [InlineData(980, 760)]
     [InlineData(1460, 900)]
-    public void LoadingOverlayMetrics_KeepsModalInsideContentAreaAboveButtons(int bandCardWidth, int bandCardHeight)
+    public void LoadingOverlayMetrics_CoversBandManagerSurfaceIncludingButtons(int bandCardWidth, int bandCardHeight)
     {
         var metrics = LoadingOverlayMetrics.Calculate(bandCardWidth, bandCardHeight);
-        var buttonTop = bandCardHeight - 18 - BandActionButtonMetrics.Calculate(bandCardWidth - 36).PanelHeight;
 
-        Assert.True(metrics.OverlayBounds.Bottom <= buttonTop - 12);
+        Assert.Equal(new Rectangle(0, 0, bandCardWidth, bandCardHeight), metrics.OverlayBounds);
         Assert.True(metrics.CardBounds.Width <= metrics.OverlayBounds.Width - 24);
         Assert.True(metrics.CardBounds.Height <= metrics.OverlayBounds.Height - 16);
         Assert.True(metrics.QueueBounds.Top >= metrics.TitleBounds.Bottom);
@@ -145,10 +146,8 @@ public class LayoutTests
     public void LoadingOverlayMetrics_QueueModeShowsSeveralBandMembersAtMinimumSize()
     {
         var metrics = LoadingOverlayMetrics.Calculate(520, 426, showQueue: true);
-        var buttonTop = 426 - 18 - BandActionButtonMetrics.Calculate(520 - 36).PanelHeight;
 
-        Assert.True(metrics.OverlayBounds.Top >= 52);
-        Assert.True(metrics.OverlayBounds.Bottom > buttonTop);
+        Assert.Equal(new Rectangle(0, 0, 520, 426), metrics.OverlayBounds);
         Assert.Equal(0, metrics.CardBounds.Left);
         Assert.Equal(0, metrics.CardBounds.Top);
         Assert.Equal(metrics.OverlayBounds.Size, metrics.CardBounds.Size);

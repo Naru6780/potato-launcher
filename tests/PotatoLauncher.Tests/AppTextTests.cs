@@ -26,6 +26,8 @@ public class AppTextTests
 
     [Theory]
     [InlineData("1.0.64", "Potato Launcher v1.0.64")]
+    [InlineData("1.0.68+a2d34fb991ab368496f58fd62be96811240c5dda", "Potato Launcher v1.0.68")]
+    [InlineData("1.0.68.0", "Potato Launcher v1.0.68")]
     [InlineData("", "Potato Launcher")]
     [InlineData("   ", "Potato Launcher")]
     public void WindowTitle_IncludesVersionWhenAvailable(string version, string expected)
@@ -50,8 +52,8 @@ public class AppTextTests
     }
 
     [Theory]
-    [InlineData("1.0.68.0", 1, 0, 68, 0)]
-    [InlineData("1.0.68", 1, 0, 68, -1)]
+    [InlineData("1.0.69.0", 1, 0, 69, 0)]
+    [InlineData("1.0.69", 1, 0, 69, -1)]
     public void ParseExecutableVersion_ReadsDownloadedAppVersion(string versionText, int major, int minor, int build, int revision)
     {
         var version = MainForm.ParseExecutableVersion(versionText);
@@ -92,13 +94,22 @@ public class AppTextTests
     }
 
     [Fact]
-    public void LoadingQueueStateColor_UsesWhiteBlueAndGreenForQueueProgress()
+    public void LoadingQueueStateColor_UsesWhiteBlueAndGreenForDarkQueueProgress()
     {
-        var palette = new ThemePalette(default, default, default, default, default, default, default, default, Color.Red, default);
+        var palette = MainForm.Palettes["Dark"];
 
         Assert.Equal(Color.White.ToArgb(), MainForm.LoadingQueueStateColor(palette, "Queued").ToArgb());
         Assert.Equal(Color.FromArgb(105, 172, 255).ToArgb(), MainForm.LoadingQueueStateColor(palette, "Loading").ToArgb());
         Assert.Equal(Color.FromArgb(98, 214, 135).ToArgb(), MainForm.LoadingQueueStateColor(palette, "Initialized").ToArgb());
-        Assert.Equal(Color.Red.ToArgb(), MainForm.LoadingQueueStateColor(palette, "Cancelled").ToArgb());
+        Assert.Equal(palette.Danger.ToArgb(), MainForm.LoadingQueueStateColor(palette, "Cancelled").ToArgb());
+    }
+
+    [Fact]
+    public void LoadingQueueStateColor_UsesThemeTextForLightQueuedRows()
+    {
+        var palette = MainForm.Palettes["Pink"];
+
+        Assert.Equal(palette.Text.ToArgb(), MainForm.LoadingQueueStateColor(palette, "Queued").ToArgb());
+        Assert.NotEqual(Color.White.ToArgb(), MainForm.LoadingQueueStateColor(palette, "Queued").ToArgb());
     }
 }

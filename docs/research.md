@@ -71,26 +71,26 @@ Supported music playlist extensions currently include common audio formats handl
 Account portraits are cached in:
 
 ```text
-Potato Launcher Assets\Account Icons
+%APPDATA%\Potato Launcher\Account Icons
 ```
 
-The cache is keyed by the launcher account key or BAT identity. Portraits are refreshed only from saved Lodestone profile IDs or URLs. The app caches both the face portrait (`fc0`) for roster tiles and the full-body portrait (`fl0`) for richer character-card UI. The app does not use placeholder icons or guessed profile matches in roster mode; missing icons stay visibly unmapped until the user assigns a profile URL or imports account metadata.
+The cache is keyed by the launcher account key or BAT identity. Portraits are refreshed from saved Lodestone profile IDs or URLs on startup. The account context menu refresh action can also do first-time exact Lodestone detection when the account already has a character name and world. The app caches both the face portrait (`fc0`) for roster tiles and the full-body portrait (`fl0`) for richer character-card UI. The app does not use fake placeholder icons in roster mode; missing icons stay visibly unmapped until the user refreshes, assigns a profile URL, or imports account metadata.
 
-On startup, mapped accounts with saved Lodestone profile URLs load from the local cache immediately. Missing, incomplete, or stale portrait caches are refreshed in parallel in the background; fresh complete caches are skipped so startup stays responsive. Accounts without a profile mapping are skipped rather than guessed.
+On startup, mapped accounts with saved Lodestone profile URLs load from the local cache immediately and refresh in parallel in the background. Accounts without a profile mapping are skipped rather than auto-detected on startup.
 
 Manual Lodestone profile assignment in Shared mode can update XIVLauncher's `accountsList.json` for the matching `UserName`, `UseSteamServiceAccount`, and `UseOtp` entry. Potato Launcher only writes `ChosenCharacterName`, `ChosenCharacterWorld`, and `ThumbnailUrl`, and first creates a timestamped backup under `backups\PotatoLauncher`.
 
-Settings account export writes a Potato Launcher transfer JSON with safe XIVLauncher account metadata, custom account order, last-connected timestamps, and portable Lodestone profile links from `settings.json`. Importing asks for `AppendAll`, `AppendNew`, `Merge`, `ReplaceExisting`, or `OverwriteAll`. Account matching uses `UserName`, `UseSteamServiceAccount`, and `UseOtp`; imported entries are written with password saving disabled and `accountsList.json` is backed up before import writes.
+Settings account export writes a Potato Launcher transfer JSON with safe XIVLauncher account metadata, custom account order, last-connected timestamps, and Lodestone profile links from `%APPDATA%\Potato Launcher\settings.json`. Importing asks for `AppendAll`, `AppendNew`, `Merge`, `ReplaceExisting`, or `OverwriteAll`. Account matching uses `UserName`, `UseSteamServiceAccount`, and `UseOtp`; imported entries are written with password saving disabled and `accountsList.json` is backed up before import writes.
 
-The Band Manager Save button and Settings export action write the current launch method's bands to `band.json` beside `settings.json`. Band import uses the same import mode chooser as account import, including duplicate-copy append and full overwrite when explicitly selected.
+The Band Manager Save button writes the current launch method's bands to `%APPDATA%\Potato Launcher\band.json`. Settings export lets the user choose a shareable band file. Band import uses the same import mode chooser as account import, including duplicate-copy append and full overwrite when explicitly selected.
 
 Band names are edited by right-clicking a band and choosing `Set name`; the old permanent rename text box was removed to keep the member list larger and the UI less cluttered.
 
-Account ordering is stored in portable `accountList.json` as `SharedAccountOrder` and `InstancedAccountOrder`, separate from `settings.json`. Dragging in the account list updates that order. Band Manager does not have a separate reorder model; it mirrors account order and saves checked band members in that order. The Band Manager member checklist uses a custom vertical-scrolling multi-column control because WinForms `CheckedListBox.MultiColumn` scrolls horizontally by design. `LastConnectedUtc` stores the timestamp when Potato Launcher observes a successful `Character@World` title, enabling sort-by-last-connected.
+Account ordering is stored in `%APPDATA%\Potato Launcher\accountList.json` as `SharedAccountOrder` and `InstancedAccountOrder`, separate from `settings.json`. Dragging in the account list updates that order. Band Manager does not have a separate reorder model; it mirrors account order and saves checked band members in that order. The Band Manager member checklist uses a custom vertical-scrolling multi-column control because WinForms `CheckedListBox.MultiColumn` scrolls horizontally by design. `LastConnectedUtc` stores the timestamp when Potato Launcher observes a successful `Character@World` title, enabling sort-by-last-connected.
 
 The Accounts panel width is a UI setting saved in `settings.json`. The splitter between Accounts and Band Manager clamps the account panel so Band Manager keeps enough room at small window sizes.
 
-The Band Manager `Save` button writes `band.json` beside `settings.json`. Settings `Export bands` opens a save dialog so users can choose where to export a shareable band file.
+The Band Manager `Save` button writes `%APPDATA%\Potato Launcher\band.json`. Settings `Export bands` opens a save dialog so users can choose where to export a shareable band file.
 
 ## News and Updates
 
@@ -99,6 +99,6 @@ The in-app news panel uses XIVLauncher/Lodestone-style public endpoints:
 - `https://frontier.ffxiv.com/v2/topics/en-us/banner.json`
 - `https://frontier.ffxiv.com/news/headline.json`
 
-The updater checks GitHub Releases for `Naru6780/potato-launcher`, downloads `PotatoLauncher.zip`, extracts it, copies over the current app folder, then relaunches.
+The updater checks GitHub Releases for `Naru6780/potato-launcher`, downloads `PotatoLauncher.zip`, extracts it, copies over the current app folder, then relaunches. User data remains in `%APPDATA%\Potato Launcher`, so updating the app folder does not overwrite settings, bands, account order, or cached portraits.
 
 The release zip must not contain `settings.json`.

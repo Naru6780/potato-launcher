@@ -90,9 +90,21 @@ internal static class AppText
 
     public static string WindowTitle(string version)
     {
+        version = DisplayVersion(version);
         return string.IsNullOrWhiteSpace(version)
             ? "Potato Launcher"
             : $"Potato Launcher v{version}";
+    }
+
+    internal static string DisplayVersion(string version)
+    {
+        version = (version ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(version)) return "";
+        var metadataIndex = version.IndexOf('+');
+        if (metadataIndex >= 0) version = version[..metadataIndex];
+        return Version.TryParse(version, out var parsed)
+            ? $"{parsed.Major}.{parsed.Minor}.{parsed.Build}"
+            : version;
     }
 
     public static string LoadingCooldownText(int seconds) => $"{Math.Max(0, seconds)}s";
@@ -301,28 +313,22 @@ internal readonly record struct LoadingOverlayMetrics(
 {
     public static LoadingOverlayMetrics Calculate(int bandCardWidth, int bandCardHeight, bool showQueue = false)
     {
-        const int sidePadding = 18;
-        const int top = 52;
-        const int bottomGap = 12;
-
         var safeWidth = Math.Max(420, bandCardWidth);
         var safeHeight = Math.Max(360, bandCardHeight);
-        var actionButtons = BandActionButtonMetrics.Calculate(safeWidth - sidePadding * 2);
-        var bottomReserved = showQueue ? 18 : actionButtons.PanelHeight + 30;
-        var overlayWidth = Math.Max(360, safeWidth - sidePadding * 2);
-        var overlayHeight = Math.Max(210, safeHeight - top - bottomReserved - bottomGap);
-        var overlay = new Rectangle(sidePadding, top, overlayWidth, overlayHeight);
+        var overlay = new Rectangle(0, 0, safeWidth, safeHeight);
+        var overlayWidth = overlay.Width;
+        var overlayHeight = overlay.Height;
 
-        var cardMaxWidth = Math.Max(360, overlayWidth - 24);
-        var cardMaxHeight = Math.Max(160, overlayHeight - 16);
+        var cardMaxWidth = Math.Max(360, overlayWidth - 48);
+        var cardMaxHeight = Math.Max(160, overlayHeight - 48);
 
         if (showQueue)
         {
             var queueCard = new Rectangle(0, 0, overlayWidth, overlayHeight);
             var queuePictureSize = Math.Clamp(overlayHeight / 10, 44, 72);
-            var queuePicture = new Rectangle((overlayWidth - queuePictureSize) / 2, 22, queuePictureSize, queuePictureSize);
+            var queuePicture = new Rectangle((overlayWidth - queuePictureSize) / 2, 54, queuePictureSize, queuePictureSize);
             var queueTitle = new Rectangle(34, queuePicture.Bottom + 8, overlayWidth - 68, 34);
-            var queueCancel = new Rectangle(Math.Max(34, (overlayWidth - 154) / 2), overlayHeight - 54, 154, 34);
+            var queueCancel = new Rectangle(Math.Max(34, (overlayWidth - 154) / 2), overlayHeight - 70, 154, 34);
             var queueStatus = new Rectangle(44, queueCancel.Top - 30, overlayWidth - 88, 24);
             var queueListTop = queueTitle.Bottom + 16;
             var queueList = new Rectangle(44, queueListTop, overlayWidth - 88, Math.Max(0, queueStatus.Top - queueListTop - 10));
@@ -363,22 +369,6 @@ internal readonly record struct StatusPillLayoutMetrics(Rectangle Bounds, Rectan
         y = Math.Max(0, y);
         var bounds = new Rectangle(x, y, width, height);
         return new StatusPillLayoutMetrics(bounds, new Rectangle(10, 4, Math.Max(40, width - 20), 20));
-    }
-}
-
-internal static class AccountIconRefreshPolicy
-{
-    public static readonly TimeSpan FreshCacheLifetime = TimeSpan.FromHours(12);
-    public const int StartupRefreshConcurrency = 8;
-
-    public static bool NeedsStartupRefresh(AccountIconProfile profile, DateTime nowUtc, bool faceExists, bool fullImageExists)
-    {
-        if (!faceExists || !fullImageExists) return true;
-        if (profile.LastUpdatedUtc == default) return true;
-        var lastUpdatedUtc = profile.LastUpdatedUtc.Kind == DateTimeKind.Utc
-            ? profile.LastUpdatedUtc
-            : profile.LastUpdatedUtc.ToUniversalTime();
-        return nowUtc - lastUpdatedUtc >= FreshCacheLifetime;
     }
 }
 
@@ -777,7 +767,6 @@ internal sealed class MainForm : Form
     private int pendingAccountPanelWidth;
     private bool accountResizeFrameQueued;
     private bool accountResizeListsSuspended;
-    private bool refreshingStartupPortraits;
     private readonly TextUpdateGate statusUpdateGate = new(TimeSpan.FromMilliseconds(750));
     private readonly TextUpdateGate loadingStatusUpdateGate = new(TimeSpan.FromMilliseconds(250));
 
@@ -796,7 +785,7 @@ internal sealed class MainForm : Form
         Shown += async (_, _) =>
         {
             await ShowChangelogIfNewVersionAsync();
-            await RefreshMappedAccountIconsOnStartupAsync();
+            await RefreshLinkedAccountIconsOnStartupAsync();
         };
         if (!settings.LaunchModeChosen) Shown += (_, _) => ShowLaunchChoiceOverlay();
     }
@@ -2273,8 +2262,8 @@ internal sealed class MainForm : Form
         };
         menu.Items.Add(setProfile);
 
-        var refreshProfile = new ToolStripMenuItem("Refresh portrait now");
-        refreshProfile.Enabled = !string.IsNullOrWhiteSpace(profileUrl);
+        var refreshProfile = new ToolStripMenuItem("Refresh / auto-detect portrait now");
+        refreshProfile.Enabled = CanRefreshPortraitManually(profile);
         refreshProfile.Click += async (_, _) =>
         {
             SetStatus($"Refreshing {AccountDisplayName(account)} portrait...");
@@ -2325,12 +2314,6 @@ internal sealed class MainForm : Form
         if (!string.IsNullOrWhiteSpace(profile.LodestoneId)) return NormalizeLodestoneProfileUrl(profile.LodestoneId);
         var id = ExtractLodestoneId(profile.ProfileUrl);
         return string.IsNullOrWhiteSpace(id) ? "" : NormalizeLodestoneProfileUrl(id);
-    }
-
-    private static bool CanResolveAccountIcon(AccountIconProfile profile)
-    {
-        return !string.IsNullOrWhiteSpace(AccountProfileUrl(profile)) ||
-            (!string.IsNullOrWhiteSpace(profile.CharacterName) && !string.IsNullOrWhiteSpace(profile.World));
     }
 
     private static string NormalizeLodestoneProfileUrl(string lodestoneId) => $"https://eu.finalfantasyxiv.com/lodestone/character/{lodestoneId}/";
@@ -3068,65 +3051,58 @@ internal sealed class MainForm : Form
         return $"{requestedName} ({DateTime.Now:HHmmss})";
     }
 
-    private static string BandExportPath() => Path.Combine(Path.GetDirectoryName(SettingsPath())!, "band.json");
-
-    private async Task RefreshMappedAccountIconsOnStartupAsync()
+    internal static string BandExportPath()
     {
-        if (refreshingStartupPortraits || accounts.Count == 0) return;
-        refreshingStartupPortraits = true;
-        try
+        EnsurePersistentDataMigrated();
+        return Path.Combine(PersistentDataRoot(), "band.json");
+    }
+
+    internal static bool ShouldRefreshPortraitOnStartup(AccountIconProfile profile)
+    {
+        return !string.IsNullOrWhiteSpace(AccountProfileUrl(profile));
+    }
+
+    internal static bool CanRefreshPortraitManually(AccountIconProfile profile)
+    {
+        return ShouldRefreshPortraitOnStartup(profile) ||
+            (!string.IsNullOrWhiteSpace(profile.CharacterName) && !string.IsNullOrWhiteSpace(profile.World));
+    }
+
+    private async Task RefreshLinkedAccountIconsOnStartupAsync()
+    {
+        if (accounts.Count == 0) return;
+
+        var refreshTargets = OrderedAccounts()
+            .Select(account => new { account, key = AccountIconKey(account) })
+            .Where(item => settings.AccountIcons.TryGetValue(item.key, out var profile) && ShouldRefreshPortraitOnStartup(profile))
+            .Select(item => item.account)
+            .ToList();
+
+        if (refreshTargets.Count == 0)
         {
-            var nowUtc = DateTime.UtcNow;
-            var mappedAccounts = OrderedAccounts()
-                .Select(account => new { account, key = AccountIconKey(account) })
-                .Where(item => settings.AccountIcons.ContainsKey(item.key))
-                .Select(item => new { item.account, profile = settings.AccountIcons[item.key] })
-                .Where(item => CanResolveAccountIcon(item.profile))
-                .ToList();
-
-            var refreshTargets = mappedAccounts
-                .Where(item => AccountIconRefreshPolicy.NeedsStartupRefresh(
-                    item.profile,
-                    nowUtc,
-                    File.Exists(AccountIconPath(item.profile)),
-                    File.Exists(AccountFullImagePath(item.profile))))
-                .ToList();
-
-            if (refreshTargets.Count == 0)
-            {
-                RefreshAccountRosterOnly();
-                SetStatus($"Loaded {mappedAccounts.Count} cached portrait{(mappedAccounts.Count == 1 ? "" : "s")}.", force: true);
-                return;
-            }
-
-            SetStatus($"Refreshing {refreshTargets.Count} stale or missing portrait{(refreshTargets.Count == 1 ? "" : "s")}...");
-            using var semaphore = new SemaphoreSlim(AccountIconRefreshPolicy.StartupRefreshConcurrency);
-            var results = await Task.WhenAll(refreshTargets.Select(async item =>
-            {
-                await semaphore.WaitAsync();
-                try
-                {
-                    return await RefreshAccountIconAsync(item.account, quiet: true, saveSettings: false);
-                }
-                finally
-                {
-                    semaphore.Release();
-                }
-            }));
-
-            var refreshed = results.Count(result => result);
-            var failed = results.Length - refreshed;
-            if (refreshed > 0) SaveSettings(settings);
             RefreshAccountRosterOnly();
-            var cached = mappedAccounts.Count - refreshTargets.Count;
-            SetStatus(failed == 0
-                ? $"Portraits ready: {cached} cached, {refreshed} refreshed."
-                : $"Portraits ready: {cached} cached, {refreshed} refreshed, {failed} failed.", force: true);
+            return;
         }
-        finally
+
+        SetStatus($"Refreshing {refreshTargets.Count} linked portrait{(refreshTargets.Count == 1 ? "" : "s")}...");
+        using var semaphore = new SemaphoreSlim(6);
+        var results = await Task.WhenAll(refreshTargets.Select(async account =>
         {
-            refreshingStartupPortraits = false;
-        }
+            await semaphore.WaitAsync();
+            try
+            {
+                return await RefreshAccountIconAsync(account, quiet: true, saveSettings: false);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }));
+
+        var refreshed = results.Count(result => result);
+        if (refreshed > 0) SaveSettings(settings);
+        RefreshAccountRosterOnly();
+        SetStatus($"Portraits refreshed: {refreshed}/{refreshTargets.Count}.", force: true);
     }
 
     private async Task<bool> RefreshAccountIconAsync(Account account, bool quiet, bool saveSettings = true)
@@ -4236,7 +4212,13 @@ internal sealed class MainForm : Form
         if (normalized.Equals("Initialized", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(98, 214, 135);
         if (normalized.Equals("Loading", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(105, 172, 255);
         if (normalized.Equals("Cancelled", StringComparison.OrdinalIgnoreCase) || normalized.Equals("Failed", StringComparison.OrdinalIgnoreCase)) return palette.Danger;
-        return Color.White;
+        return IsLightColor(palette.Card) ? palette.Text : Color.White;
+    }
+
+    private static bool IsLightColor(Color color)
+    {
+        var luminance = (0.2126 * color.R + 0.7152 * color.G + 0.0722 * color.B) / 255;
+        return luminance >= 0.62;
     }
 
     private void ResizeLoadingQueueRows()
@@ -5546,10 +5528,32 @@ internal sealed class MainForm : Form
             : Path.Combine(AccountIconsFolder(), profile.FullImageFileName);
     }
 
-    private static string SettingsPath() => Path.Combine(AppContext.BaseDirectory, "settings.json");
-    private static string AccountListStatePath() => Path.Combine(AppContext.BaseDirectory, "accountList.json");
+    private static bool persistentDataMigrationChecked;
+
+    internal static string PersistentDataRoot()
+    {
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Potato Launcher");
+    }
+
+    internal static string SettingsPath()
+    {
+        EnsurePersistentDataMigrated();
+        return Path.Combine(PersistentDataRoot(), "settings.json");
+    }
+
+    internal static string AccountListStatePath()
+    {
+        EnsurePersistentDataMigrated();
+        return Path.Combine(PersistentDataRoot(), "accountList.json");
+    }
+
     private static string GetAssetRoot() => Path.Combine(AppContext.BaseDirectory, "Potato Launcher Assets");
-    private static string AccountIconsFolder() => Path.Combine(GetAssetRoot(), "Account Icons");
+    internal static string AccountIconsFolder()
+    {
+        EnsurePersistentDataMigrated();
+        return Path.Combine(PersistentDataRoot(), "Account Icons");
+    }
+
     private static string GetLoadingGifFolder() => Path.Combine(GetAssetRoot(), "Assets");
     private static string MascotGifPath() => Path.Combine(GetLoadingGifFolder(), "09-sIayC6DgB9QOsPj4jd.gif");
     private static string ThemeFolder(string themeName) => Path.Combine(GetAssetRoot(), "themes", SafeFolderName(themeName));
@@ -5567,6 +5571,41 @@ internal sealed class MainForm : Form
         Directory.CreateDirectory(AccountIconsFolder());
         Directory.CreateDirectory(GetLoadingGifFolder());
         Directory.CreateDirectory(Path.Combine(GetAssetRoot(), "themes"));
+    }
+
+    private static void EnsurePersistentDataMigrated()
+    {
+        if (persistentDataMigrationChecked) return;
+        persistentDataMigrationChecked = true;
+
+        var dataRoot = PersistentDataRoot();
+        Directory.CreateDirectory(dataRoot);
+        CopyPortableFileIfMissing("settings.json");
+        CopyPortableFileIfMissing("accountList.json");
+        CopyPortableFileIfMissing("band.json");
+        CopyPortableAccountIconsIfMissing();
+
+        void CopyPortableFileIfMissing(string fileName)
+        {
+            var source = Path.Combine(AppContext.BaseDirectory, fileName);
+            var target = Path.Combine(dataRoot, fileName);
+            if (!File.Exists(source) || File.Exists(target)) return;
+            File.Copy(source, target);
+        }
+
+        void CopyPortableAccountIconsIfMissing()
+        {
+            var sourceFolder = Path.Combine(GetAssetRoot(), "Account Icons");
+            var targetFolder = Path.Combine(dataRoot, "Account Icons");
+            Directory.CreateDirectory(targetFolder);
+            if (!Directory.Exists(sourceFolder)) return;
+
+            foreach (var sourceFile in Directory.EnumerateFiles(sourceFolder))
+            {
+                var targetFile = Path.Combine(targetFolder, Path.GetFileName(sourceFile));
+                if (!File.Exists(targetFile)) File.Copy(sourceFile, targetFile);
+            }
+        }
     }
 
     private RoundedPanel Card(int x, int y, int width, int height) => new() { Bounds = new Rectangle(x, y, width, height), Radius = 22 };
