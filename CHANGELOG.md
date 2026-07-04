@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.70 - 2026-07-04
+
+- Replaced the old `What's new?` top button with a compact `News` button that opens the existing event window.
+- Added a top-right animated image bandroll that slides through featured Lodestone banner art horizontally.
+
 ## 1.0.69 - 2026-07-04
 
 - Moved settings, account order, bands, and portrait cache to `%APPDATA%\Potato Launcher` so app updates preserve user data.

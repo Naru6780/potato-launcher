@@ -572,6 +572,7 @@ internal readonly record struct BatchLaunchInfo(string AccountKey, string Roamin
 internal readonly record struct StartedGameClient(Account Account, int ProcessId);
 internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
 internal sealed record NewsEntry(string Title, string Url, DateTimeOffset Date, string Tag);
+internal sealed record NewsBandrollSlide(Image Image, string Url, string Title);
 internal sealed record LodestoneIconResult(string LodestoneId, string CharacterName, string World, string ProfileUrl, string IconUrl, string FullImageUrl);
 internal sealed record LodestoneSearchCandidate(string LodestoneId, string CharacterName, string World, string ProfileUrl, string IconUrl);
 internal sealed record AccountRosterItem(Account Account, string DisplayName, string? FacePath, string? FullPath, string Tooltip);
@@ -730,6 +731,7 @@ internal sealed class MainForm : Form
     private Label loadingStatus = null!;
     private Button loadingCancel = null!;
     private RoundedPanel newsOverlay = null!;
+    private NewsBandrollControl newsBandroll = null!;
     private PictureBox newsBannerPicture = null!;
     private Label newsBannerTitle = null!;
     private NewsDotsControl newsDots = null!;
@@ -785,6 +787,7 @@ internal sealed class MainForm : Form
         Shown += async (_, _) =>
         {
             await ShowChangelogIfNewVersionAsync();
+            await LoadNewsBandrollAsync();
             await RefreshLinkedAccountIconsOnStartupAsync();
         };
         if (!settings.LaunchModeChosen) Shown += (_, _) => ShowLaunchChoiceOverlay();
@@ -816,14 +819,17 @@ internal sealed class MainForm : Form
         muteMusicButton = Button("", 272, 24, 108, 34, "Secondary");
         muteMusicButton.Click += (_, _) => ToggleMusicMute();
         background.Controls.Add(muteMusicButton);
-        whatsNewButton = Button("What's new?", 394, 24, 122, 34, "Secondary");
+        whatsNewButton = Button("News", 394, 24, 68, 34, "Primary");
         whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
         background.Controls.Add(whatsNewButton);
-        helpButton = Button("?", 524, 24, 34, 34, "Secondary");
+        helpButton = Button("?", 476, 24, 34, 34, "Secondary");
         appToolTip = new AppToolTip(this);
         appToolTip.Attach(helpButton, "Help", "Open the Potato Launcher feature guide.");
         helpButton.Click += (_, _) => ShowHelpWindow();
         background.Controls.Add(helpButton);
+        newsBandroll = new NewsBandrollControl { Bounds = new Rectangle(620, 24, 320, 34), Visible = false };
+        newsBandroll.ItemClicked += (_, url) => OpenUrl(url);
+        background.Controls.Add(newsBandroll);
         mascotOverlay = CreateMascotOverlay();
         Shown += (_, _) => UpdateMascotOverlay();
         Move += (_, _) => UpdateMascotOverlay();
@@ -1195,7 +1201,7 @@ internal sealed class MainForm : Form
             (settingsButton, 102),
             (killGameButton, 104),
             (muteMusicButton, 108),
-            (whatsNewButton, 122),
+            (whatsNewButton, 68),
             (helpButton, 34)
         };
 
@@ -1206,6 +1212,24 @@ internal sealed class MainForm : Form
                 : Math.Clamp((int)MathF.Round(baseWidth * scale), baseWidth, baseWidth + 26);
             button.Bounds = new Rectangle(x, y, width, buttonHeight);
             x += width + gap;
+        }
+
+        if (newsBandroll is not null)
+        {
+            var mascotReserve = Math.Clamp(ClientSize.Width / 11, 84, 120);
+            var right = ClientSize.Width - Math.Max(24, layout.Margin) - mascotReserve;
+            var available = right - x;
+            if (available >= 230)
+            {
+                var width = Math.Clamp(available - gap, 230, 360);
+                var height = Math.Clamp((int)MathF.Round(buttonHeight * 1.55F), 52, 64);
+                newsBandroll.Bounds = new Rectangle(right - width, Math.Max(12, y - 8), width, height);
+                newsBandroll.Visible = newsBandroll.HasSlides;
+            }
+            else
+            {
+                newsBandroll.Visible = false;
+            }
         }
     }
 
@@ -4291,6 +4315,32 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task LoadNewsBandrollAsync()
+    {
+        try
+        {
+            await LoadLauncherNewsAsync();
+            var slides = new List<NewsBandrollSlide>();
+            foreach (var banner in newsBanners.Where(banner => !string.IsNullOrWhiteSpace(banner.ImageUrl)).Take(5))
+            {
+                var image = await DownloadNewsImageAsync(banner.ImageUrl);
+                if (image is not null)
+                {
+                    slides.Add(new NewsBandrollSlide(image, banner.LinkUrl, banner.Title));
+                }
+            }
+
+            newsBandroll.SetSlides(slides);
+            newsBandroll.Visible = newsBandroll.HasSlides;
+            ApplyResponsiveLayout();
+            ApplyThemeRecursive(newsBandroll);
+        }
+        catch
+        {
+            newsBandroll.SetSlides([]);
+        }
+    }
+
     private void HideNewsOverlay()
     {
         newsOverlay.Visible = false;
@@ -4670,16 +4720,23 @@ internal sealed class MainForm : Form
         }
         try
         {
-            using var http = new HttpClient();
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
-            var bytes = await http.GetByteArrayAsync(banner.ImageUrl);
-            using var stream = new MemoryStream(bytes);
-            newsBannerPicture.Image = Image.FromStream(stream);
+            newsBannerPicture.Image = await DownloadNewsImageAsync(banner.ImageUrl);
         }
         catch
         {
             newsBannerTitle.Text = "Could not load featured image. Click to open it online.";
         }
+    }
+
+    private static async Task<Image?> DownloadNewsImageAsync(string imageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl)) return null;
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
+        var bytes = await http.GetByteArrayAsync(imageUrl);
+        using var stream = new MemoryStream(bytes);
+        using var image = Image.FromStream(stream);
+        return new Bitmap(image);
     }
 
     private Image CreateGeneratedNewsBanner(string title)
@@ -5104,6 +5161,7 @@ internal sealed class MainForm : Form
             whatsNewButton.BringToFront();
             helpButton.BringToFront();
             muteMusicButton.BringToFront();
+            newsBandroll.BringToFront();
             backgroundVideo.Stop();
             backgroundVideo.Source = new Uri(video, UriKind.Absolute);
             videoHost.Visible = true;
@@ -5130,6 +5188,7 @@ internal sealed class MainForm : Form
         whatsNewButton.BringToFront();
         helpButton.BringToFront();
         muteMusicButton.BringToFront();
+        newsBandroll.BringToFront();
         statusPill.BringToFront();
         if (newsOverlay.Visible) newsOverlay.BringToFront();
         if (settingsDrawerOpen) settingsDrawer.BringToFront();
@@ -5248,6 +5307,10 @@ internal sealed class MainForm : Form
                 case NewsDotsControl dots:
                     dots.Palette = palette;
                     dots.BackColor = Color.FromArgb(255, palette.Card);
+                    break;
+                case NewsBandrollControl bandroll:
+                    bandroll.Palette = palette;
+                    bandroll.BackColor = Color.Transparent;
                     break;
                 case LinkLabel linkLabel:
                     linkLabel.LinkColor = palette.Text;
@@ -6876,6 +6939,194 @@ internal sealed class AccountRosterGrid : ScrollableControl
             foreach (var image in imageCache.Values)
             {
                 image.Dispose();
+            }
+        }
+        base.Dispose(disposing);
+    }
+}
+
+internal sealed class NewsBandrollControl : Control
+{
+    private readonly System.Windows.Forms.Timer rollTimer = new();
+    private readonly List<NewsBandrollSlide> slides = [];
+    private int currentIndex;
+    private int nextIndex;
+    private bool animating;
+    private DateTime animationStartUtc;
+    private DateTime nextRollUtc = DateTime.UtcNow.AddSeconds(4);
+    private const int AnimationMilliseconds = 620;
+    private static readonly TimeSpan DisplayInterval = TimeSpan.FromSeconds(5);
+
+    public event EventHandler<string>? ItemClicked;
+    public ThemePalette Palette { get; set; } = new(Color.White, Color.White, Color.White, Color.LightGray, Color.Black, Color.Gray, Color.HotPink, Color.CornflowerBlue, Color.IndianRed, Color.White);
+    public bool HasSlides => slides.Count > 0;
+
+    public NewsBandrollControl()
+    {
+        DoubleBuffered = true;
+        Cursor = Cursors.Hand;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
+        rollTimer.Interval = 30;
+        rollTimer.Tick += (_, _) => UpdateRollAnimation();
+        rollTimer.Start();
+    }
+
+    public void SetSlides(IReadOnlyList<NewsBandrollSlide> newsSlides)
+    {
+        foreach (var slide in slides)
+        {
+            slide.Image.Dispose();
+        }
+
+        slides.Clear();
+        slides.AddRange(newsSlides.Where(slide => slide.Image.Width > 0 && slide.Image.Height > 0));
+        currentIndex = 0;
+        nextIndex = slides.Count > 1 ? 1 : 0;
+        animating = false;
+        nextRollUtc = DateTime.UtcNow.AddSeconds(4);
+        Visible = HasSlides;
+        Invalidate();
+    }
+
+    private void UpdateRollAnimation()
+    {
+        if (slides.Count <= 1)
+        {
+            animating = false;
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        if (!animating && now >= nextRollUtc)
+        {
+            nextIndex = (currentIndex + 1) % slides.Count;
+            animationStartUtc = now;
+            animating = true;
+        }
+
+        if (animating && (now - animationStartUtc).TotalMilliseconds >= AnimationMilliseconds)
+        {
+            currentIndex = nextIndex;
+            animating = false;
+            nextRollUtc = now + DisplayInterval;
+        }
+
+        if (Visible) Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var bandPath = RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), Height / 2);
+        using var bandBrush = new SolidBrush(Color.FromArgb(210, Palette.Card));
+        using var borderPen = new Pen(Color.FromArgb(190, Palette.Border), 1);
+        e.Graphics.FillPath(bandBrush, bandPath);
+        e.Graphics.DrawPath(borderPen, bandPath);
+
+        var imageBounds = new Rectangle(6, 5, Math.Max(1, Width - 12), Math.Max(1, Height - 10));
+        using var clipPath = RoundedRectangle(imageBounds, Math.Max(8, imageBounds.Height / 2));
+        using var clipRegion = new Region(clipPath);
+        var oldClip = e.Graphics.Clip;
+        e.Graphics.Clip = clipRegion;
+
+        if (slides.Count == 0)
+        {
+            using var emptyBrush = new SolidBrush(Color.FromArgb(120, Palette.ListBack));
+            e.Graphics.FillRectangle(emptyBrush, imageBounds);
+        }
+        else if (!animating)
+        {
+            DrawSlide(e.Graphics, slides[currentIndex], imageBounds, 0);
+        }
+        else
+        {
+            var progress = Math.Clamp((float)(DateTime.UtcNow - animationStartUtc).TotalMilliseconds / AnimationMilliseconds, 0F, 1F);
+            progress = EaseOutCubic(progress);
+            DrawSlide(e.Graphics, slides[currentIndex], imageBounds, (int)MathF.Round(-progress * imageBounds.Width));
+            DrawSlide(e.Graphics, slides[nextIndex], imageBounds, (int)MathF.Round((1F - progress) * imageBounds.Width));
+        }
+
+        e.Graphics.Clip = oldClip;
+        clipRegion.Dispose();
+        oldClip.Dispose();
+    }
+
+    protected override void OnClick(EventArgs e)
+    {
+        base.OnClick(e);
+        if (slides.Count == 0) return;
+        var slide = slides[Math.Clamp(currentIndex, 0, slides.Count - 1)];
+        ItemClicked?.Invoke(this, slide.Url);
+    }
+
+    private static void DrawSlide(Graphics graphics, NewsBandrollSlide slide, Rectangle bounds, int xOffset)
+    {
+        var target = new Rectangle(bounds.X + xOffset, bounds.Y, bounds.Width, bounds.Height);
+        var source = CoverSourceRectangle(slide.Image.Size, bounds.Size);
+        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        graphics.DrawImage(slide.Image, target, source, GraphicsUnit.Pixel);
+        using var edgeBrush = new LinearGradientBrush(target, Color.FromArgb(80, Color.Black), Color.Transparent, LinearGradientMode.Horizontal);
+        graphics.FillRectangle(edgeBrush, target);
+    }
+
+    private static float EaseOutCubic(float progress)
+    {
+        progress = Math.Clamp(progress, 0F, 1F);
+        return 1F - MathF.Pow(1F - progress, 3F);
+    }
+
+    private static Rectangle CoverSourceRectangle(Size imageSize, Size targetSize)
+    {
+        if (imageSize.Width <= 0 || imageSize.Height <= 0 || targetSize.Width <= 0 || targetSize.Height <= 0)
+        {
+            return new Rectangle(Point.Empty, imageSize);
+        }
+
+        var imageRatio = imageSize.Width / (float)imageSize.Height;
+        var targetRatio = targetSize.Width / (float)targetSize.Height;
+        if (imageRatio > targetRatio)
+        {
+            var sourceWidth = (int)MathF.Round(imageSize.Height * targetRatio);
+            var x = Math.Max(0, (imageSize.Width - sourceWidth) / 2);
+            return new Rectangle(x, 0, Math.Min(sourceWidth, imageSize.Width), imageSize.Height);
+        }
+
+        var sourceHeight = (int)MathF.Round(imageSize.Width / targetRatio);
+        var y = Math.Max(0, (imageSize.Height - sourceHeight) / 2);
+        return new Rectangle(0, y, imageSize.Width, Math.Min(sourceHeight, imageSize.Height));
+    }
+
+    private static GraphicsPath RoundedRectangle(Rectangle bounds, int radius)
+    {
+        var path = new GraphicsPath();
+        if (bounds.Width <= 0 || bounds.Height <= 0) return path;
+        radius = Math.Min(radius, Math.Max(1, Math.Min(bounds.Width, bounds.Height) / 2));
+        var diameter = radius * 2;
+        var rect = new Rectangle(bounds.Left, bounds.Top, diameter, diameter);
+        path.AddArc(rect, 180, 90);
+        rect.X = bounds.Right - diameter;
+        path.AddArc(rect, 270, 90);
+        rect.Y = bounds.Bottom - diameter;
+        path.AddArc(rect, 0, 90);
+        rect.X = bounds.Left;
+        path.AddArc(rect, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            rollTimer.Stop();
+            rollTimer.Dispose();
+            foreach (var slide in slides)
+            {
+                slide.Image.Dispose();
             }
         }
         base.Dispose(disposing);
