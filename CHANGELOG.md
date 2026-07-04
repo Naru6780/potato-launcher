@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.71 - 2026-07-04
+
+- Restyled the top `News` button as a rounded gradient pill so it matches the animated news bandroll.
+
 ## 1.0.70 - 2026-07-04
 
 - Replaced the old `What's new?` top button with a compact `News` button that opens the existing event window.

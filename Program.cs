@@ -819,7 +819,7 @@ internal sealed class MainForm : Form
         muteMusicButton = Button("", 272, 24, 108, 34, "Secondary");
         muteMusicButton.Click += (_, _) => ToggleMusicMute();
         background.Controls.Add(muteMusicButton);
-        whatsNewButton = Button("News", 394, 24, 68, 34, "Primary");
+        whatsNewButton = NewsPillButton(394, 24, 68, 34);
         whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
         background.Controls.Add(whatsNewButton);
         helpButton = Button("?", 476, 24, 34, 34, "Secondary");
@@ -5312,6 +5312,10 @@ internal sealed class MainForm : Form
                     bandroll.Palette = palette;
                     bandroll.BackColor = Color.Transparent;
                     break;
+                case NewsPillButton newsButton:
+                    newsButton.Palette = palette;
+                    newsButton.ForeColor = Color.White;
+                    break;
                 case LinkLabel linkLabel:
                     linkLabel.LinkColor = palette.Text;
                     linkLabel.ActiveLinkColor = palette.Primary;
@@ -5654,6 +5658,17 @@ internal sealed class MainForm : Form
         var button = new Button { Text = text, Bounds = new Rectangle(x, y, width, height), Tag = role, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
         button.FlatAppearance.BorderSize = 0;
         return button;
+    }
+
+    private Button NewsPillButton(int x, int y, int width, int height)
+    {
+        return new NewsPillButton
+        {
+            Text = "NEWS",
+            Bounds = new Rectangle(x, y, width, height),
+            Tag = "News",
+            Palette = palette
+        };
     }
 
     private static IDisposable BeginRedrawScope(params Control[] controls)
@@ -6942,6 +6957,124 @@ internal sealed class AccountRosterGrid : ScrollableControl
             }
         }
         base.Dispose(disposing);
+    }
+}
+
+internal sealed class NewsPillButton : Button
+{
+    private bool hovered;
+    private bool pressed;
+
+    public ThemePalette Palette { get; set; } = new(Color.White, Color.White, Color.White, Color.LightGray, Color.Black, Color.Gray, Color.HotPink, Color.CornflowerBlue, Color.IndianRed, Color.White);
+
+    public NewsPillButton()
+    {
+        FlatStyle = FlatStyle.Flat;
+        FlatAppearance.BorderSize = 0;
+        Cursor = Cursors.Hand;
+        Font = new Font("Segoe UI", 8F, FontStyle.Bold);
+        ForeColor = Color.White;
+        BackColor = Color.Transparent;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        UpdateButtonRegion();
+    }
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        hovered = true;
+        Invalidate();
+        base.OnMouseEnter(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        hovered = false;
+        pressed = false;
+        Invalidate();
+        base.OnMouseLeave(e);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs mevent)
+    {
+        pressed = true;
+        Invalidate();
+        base.OnMouseDown(mevent);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs mevent)
+    {
+        pressed = false;
+        Invalidate();
+        base.OnMouseUp(mevent);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaintBackground(e);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        var bounds = ClientRectangle;
+        bounds.Inflate(-2, -2);
+        if (pressed) bounds.Offset(0, 1);
+
+        using var shadowPath = RoundedRectangle(new Rectangle(bounds.X, bounds.Y + 2, bounds.Width, Math.Max(1, bounds.Height - 1)), bounds.Height / 2);
+        using var shadowBrush = new SolidBrush(Color.FromArgb(70, 0, 0, 0));
+        e.Graphics.FillPath(shadowBrush, shadowPath);
+
+        using var pillPath = RoundedRectangle(bounds, bounds.Height / 2);
+        var left = hovered ? ControlPaint.Light(Palette.Primary, 0.18F) : Palette.Primary;
+        var right = hovered ? ControlPaint.Light(Palette.Secondary, 0.15F) : Palette.Secondary;
+        if (pressed)
+        {
+            left = ControlPaint.Dark(left, 0.08F);
+            right = ControlPaint.Dark(right, 0.08F);
+        }
+
+        using var gradient = new LinearGradientBrush(bounds, left, right, LinearGradientMode.Horizontal);
+        e.Graphics.FillPath(gradient, pillPath);
+
+        using var glossPath = RoundedRectangle(new Rectangle(bounds.X + 4, bounds.Y + 3, bounds.Width - 8, Math.Max(7, bounds.Height / 2 - 2)), Math.Max(4, bounds.Height / 4));
+        using var glossBrush = new SolidBrush(Color.FromArgb(65, Color.White));
+        e.Graphics.FillPath(glossBrush, glossPath);
+
+        using var outlinePen = new Pen(Color.FromArgb(170, Color.White), hovered ? 2F : 1.4F);
+        e.Graphics.DrawPath(outlinePen, pillPath);
+
+        using var textBrush = new SolidBrush(Color.White);
+        using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
+        e.Graphics.DrawString(Text, Font, textBrush, bounds, format);
+    }
+
+    private void UpdateButtonRegion()
+    {
+        if (Width <= 0 || Height <= 0) return;
+        using var path = RoundedRectangle(new Rectangle(0, 0, Width, Height), Height / 2);
+        var oldRegion = Region;
+        Region = new Region(path);
+        oldRegion?.Dispose();
+    }
+
+    private static GraphicsPath RoundedRectangle(Rectangle bounds, int radius)
+    {
+        var path = new GraphicsPath();
+        if (bounds.Width <= 0 || bounds.Height <= 0) return path;
+        radius = Math.Min(radius, Math.Max(1, Math.Min(bounds.Width, bounds.Height) / 2));
+        var diameter = radius * 2;
+        var rect = new Rectangle(bounds.Left, bounds.Top, diameter, diameter);
+        path.AddArc(rect, 180, 90);
+        rect.X = bounds.Right - diameter;
+        path.AddArc(rect, 270, 90);
+        rect.Y = bounds.Bottom - diameter;
+        path.AddArc(rect, 0, 90);
+        rect.X = bounds.Left;
+        path.AddArc(rect, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 }
 
