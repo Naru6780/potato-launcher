@@ -95,6 +95,8 @@ internal static class AppText
             : $"Potato Launcher v{version}";
     }
 
+    public static string LoadingCooldownText(int seconds) => $"{Math.Max(0, seconds)}s";
+
     public static string MissingAccountIconStatus(int missingCount)
     {
         return missingCount == 1
@@ -3516,9 +3518,10 @@ internal sealed class MainForm : Form
             token.ThrowIfCancellationRequested();
             var message = $"{bandName}: next client launches in {remaining}s.";
             SetStatus(message);
-            UpdateLoadingOverlay(message);
+            UpdateLoadingOverlay(AppText.LoadingCooldownText(remaining), force: true);
             await Task.Delay(TimeSpan.FromSeconds(1), token);
         }
+        UpdateLoadingOverlay("", force: true);
     }
 
     private bool IsSharedLaunchMode() => NormalizeLaunchMode(settings.LaunchMode) == "Shared";
@@ -3808,7 +3811,7 @@ internal sealed class MainForm : Form
                     var readyMessage = $"{title} is ready.";
                     SetStatus(readyMessage, force: true);
                     accountStatus?.Invoke("Initialized");
-                    UpdateLoadingOverlay(readyMessage, force: true);
+                    UpdateLoadingOverlay(readyMessage);
                     RememberAccountCharacterTitle(startedClient.Account, title);
                     return;
                 }
@@ -4049,6 +4052,10 @@ internal sealed class MainForm : Form
     private void UpdateLoadingOverlay(string detail, bool force = false)
     {
         if (!loadingOverlay.Visible) return;
+        if (loadingQueueActive && !force)
+        {
+            return;
+        }
         if (loadingStatusUpdateGate.ShouldApply(detail, DateTime.UtcNow, force))
         {
             loadingStatus.Text = detail;
@@ -4064,6 +4071,7 @@ internal sealed class MainForm : Form
         loadingQueuePanel.SuspendLayout();
         loadingQueuePanel.Controls.Clear();
         loadingQueuePanel.AutoScrollPosition = Point.Empty;
+        loadingStatus.Text = "";
         loadingQueuePanel.Visible = loadingQueueActive;
         for (var index = 0; index < queuedAccounts.Count; index++)
         {

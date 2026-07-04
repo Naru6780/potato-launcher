@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.65 - 2026-07-04
+
+- Removed routine waiting messages from the band loading modal and kept cooldown feedback to a simple seconds countdown.
+
 ## 1.0.64 - 2026-07-04
 
 - Added the app version to the window title bar so users can confirm they are running the updated build.

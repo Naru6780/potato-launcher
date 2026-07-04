@@ -33,6 +33,15 @@ public class AppTextTests
         Assert.Equal(expected, AppText.WindowTitle(version));
     }
 
+    [Theory]
+    [InlineData(12, "12s")]
+    [InlineData(1, "1s")]
+    [InlineData(-3, "0s")]
+    public void LoadingCooldownText_ShowsOnlySeconds(int seconds, string expected)
+    {
+        Assert.Equal(expected, AppText.LoadingCooldownText(seconds));
+    }
+
     [Fact]
     public void HelpWindowText_UsesWindowsLineBreaksBetweenSections()
     {
