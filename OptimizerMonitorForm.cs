@@ -1,5 +1,3 @@
-using System.ComponentModel;
-using System.Diagnostics;
 using System.Drawing.Drawing2D;
 
 namespace PotatoLauncher;
@@ -17,7 +15,6 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly ComboBox assignmentMode = new();
     private readonly ComboBox mainProcessors = new();
     private readonly ComboBox followerProcessors = new();
-    private readonly ComboBox followerPriority = new();
     private readonly ComboBox roleClientInput = new();
     private readonly ComboBox roleInput = new();
     private readonly Label mainClientsLabel = new();
@@ -147,16 +144,11 @@ internal sealed class OptimizerMonitorForm : Form
         grid.ColumnHeadersHeight = 34;
         grid.Dock = DockStyle.Fill;
         grid.EnableHeadersVisualStyles = false;
-        grid.ReadOnly = false;
+        grid.ReadOnly = true;
         grid.RowHeadersVisible = false;
         grid.RowTemplate.Height = 32;
         grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         grid.MultiSelect = false;
-        grid.CellValueChanged += GridCellValueChanged;
-        grid.CurrentCellDirtyStateChanged += (_, _) =>
-        {
-            if (grid.IsCurrentCellDirty) grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
-        };
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Client", HeaderText = "Client", ReadOnly = true, FillWeight = 175 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Pid", HeaderText = "PID", ReadOnly = true, FillWeight = 60 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Cpu", HeaderText = "CPU", ReadOnly = true, FillWeight = 70 });
@@ -165,7 +157,6 @@ internal sealed class OptimizerMonitorForm : Form
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Private", HeaderText = "Private", ReadOnly = true, FillWeight = 86 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Threads", HeaderText = "Threads", ReadOnly = true, FillWeight = 72 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Role", HeaderText = "Role", ReadOnly = true, FillWeight = 78 });
-        grid.Columns.Add(new DataGridViewComboBoxColumn { Name = "Priority", HeaderText = "Priority", FillWeight = 116, FlatStyle = FlatStyle.Flat });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Affinity", HeaderText = "Affinity", ReadOnly = true, FillWeight = 130 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Trim", HeaderText = "Last trim", ReadOnly = true, FillWeight = 96 });
         root.Controls.Add(grid, 0, 1);
@@ -198,14 +189,6 @@ internal sealed class OptimizerMonitorForm : Form
         followerProcessors.DropDownStyle = ComboBoxStyle.DropDownList;
         followerProcessors.DataSource = OptimizerSettings.AllowedFollowerLogicalProcessors.ToList();
         followerProcessors.SelectedIndexChanged += (_, _) => SaveSelectedProcessorCounts();
-        followerPriority.DropDownStyle = ComboBoxStyle.DropDownList;
-        followerPriority.DataSource = OptimizerSettings.AllowedClientPriorityOverrides.ToList();
-        followerPriority.SelectedIndexChanged += (_, _) =>
-        {
-            if (refreshing) return;
-            optimizer.Settings.FollowerPriorityClass = (ProcessPriorityClass)followerPriority.SelectedItem!;
-            optimizer.SaveSettings();
-        };
         roleClientInput.DropDownStyle = ComboBoxStyle.DropDownList;
         roleClientInput.SelectedIndexChanged += (_, _) => SyncRoleInputFromSelectedClient();
         roleInput.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -251,12 +234,11 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.Controls.Add(Field("CPU lanes", assignmentMode), 0, 1);
         controlGrid.Controls.Add(Field("Main logical processors", mainProcessors), 1, 1);
         controlGrid.Controls.Add(Field("Follower logical processors", followerProcessors), 2, 1);
-        controlGrid.Controls.Add(Field("Follower priority", followerPriority), 3, 1);
-        controlGrid.Controls.Add(Field("Reserved logical processors", reservedProcessors), 0, 2);
-        controlGrid.Controls.Add(Field("Main reserved logical processors", mainReservedProcessors), 1, 2);
-        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 2, 2);
-        controlGrid.Controls.Add(Field("Client", roleClientInput), 3, 2);
-        controlGrid.Controls.Add(Field("Selected client role", roleInput), 4, 2);
+        controlGrid.Controls.Add(Field("Reserved logical processors", reservedProcessors), 3, 1);
+        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 4, 1);
+        controlGrid.Controls.Add(Field("Main reserved logical processors", mainReservedProcessors), 0, 2);
+        controlGrid.Controls.Add(Field("Client", roleClientInput), 1, 2);
+        controlGrid.Controls.Add(Field("Selected client role", roleInput), 2, 2);
         controlGrid.Controls.Add(mainClientsLabel, 0, 3);
         controlGrid.SetColumnSpan(mainClientsLabel, 2);
 
@@ -369,12 +351,11 @@ internal sealed class OptimizerMonitorForm : Form
         {
             var settings = optimizer.Settings;
             settings.Normalize();
-            optimizerEnabled.Checked = settings.OptimizerEnabled && settings.CpuPriorityManagementEnabled;
+            optimizerEnabled.Checked = settings.OptimizerEnabled && settings.CpuAffinityOptimizationEnabled;
             trimEnabled.Checked = settings.WorkingSetTrimEnabled;
             SetSelectedItemIfIdle(assignmentMode, settings.CpuAssignmentMode);
             SetSelectedItemIfIdle(mainProcessors, settings.MainLogicalProcessors);
             SetSelectedItemIfIdle(followerProcessors, settings.FollowerLogicalProcessors);
-            SetSelectedItemIfIdle(followerPriority, settings.FollowerPriorityClass);
             SetStepperValueIfIdle(reservedProcessors, settings.SystemReservedLogicalProcessors);
             SetStepperValueIfIdle(trimTrigger, settings.TrimTriggerMBPerClient);
 
@@ -402,9 +383,6 @@ internal sealed class OptimizerMonitorForm : Form
 
     private void UpdateGrid(IReadOnlyList<OptimizerClientSnapshot> snapshots)
     {
-        var priorityColumn = (DataGridViewComboBoxColumn)grid.Columns["Priority"];
-        EnsurePriorityItems(priorityColumn);
-
         var selectedProcessId = SelectedProcessId();
         var selectedColumnName = grid.CurrentCell is null ? "" : grid.Columns[grid.CurrentCell.ColumnIndex].Name;
         var firstDisplayedRow = FirstDisplayedRowIndex();
@@ -444,8 +422,6 @@ internal sealed class OptimizerMonitorForm : Form
 
     private void UpdateRow(DataGridViewRow row, OptimizerClientSnapshot snapshot)
     {
-        var defaultPriority = snapshot.IsMain ? ProcessPriorityClass.AboveNormal : optimizer.Settings.FollowerPriorityClass;
-        var overridePriority = optimizer.Settings.GetClientPriorityOverride(snapshot.ClientName);
         row.Tag = snapshot;
         SetCell(row, "Client", snapshot.ClientName);
         SetCell(row, "Pid", snapshot.ProcessId);
@@ -455,20 +431,8 @@ internal sealed class OptimizerMonitorForm : Form
         SetCell(row, "Private", $"{snapshot.PrivateBytes / 1024d / 1024d:0} MB");
         SetCell(row, "Threads", snapshot.ThreadCount);
         SetCell(row, "Role", snapshot.IsMain ? "Main" : "Follower");
-        SetCell(row, "Priority", overridePriority?.ToString() ?? "Default");
         SetCell(row, "Affinity", snapshot.AffinityMask.HasValue ? ProcessorAffinity.FormatMask(snapshot.AffinityMask.Value) : "N/A");
         SetCell(row, "Trim", snapshot.LastTrimUtc.HasValue ? snapshot.LastTrimUtc.Value.ToLocalTime().ToString("HH:mm:ss") : "-");
-        row.Cells["Priority"].ToolTipText = overridePriority is null ? $"Default ({defaultPriority})" : "Priority override";
-    }
-
-    private static void EnsurePriorityItems(DataGridViewComboBoxColumn priorityColumn)
-    {
-        if (priorityColumn.Items.Count > 0) return;
-        priorityColumn.Items.Add("Default");
-        foreach (var priority in OptimizerSettings.AllowedClientPriorityOverrides)
-        {
-            priorityColumn.Items.Add(priority.ToString());
-        }
     }
 
     private static void SetCell(DataGridViewRow row, string columnName, object value)
@@ -538,27 +502,6 @@ internal sealed class OptimizerMonitorForm : Form
     private static string FormatMb(long bytes)
     {
         return $"{bytes / 1024d / 1024d:0} MB";
-    }
-
-    private void GridCellValueChanged(object? sender, DataGridViewCellEventArgs e)
-    {
-        if (refreshing || e.RowIndex < 0 || e.RowIndex >= grid.Rows.Count) return;
-        if (grid.Rows[e.RowIndex].Tag is not OptimizerClientSnapshot snapshot) return;
-        var columnName = grid.Columns[e.ColumnIndex].Name;
-        if (columnName == "Priority")
-        {
-            var text = grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString();
-            if (string.IsNullOrWhiteSpace(text) || text == "Default")
-            {
-                optimizer.Settings.SetClientPriorityOverride(snapshot.ClientName, null);
-            }
-            else if (Enum.TryParse<ProcessPriorityClass>(text, out var priority))
-            {
-                optimizer.Settings.SetClientPriorityOverride(snapshot.ClientName, priority);
-            }
-
-            optimizer.SaveSettings();
-        }
     }
 
     private void SaveSelectedProcessorCounts()

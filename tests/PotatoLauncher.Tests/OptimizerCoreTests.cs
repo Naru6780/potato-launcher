@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Drawing;
 
 namespace PotatoLauncher.Tests;
@@ -26,14 +25,11 @@ public class OptimizerCoreTests
             TrimIntervalSeconds = 0,
             TrimCooldownSeconds = 0,
             CpuLaneIntervalSeconds = 0,
-            FollowerPriorityClass = ProcessPriorityClass.RealTime,
             ManualMainClientIds = [7, 7, -1]
         };
         settings.MainReservedLogicalProcessorsByName["  Artemis   Potato  "] = 999;
         settings.MainReservedLogicalProcessorsByName["Hermes Potato"] = 0;
         settings.MainReservedLogicalProcessorsByName[""] = 4;
-        settings.ClientPriorityOverridesByName["  Test   Client  "] = ProcessPriorityClass.High;
-        settings.ClientPriorityOverridesByName["Bad"] = ProcessPriorityClass.RealTime;
 
         settings.Normalize();
 
@@ -44,12 +40,9 @@ public class OptimizerCoreTests
         Assert.Equal(1, settings.TrimIntervalSeconds);
         Assert.Equal(1, settings.TrimCooldownSeconds);
         Assert.Equal(1, settings.CpuLaneIntervalSeconds);
-        Assert.Equal(ProcessPriorityClass.Normal, settings.FollowerPriorityClass);
         Assert.Equal([7], settings.ManualMainClientIds);
         Assert.InRange(settings.GetMainReservedLogicalProcessors("Artemis Potato"), 1, Math.Max(1, Environment.ProcessorCount - 1));
         Assert.Equal(0, settings.GetMainReservedLogicalProcessors("Hermes Potato"));
-        Assert.Equal(ProcessPriorityClass.High, settings.GetClientPriorityOverride("Test Client"));
-        Assert.Null(settings.GetClientPriorityOverride("Bad"));
     }
 
     [Fact]

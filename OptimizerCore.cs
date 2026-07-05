@@ -24,17 +24,9 @@ internal sealed class OptimizerSettings
 
     public static IReadOnlyList<int> AllowedMainLogicalProcessors { get; } = [2, 4, 6, 8, 10, 12];
     public static IReadOnlyList<int> AllowedFollowerLogicalProcessors { get; } = [1, 2, 4, 6, 8];
-    public static IReadOnlyList<ProcessPriorityClass> AllowedClientPriorityOverrides { get; } =
-    [
-        ProcessPriorityClass.Idle,
-        ProcessPriorityClass.BelowNormal,
-        ProcessPriorityClass.Normal,
-        ProcessPriorityClass.AboveNormal,
-        ProcessPriorityClass.High
-    ];
 
     public bool OptimizerEnabled { get; set; }
-    public bool CpuPriorityManagementEnabled { get; set; }
+    public bool CpuAffinityOptimizationEnabled { get; set; }
     public bool WorkingSetTrimEnabled { get; set; } = true;
     public int MainLogicalProcessors { get; set; } = 6;
     public int FollowerLogicalProcessors { get; set; } = 4;
@@ -43,11 +35,9 @@ internal sealed class OptimizerSettings
     public int TrimIntervalSeconds { get; set; } = 10;
     public int TrimCooldownSeconds { get; set; } = 30;
     public int CpuLaneIntervalSeconds { get; set; } = 5;
-    public ProcessPriorityClass FollowerPriorityClass { get; set; } = ProcessPriorityClass.Normal;
     public CpuAssignmentMode CpuAssignmentMode { get; set; } = CpuAssignmentMode.SplitLanes;
     public List<int> ManualMainClientIds { get; set; } = [];
     public Dictionary<string, int> MainReservedLogicalProcessorsByName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-    public Dictionary<string, ProcessPriorityClass> ClientPriorityOverridesByName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     [JsonIgnore]
     public string[] DefaultMainClientTitlePatterns { get; } =
@@ -69,7 +59,9 @@ internal sealed class OptimizerSettings
                 return defaults;
             }
 
-            var settings = JsonSerializer.Deserialize<OptimizerSettings>(File.ReadAllText(path), JsonOptions) ?? new OptimizerSettings();
+            var json = File.ReadAllText(path);
+            var settings = JsonSerializer.Deserialize<OptimizerSettings>(json, JsonOptions) ?? new OptimizerSettings();
+            MigrateLegacyCpuOptimizationFlag(settings, json);
             settings.Normalize();
             return settings;
         }
@@ -79,34 +71,29 @@ internal sealed class OptimizerSettings
         }
     }
 
+    private static void MigrateLegacyCpuOptimizationFlag(OptimizerSettings settings, string json)
+    {
+        if (settings.CpuAffinityOptimizationEnabled) return;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.TryGetProperty("cpuPriorityManagementEnabled", out var legacyValue) &&
+                legacyValue.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                settings.CpuAffinityOptimizationEnabled = legacyValue.GetBoolean();
+            }
+        }
+        catch
+        {
+        }
+    }
+
     public void Save()
     {
         Normalize();
         var path = MainForm.OptimizerSettingsPath();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
-    }
-
-    public ProcessPriorityClass? GetClientPriorityOverride(string clientName)
-    {
-        var key = NormalizeClientName(clientName);
-        return ClientPriorityOverridesByName.TryGetValue(key, out var priority) ? priority : null;
-    }
-
-    public void SetClientPriorityOverride(string clientName, ProcessPriorityClass? priority)
-    {
-        var key = NormalizeClientName(clientName);
-        if (string.IsNullOrWhiteSpace(key)) return;
-        if (priority is null)
-        {
-            ClientPriorityOverridesByName.Remove(key);
-            return;
-        }
-
-        if (AllowedClientPriorityOverrides.Contains(priority.Value))
-        {
-            ClientPriorityOverridesByName[key] = priority.Value;
-        }
     }
 
     public int GetMainReservedLogicalProcessors(string clientName)
@@ -139,7 +126,6 @@ internal sealed class OptimizerSettings
         TrimIntervalSeconds = Math.Clamp(TrimIntervalSeconds, 1, 300);
         TrimCooldownSeconds = Math.Clamp(TrimCooldownSeconds, 1, 3600);
         CpuLaneIntervalSeconds = Math.Clamp(CpuLaneIntervalSeconds, 1, 300);
-        if (!AllowedClientPriorityOverrides.Contains(FollowerPriorityClass)) FollowerPriorityClass = ProcessPriorityClass.Normal;
 
         ManualMainClientIds = (ManualMainClientIds ?? []).Where(id => id > 0).Distinct().ToList();
         var normalizedMainReservations = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -154,17 +140,6 @@ internal sealed class OptimizerSettings
         }
 
         MainReservedLogicalProcessorsByName = normalizedMainReservations;
-        var normalized = new Dictionary<string, ProcessPriorityClass>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in ClientPriorityOverridesByName ?? new Dictionary<string, ProcessPriorityClass>())
-        {
-            var key = NormalizeClientName(entry.Key);
-            if (!string.IsNullOrWhiteSpace(key) && AllowedClientPriorityOverrides.Contains(entry.Value))
-            {
-                normalized[key] = entry.Value;
-            }
-        }
-
-        ClientPriorityOverridesByName = normalized;
     }
 
     private static int NearestAllowed(int value, IReadOnlyList<int> allowed, int fallback)
@@ -193,7 +168,6 @@ internal sealed record OptimizerClientSnapshot(
     long PrivateBytes,
     int ThreadCount,
     int HandleCount,
-    ProcessPriorityClass? PriorityClass,
     long? AffinityMask,
     DateTime? LastTrimUtc);
 
@@ -275,7 +249,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
             var fullMask = ProcessorAffinity.CreateMask(0, Environment.ProcessorCount, Environment.ProcessorCount);
             foreach (var client in clients)
             {
-                ProcessScheduling.TryApply(client, ProcessPriorityClass.Normal, fullMask);
+                ProcessScheduling.TryRestore(client, fullMask);
             }
 
             appliedClientScheduling = false;
@@ -296,7 +270,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     public void SetCpuOptimizationEnabled(bool enabled)
     {
         Settings.OptimizerEnabled = enabled;
-        Settings.CpuPriorityManagementEnabled = enabled;
+        Settings.CpuAffinityOptimizationEnabled = enabled;
         Settings.Save();
         if (!enabled) RestoreClients();
     }
@@ -378,7 +352,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private void ApplyCpuLanes(IReadOnlyList<Process> clients, bool force = false)
     {
         if (!Settings.OptimizerEnabled && !force) return;
-        if (!Settings.CpuPriorityManagementEnabled && !force) return;
+        if (!Settings.CpuAffinityOptimizationEnabled && !force) return;
         if (!force && (DateTime.UtcNow - lastCpuLaneUtc).TotalSeconds < Settings.CpuLaneIntervalSeconds) return;
 
         lastCpuLaneUtc = DateTime.UtcNow;
@@ -387,8 +361,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         foreach (var assignment in allocator.CreateAssignments(clients, mainClientIds))
         {
             var clientName = ExtractCharacterName(SafeMainWindowTitle(assignment.Process));
-            var effectivePriority = Settings.GetClientPriorityOverride(clientName) ?? assignment.PriorityClass;
-            ProcessScheduling.TryApply(assignment.Process, effectivePriority, assignment.AffinityMask);
+            ProcessScheduling.TryApplyAffinity(assignment.Process, assignment.AffinityMask);
         }
 
         ResetLauncherScheduling();
@@ -441,7 +414,6 @@ internal sealed class IntegratedOptimizerService : IDisposable
             SafePrivateMemorySize64(client),
             SafeThreadCount(client),
             SafeHandleCount(client),
-            SafePriorityClass(client),
             SafeAffinityMask(client),
             lastTrimByClientId.TryGetValue(client.Id, out var lastTrimUtc) ? lastTrimUtc : null);
     }
@@ -490,7 +462,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         {
             try
             {
-                ProcessScheduling.TryApply(launcher, ProcessPriorityClass.Normal, fullMask);
+                ProcessScheduling.TryRestore(launcher, fullMask);
             }
             finally
             {
@@ -564,11 +536,6 @@ internal sealed class IntegratedOptimizerService : IDisposable
         try { return process.HasExited ? 0 : process.HandleCount; } catch { return 0; }
     }
 
-    private static ProcessPriorityClass? SafePriorityClass(Process process)
-    {
-        try { return process.HasExited ? null : process.PriorityClass; } catch { return null; }
-    }
-
     private static long? SafeAffinityMask(Process process)
     {
         try { return process.HasExited ? null : process.ProcessorAffinity.ToInt64(); } catch { return null; }
@@ -623,7 +590,7 @@ internal sealed class SystemUsageSampler : IDisposable
     }
 }
 
-internal sealed record CpuAffinityAssignment(Process Process, ProcessPriorityClass PriorityClass, long AffinityMask);
+internal sealed record CpuAffinityAssignment(Process Process, long AffinityMask);
 
 internal sealed class CpuAffinityAllocator
 {
@@ -642,7 +609,7 @@ internal sealed class CpuAffinityAllocator
         {
             var fullMask = ProcessorAffinity.CreateMask(0, logicalProcessorCount, logicalProcessorCount);
             return clients
-                .Select(client => new CpuAffinityAssignment(client, mainClientIds.Contains(client.Id) ? ProcessPriorityClass.AboveNormal : settings.FollowerPriorityClass, fullMask))
+                .Select(client => new CpuAffinityAssignment(client, fullMask))
                 .ToList();
         }
 
@@ -673,8 +640,8 @@ internal sealed class CpuAffinityAllocator
         foreach (var client in clients)
         {
             assignments.Add(mainMasks.TryGetValue(client.Id, out var lane)
-                ? new CpuAffinityAssignment(client, ProcessPriorityClass.AboveNormal, lane.Mask)
-                : new CpuAffinityAssignment(client, settings.FollowerPriorityClass, followerMaskByClientId[client.Id]));
+                ? new CpuAffinityAssignment(client, lane.Mask)
+                : new CpuAffinityAssignment(client, followerMaskByClientId[client.Id]));
         }
 
         return assignments;
@@ -696,8 +663,8 @@ internal sealed class CpuAffinityAllocator
 
         return clients
             .Select(client => mainPairMasks.TryGetValue(client.Id, out var mainPairMask)
-                ? new CpuAffinityAssignment(client, ProcessPriorityClass.AboveNormal, mainPairMask)
-                : new CpuAffinityAssignment(client, settings.FollowerPriorityClass, followerMaskByClientId[client.Id]))
+                ? new CpuAffinityAssignment(client, mainPairMask)
+                : new CpuAffinityAssignment(client, followerMaskByClientId[client.Id]))
             .ToList();
     }
 
@@ -930,16 +897,8 @@ internal static class ProcessorTopology
 
 internal static class ProcessScheduling
 {
-    public static void TryApply(Process process, ProcessPriorityClass priorityClass, long affinityMask)
+    public static void TryApplyAffinity(Process process, long affinityMask)
     {
-        try
-        {
-            if (!process.HasExited) process.PriorityClass = priorityClass;
-        }
-        catch
-        {
-        }
-
         try
         {
             if (!process.HasExited) process.ProcessorAffinity = new IntPtr(affinityMask);
@@ -947,6 +906,19 @@ internal static class ProcessScheduling
         catch
         {
         }
+    }
+
+    public static void TryRestore(Process process, long affinityMask)
+    {
+        try
+        {
+            if (!process.HasExited) process.PriorityClass = ProcessPriorityClass.Normal;
+        }
+        catch
+        {
+        }
+
+        TryApplyAffinity(process, affinityMask);
     }
 }
 

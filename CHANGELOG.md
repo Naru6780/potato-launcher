@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.84 - 2026-07-05
+
+- Removed Optimizer process-priority controls because Windows priority changes were too subtle and confusing compared with CPU affinity lanes.
+- Removed the per-client priority column and follower-priority dropdown from the Optimizer.
+- Kept `Restore clients` resetting processes to normal priority so older builds cannot leave clients stuck on a previous priority override.
+
 ## 1.0.83 - 2026-07-05
 
 - Added per-main logical processor reservations in the Optimizer so a selected main client can keep a dedicated CPU lane while followers use the remaining cores.
