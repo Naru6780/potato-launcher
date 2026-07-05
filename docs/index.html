@@ -4,18 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher</title>
-  <meta name="description" content="Potato Launcher is a Windows FFXIV / FF14 launcher for XIVLauncher accounts, bands, portraits, and multibox client management.">
+  <meta name="description" content="Potato Launcher is a Windows launcher for FFXIV / FF14 XIVLauncher accounts, bands, portraits, and optimizer monitoring.">
   <meta name="keywords" content="Potato Launcher, FFXIV launcher, FF14 launcher, XIVLauncher, FFXIV account launcher, FF14 account launcher, multibox launcher, Final Fantasy XIV launcher">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://naru6780.github.io/potato-launcher/">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher">
-  <meta property="og:description" content="A Windows launcher for FFXIV / FF14 XIVLauncher accounts, bands, portraits, and multibox client management.">
+  <meta property="og:description" content="A Windows launcher for XIVLauncher accounts, bands, portraits, and optimizer monitoring.">
   <meta property="og:url" content="https://naru6780.github.io/potato-launcher/">
   <meta property="og:image" content="https://naru6780.github.io/potato-launcher/assets/potato-launcher-main-private.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher">
-  <meta name="twitter:description" content="A Windows launcher for FFXIV / FF14 XIVLauncher accounts, bands, portraits, and multibox client management.">
+  <meta name="twitter:description" content="A Windows launcher for XIVLauncher accounts, bands, portraits, and optimizer monitoring.">
   <meta name="twitter:image" content="https://naru6780.github.io/potato-launcher/assets/potato-launcher-main-private.png">
   <script type="application/ld+json">
   {
@@ -24,7 +24,7 @@
     "name": "Potato Launcher",
     "applicationCategory": "GameApplication",
     "operatingSystem": "Windows",
-    "description": "Potato Launcher is a Windows FFXIV / FF14 launcher for XIVLauncher accounts, bands, portraits, and multibox client management.",
+    "description": "Potato Launcher is a Windows FFXIV / FF14 launcher for XIVLauncher accounts, bands, portraits, and optimizer monitoring.",
     "url": "https://naru6780.github.io/potato-launcher/",
     "image": "https://naru6780.github.io/potato-launcher/assets/potato-launcher-main-private.png",
     "downloadUrl": "https://github.com/Naru6780/potato-launcher/releases/latest",
@@ -39,19 +39,17 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: #100f1d;
-      --bg-2: #1e1730;
-      --panel: #1c1b2d;
-      --panel-2: #28243b;
+      --ink: #100e1c;
+      --ink-2: #1d172d;
       --text: #fff8ff;
-      --muted: #d9cfe8;
-      --soft: #a9a0bf;
-      --blue: #6f8df6;
-      --cyan: #63c7d4;
-      --pink: #e5578a;
-      --gold: #ffc865;
-      --border: rgba(255,255,255,.15);
-      --shadow: 0 26px 80px rgba(0,0,0,.38);
+      --muted: #cfc6dd;
+      --soft: #968ca8;
+      --line: rgba(255,255,255,.14);
+      --pink: #e65a92;
+      --blue: #7f94ff;
+      --violet: #b06df2;
+      --gold: #f5c96d;
+      --shadow: 0 34px 100px rgba(0,0,0,.42);
     }
 
     * {
@@ -65,12 +63,11 @@
     body {
       margin: 0;
       font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-      background:
-        linear-gradient(140deg, rgba(99,199,212,.12), transparent 36%),
-        linear-gradient(222deg, rgba(229,87,138,.18), transparent 42%),
-        linear-gradient(135deg, var(--bg) 0%, var(--bg-2) 100%);
       color: var(--text);
-      line-height: 1.55;
+      background:
+        radial-gradient(circle at 78% 12%, rgba(230,90,146,.22), transparent 30%),
+        radial-gradient(circle at 15% 40%, rgba(127,148,255,.16), transparent 34%),
+        linear-gradient(140deg, var(--ink), var(--ink-2) 62%, #241634);
       overflow-x: hidden;
     }
 
@@ -79,15 +76,15 @@
       position: fixed;
       inset: 0;
       pointer-events: none;
-      background-image:
-        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
-      background-size: 72px 72px;
-      mask-image: linear-gradient(to bottom, rgba(0,0,0,.6), transparent 78%);
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px);
+      background-size: 84px 84px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,.58), transparent 82%);
     }
 
     a {
-      color: #c8d3ff;
+      color: inherit;
     }
 
     img {
@@ -95,416 +92,363 @@
       max-width: 100%;
     }
 
-    .page-shell {
-      width: min(1180px, calc(100vw - 34px));
+    .shell {
+      width: min(1180px, calc(100vw - 36px));
       margin: 0 auto;
     }
 
-    .nav {
+    .topbar {
       position: sticky;
       top: 0;
-      z-index: 5;
-      backdrop-filter: blur(18px);
-      background: rgba(16,15,29,.72);
+      z-index: 10;
       border-bottom: 1px solid rgba(255,255,255,.08);
+      background: rgba(16,14,28,.76);
+      backdrop-filter: blur(20px);
     }
 
-    .nav-inner {
-      width: min(1180px, calc(100% - 34px));
-      min-height: 68px;
-      margin: 0 auto;
+    .topbar-inner {
+      min-height: 66px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 20px;
+      gap: 24px;
     }
 
     .brand {
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: 10px;
-      color: white;
       text-decoration: none;
       font-weight: 900;
     }
 
-    .brand-mark {
+    .mark {
       width: 34px;
       height: 34px;
-      border-radius: 10px;
+      border-radius: 11px;
       display: grid;
       place-items: center;
       background: linear-gradient(135deg, var(--pink), var(--blue));
-      box-shadow: 0 10px 28px rgba(111,141,246,.26);
+      box-shadow: 0 12px 28px rgba(127,148,255,.22);
     }
 
-    .nav-links {
+    .nav {
       display: flex;
-      align-items: center;
-      gap: 18px;
+      gap: 22px;
+      color: var(--muted);
       font-size: .94rem;
-      font-weight: 700;
+      font-weight: 750;
     }
 
-    .nav-links a {
-      color: var(--muted);
+    .nav a {
       text-decoration: none;
     }
 
     .hero {
-      min-height: min(760px, calc(100vh - 68px));
+      position: relative;
+      min-height: min(820px, calc(100vh - 66px));
       display: grid;
-      grid-template-columns: minmax(0, .86fr) minmax(460px, 1.14fr);
+      grid-template-columns: minmax(0, .78fr) minmax(480px, 1.22fr);
       align-items: center;
       gap: 42px;
-      padding: 58px 0 46px;
+      padding: 66px 0 78px;
     }
 
-    .eyebrow {
-      margin: 0 0 14px;
-      color: #ffd7e8;
-      font-weight: 900;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      font-size: .78rem;
+    .hero-copy {
+      position: relative;
+      z-index: 2;
+      min-width: 0;
     }
 
     h1 {
-      max-width: 880px;
+      max-width: 660px;
       margin: 0;
-      font-size: clamp(3rem, 8vw, 6rem);
-      line-height: .94;
+      font-size: clamp(3.4rem, 8vw, 6.4rem);
+      line-height: .92;
       letter-spacing: 0;
-    }
-
-    h1 span {
-      display: block;
+      overflow-wrap: break-word;
     }
 
     .lead {
-      max-width: 690px;
+      max-width: 560px;
       margin: 24px 0 0;
-      font-size: clamp(1.08rem, 2vw, 1.32rem);
       color: var(--muted);
+      font-size: clamp(1.08rem, 2vw, 1.28rem);
+      line-height: 1.7;
     }
 
     .actions {
       display: flex;
       flex-wrap: wrap;
-      gap: 14px;
+      gap: 13px;
       margin-top: 34px;
+      min-width: 0;
     }
 
     .button {
       position: relative;
       overflow: hidden;
+      min-height: 46px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 46px;
-      padding: 0 22px;
+      padding: 0 23px;
+      border: 1px solid rgba(255,255,255,.24);
       border-radius: 999px;
-      border: 1px solid rgba(255,255,255,.22);
       color: white;
-      font-weight: 900;
       text-decoration: none;
+      font-weight: 900;
       background: linear-gradient(135deg, var(--pink), var(--blue));
-      box-shadow: 0 18px 38px rgba(0,0,0,.28);
-      transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease;
+      box-shadow: 0 18px 46px rgba(0,0,0,.32);
+      transition: transform .22s ease, box-shadow .22s ease;
+    }
+
+    .button.secondary {
+      background: rgba(255,255,255,.08);
+      box-shadow: none;
     }
 
     .button::after {
       content: "";
       position: absolute;
       inset: 0;
-      transform: translateX(-120%) skewX(-18deg);
+      transform: translateX(-130%) skewX(-18deg);
       background: linear-gradient(90deg, transparent, rgba(255,255,255,.28), transparent);
-      animation: button-sheen 4s ease-in-out infinite;
+      animation: sheen 4.8s ease-in-out infinite;
     }
 
     .button:hover {
       transform: translateY(-2px);
-      border-color: rgba(255,255,255,.42);
-      box-shadow: 0 22px 48px rgba(0,0,0,.36);
+      box-shadow: 0 24px 58px rgba(0,0,0,.4);
     }
 
-    .button.secondary {
-      background: rgba(255,255,255,.08);
-    }
-
-    .trust-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 22px;
-    }
-
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 30px;
-      padding: 0 12px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,.14);
-      color: var(--muted);
-      background: rgba(255,255,255,.06);
-      font-size: .85rem;
-      font-weight: 800;
-    }
-
-    .hero-visual {
+    .hero-shot {
       position: relative;
-      perspective: 1400px;
       min-width: 0;
     }
 
-    .hero > *,
-    .showcase > *,
-    .download > * {
-      min-width: 0;
-    }
-
-    .screenshot-frame {
-      position: relative;
-      border: 1px solid rgba(255,255,255,.18);
-      border-radius: 22px;
-      overflow: hidden;
-      background: rgba(255,255,255,.08);
-      box-shadow: var(--shadow);
-      transform: rotateX(3deg) rotateY(-7deg);
-      animation: float-panel 7s ease-in-out infinite;
-    }
-
-    .screenshot-frame::before {
+    .hero-shot::before {
       content: "";
       position: absolute;
-      inset: 0;
-      z-index: 1;
-      pointer-events: none;
-      background: linear-gradient(120deg, transparent 18%, rgba(255,255,255,.18) 32%, transparent 46%);
-      transform: translateX(-120%);
-      animation: screen-sheen 6.5s ease-in-out infinite;
+      inset: 12% -8% 10% 8%;
+      z-index: -1;
+      background: linear-gradient(135deg, rgba(230,90,146,.24), rgba(127,148,255,.2));
+      filter: blur(44px);
+      opacity: .9;
     }
 
-    .screenshot-frame img {
+    .screen {
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 24px;
+      background: rgba(255,255,255,.08);
+      box-shadow: var(--shadow);
+    }
+
+    .hero .screen {
+      transform: rotateX(2deg) rotateY(-6deg);
+      animation: hover-screen 7s ease-in-out infinite;
+    }
+
+    .screen img {
       width: 100%;
       aspect-ratio: 1255 / 757;
       object-fit: cover;
     }
 
-    .floating-card {
+    .scroll-cue {
       position: absolute;
-      z-index: 2;
-      width: min(270px, 48%);
-      padding: 16px;
-      border: 1px solid rgba(255,255,255,.18);
-      border-radius: 8px;
-      background: rgba(24,22,38,.78);
-      backdrop-filter: blur(14px);
-      box-shadow: 0 20px 54px rgba(0,0,0,.28);
-      animation: float-chip 5.8s ease-in-out infinite;
+      left: 0;
+      bottom: 28px;
+      color: var(--soft);
+      font-size: .82rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
     }
 
-    .floating-card strong {
-      display: block;
-      font-size: .95rem;
-    }
-
-    .floating-card span {
-      color: var(--muted);
-      font-size: .86rem;
-    }
-
-    .floating-card.one {
-      right: -10px;
-      top: 8%;
-    }
-
-    .floating-card.two {
-      left: -8px;
-      bottom: 6%;
-      animation-delay: -1.7s;
+    .scroll-cue::after {
+      content: "";
+      display: inline-block;
+      width: 70px;
+      height: 1px;
+      margin-left: 12px;
+      vertical-align: middle;
+      background: linear-gradient(90deg, var(--pink), transparent);
+      animation: line-drift 2.8s ease-in-out infinite;
     }
 
     section {
-      padding: 58px 0;
+      position: relative;
+      padding: 88px 0;
     }
 
-    .section-head {
-      display: flex;
-      align-items: end;
-      justify-content: space-between;
-      gap: 24px;
-      margin-bottom: 22px;
+    .intro {
+      display: grid;
+      grid-template-columns: .82fr 1.18fr;
+      gap: 44px;
+      align-items: start;
+      border-top: 1px solid var(--line);
     }
 
     h2 {
       margin: 0;
-      font-size: clamp(1.9rem, 3.4vw, 3rem);
+      font-size: clamp(2.1rem, 4vw, 4rem);
+      line-height: 1;
       letter-spacing: 0;
     }
 
-    .section-copy {
-      max-width: 560px;
+    .quiet-copy {
       margin: 0;
+      max-width: 650px;
       color: var(--muted);
+      font-size: 1.08rem;
+      line-height: 1.85;
     }
 
-    .feature-grid {
+    .feature-line {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 14px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      margin-top: 42px;
+      border: 1px solid var(--line);
+      background: var(--line);
     }
 
-    .card {
-      position: relative;
-      min-height: 168px;
+    .feature-line div {
+      min-height: 132px;
       padding: 22px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.035));
-      transform: translateY(0);
-      transition: transform .22s ease, border-color .22s ease, background .22s ease;
+      background: rgba(255,255,255,.055);
     }
 
-    .card:hover {
-      transform: translateY(-4px);
-      border-color: rgba(255,255,255,.28);
-      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.045));
-    }
-
-    .card h3 {
-      margin: 0 0 10px;
-      font-size: 1.06rem;
-    }
-
-    .card p {
-      margin: 0;
-      color: var(--muted);
-    }
-
-    .showcase {
-      display: grid;
-      grid-template-columns: 1.08fr .92fr;
-      gap: 18px;
-      align-items: stretch;
-    }
-
-    .showcase-panel {
-      border: 1px solid rgba(255,255,255,.16);
-      border-radius: 12px;
-      background: rgba(255,255,255,.06);
-      overflow: hidden;
-      box-shadow: 0 22px 60px rgba(0,0,0,.28);
-    }
-
-    .showcase-panel img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      transition: transform .45s ease;
-    }
-
-    .showcase-panel:hover img {
-      transform: scale(1.025);
-    }
-
-    .stack {
-      display: grid;
-      gap: 18px;
-    }
-
-    .caption {
-      padding: 18px;
-      background: var(--panel);
-      border-top: 1px solid rgba(255,255,255,.1);
-    }
-
-    .caption strong {
+    .feature-line strong {
       display: block;
-      margin-bottom: 4px;
+      margin-bottom: 8px;
+      font-size: 1rem;
     }
 
-    .caption span {
+    .feature-line span {
       color: var(--muted);
+      font-size: .95rem;
+      line-height: 1.55;
     }
 
-    .privacy-note {
-      margin-top: 12px;
+    .tour {
+      display: grid;
+      gap: 112px;
+      padding-top: 44px;
+    }
+
+    .scene {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(260px, .62fr);
+      gap: 38px;
+      align-items: center;
+    }
+
+    .scene:nth-child(even) {
+      grid-template-columns: minmax(260px, .62fr) minmax(0, 1.08fr);
+    }
+
+    .scene:nth-child(even) .scene-media {
+      order: 2;
+    }
+
+    .scene-media {
+      min-width: 0;
+      transform: translateX(-38px);
+      opacity: 0;
+      transition: opacity .75s ease, transform .75s ease;
+    }
+
+    .scene:nth-child(even) .scene-media {
+      transform: translateX(38px);
+    }
+
+    .scene-text {
+      transform: translateY(22px);
+      opacity: 0;
+      transition: opacity .75s ease .12s, transform .75s ease .12s;
+    }
+
+    .scene.is-visible .scene-media,
+    .scene.is-visible .scene-text {
+      transform: none;
+      opacity: 1;
+    }
+
+    .scene h3 {
+      margin: 0;
+      font-size: clamp(1.7rem, 3vw, 2.8rem);
+      line-height: 1.05;
+    }
+
+    .scene p {
+      max-width: 440px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 1.02rem;
+      line-height: 1.75;
+    }
+
+    .download {
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 28px;
+      align-items: center;
+      padding: 38px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 18px;
+      background:
+        linear-gradient(125deg, rgba(230,90,146,.18), transparent 42%),
+        linear-gradient(280deg, rgba(127,148,255,.18), transparent 44%),
+        rgba(255,255,255,.06);
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
+    }
+
+    .download p {
+      max-width: 620px;
+      margin: 12px 0 0;
+      color: var(--muted);
+      line-height: 1.75;
+    }
+
+    footer {
+      width: min(1180px, calc(100vw - 36px));
+      margin: 0 auto;
+      padding: 34px 0 58px;
       color: var(--soft);
       font-size: .92rem;
     }
 
-    .download {
-      position: relative;
-      overflow: hidden;
-      display: grid;
-      grid-template-columns: 1.3fr .9fr;
-      gap: 22px;
-      align-items: center;
-      padding: 32px;
-      border: 1px solid rgba(255,255,255,.16);
-      border-radius: 12px;
-      background:
-        linear-gradient(120deg, rgba(229,87,138,.16), transparent 42%),
-        linear-gradient(280deg, rgba(99,199,212,.16), transparent 44%),
-        var(--panel);
-      box-shadow: 0 22px 64px rgba(0,0,0,.25);
+    footer p {
+      margin: 8px 0 0;
     }
 
-    .download::before {
-      content: "";
-      position: absolute;
-      left: -20%;
-      right: -20%;
-      top: 0;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
-      animation: line-scan 4s ease-in-out infinite;
+    .reveal {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity .75s ease, transform .75s ease;
     }
 
-    .download p {
-      margin: 10px 0 0;
-      color: var(--muted);
+    .reveal.is-visible {
+      opacity: 1;
+      transform: none;
     }
 
-    code {
-      padding: 2px 6px;
-      border-radius: 6px;
-      background: rgba(255,255,255,.09);
-      color: #fff;
+    @keyframes hover-screen {
+      0%, 100% { transform: rotateX(2deg) rotateY(-6deg) translateY(0); }
+      50% { transform: rotateX(1deg) rotateY(-4deg) translateY(-12px); }
     }
 
-    footer {
-      width: min(1180px, calc(100% - 34px));
-      margin: 0 auto;
-      padding: 44px 0 64px;
-      color: var(--muted);
+    @keyframes sheen {
+      0%, 45% { transform: translateX(-130%) skewX(-18deg); }
+      72%, 100% { transform: translateX(135%) skewX(-18deg); }
     }
 
-    @keyframes float-panel {
-      0%, 100% { transform: rotateX(3deg) rotateY(-7deg) translateY(0); }
-      50% { transform: rotateX(2deg) rotateY(-5deg) translateY(-12px); }
-    }
-
-    @keyframes float-chip {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-10px); }
-    }
-
-    @keyframes screen-sheen {
-      0%, 28% { transform: translateX(-130%); }
-      58%, 100% { transform: translateX(130%); }
-    }
-
-    @keyframes button-sheen {
-      0%, 45% { transform: translateX(-120%) skewX(-18deg); }
-      72%, 100% { transform: translateX(140%) skewX(-18deg); }
-    }
-
-    @keyframes line-scan {
-      0%, 100% { transform: translateX(-24%); opacity: .25; }
-      50% { transform: translateX(24%); opacity: 1; }
+    @keyframes line-drift {
+      0%, 100% { transform: translateX(0); opacity: .45; }
+      50% { transform: translateX(18px); opacity: 1; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -515,11 +459,20 @@
         transition: none !important;
         scroll-behavior: auto !important;
       }
+
+      .reveal,
+      .scene-media,
+      .scene-text {
+        opacity: 1;
+        transform: none;
+      }
     }
 
     @media (max-width: 980px) {
       .hero,
-      .showcase,
+      .intro,
+      .scene,
+      .scene:nth-child(even),
       .download {
         grid-template-columns: 1fr;
       }
@@ -528,188 +481,231 @@
         padding-top: 46px;
       }
 
-      .screenshot-frame {
+      .hero .screen {
         transform: none;
       }
 
-      .floating-card {
-        display: none;
+      .scene:nth-child(even) .scene-media {
+        order: 0;
+      }
+
+      .feature-line {
+        grid-template-columns: repeat(2, 1fr);
       }
     }
 
-    @media (max-width: 760px) {
-      .nav-inner {
+    @media (max-width: 680px) {
+      .shell,
+      footer {
+        width: min(1180px, calc(100vw - 32px));
+      }
+
+      .topbar-inner {
         min-height: 58px;
       }
 
-      .nav-links {
+      .nav {
         display: none;
       }
 
-      .feature-grid {
-        grid-template-columns: 1fr;
+      .hero {
+        gap: 34px;
+        min-height: auto;
+        padding-bottom: 58px;
+        overflow: hidden;
+      }
+
+      .hero-copy,
+      .hero-shot,
+      .actions {
+        width: 100%;
+        max-width: 100%;
       }
 
       h1 {
-        font-size: clamp(2.5rem, 13vw, 3.25rem);
-        line-height: 1.02;
-      }
-
-      .lead {
-        font-size: 1.04rem;
         max-width: 330px;
+        font-size: clamp(2.85rem, 12vw, 3.35rem);
+        line-height: 1;
       }
 
-      .hero {
-        gap: 32px;
+      .lead,
+      .quiet-copy {
+        font-size: 1rem;
       }
 
-      .screenshot-frame {
+      .button {
         width: 100%;
+      }
+
+      .hero .actions,
+      .hero-shot {
+        max-width: 340px;
+      }
+
+      .hero-shot {
+        margin: 0 auto;
+        max-width: 280px;
+      }
+
+      .hero-shot .screen {
+        width: 100%;
+        max-width: 100%;
+      }
+
+      .scroll-cue {
+        display: none;
+      }
+
+      section {
+        padding: 64px 0;
+      }
+
+      .feature-line {
+        grid-template-columns: 1fr;
+      }
+
+      .tour {
+        gap: 70px;
+      }
+
+      .screen {
         border-radius: 14px;
       }
 
-      .section-head {
-        display: block;
-      }
-
-      .section-copy {
-        margin-top: 10px;
+      .download {
+        padding: 24px;
       }
     }
   </style>
 </head>
-<!-- Static GitHub Pages landing page for Potato Launcher. -->
 <body>
-  <nav class="nav" aria-label="Site">
-    <div class="nav-inner">
+  <nav class="topbar" aria-label="Site">
+    <div class="shell topbar-inner">
       <a class="brand" href="#">
-        <span class="brand-mark">PL</span>
+        <span class="mark">PL</span>
         <span>Potato Launcher</span>
       </a>
-      <div class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#screenshots">Screenshots</a>
+      <div class="nav">
+        <a href="#tour">Tour</a>
+        <a href="#download">Download</a>
         <a href="https://github.com/Naru6780/potato-launcher">GitHub</a>
       </div>
     </div>
   </nav>
 
-  <header class="page-shell hero">
-    <div>
-      <p class="eyebrow">FFXIV / FF14 XIVLauncher utility</p>
-      <h1><span>Potato</span><span>Launcher</span></h1>
-      <p class="lead">A polished Windows launcher for Final Fantasy XIV players who manage multiple XIVLauncher accounts, bands, portraits, and multibox client launches.</p>
-      <nav class="actions" aria-label="Primary">
-        <a class="button" href="https://github.com/Naru6780/potato-launcher/releases/latest">Download Latest Release</a>
-        <a class="button secondary" href="https://github.com/Naru6780/potato-launcher">View Source On GitHub</a>
-      </nav>
-      <div class="trust-row" aria-label="Highlights">
-        <span class="pill">Windows installer</span>
-        <span class="pill">XIVLauncher accounts</span>
-        <span class="pill">Band queues</span>
-        <span class="pill">Optimizer monitor</span>
+  <header class="shell hero">
+    <div class="hero-copy">
+      <h1>Launch your bands.</h1>
+      <p class="lead">A clean Windows launcher for XIVLauncher accounts, portraits, band queues, and optimizer monitoring.</p>
+      <div class="actions">
+        <a class="button" href="https://github.com/Naru6780/potato-launcher/releases/latest">Download latest</a>
+        <a class="button secondary" href="https://github.com/Naru6780/potato-launcher">View on GitHub</a>
       </div>
     </div>
 
-    <div class="hero-visual" aria-label="Potato Launcher screenshot preview">
-      <div class="screenshot-frame">
-        <img src="assets/potato-launcher-main-private.png" alt="Potato Launcher dark theme showing account roster and band manager with private names hidden">
-      </div>
-      <div class="floating-card one">
-        <strong>Band queues that stay calm</strong>
-        <span>Launch accounts in order with cooldowns and optional initialization waiting.</span>
-      </div>
-      <div class="floating-card two">
-        <strong>Privacy-safe screenshots</strong>
-        <span>Names and local paths are hidden in all public preview images.</span>
+    <div class="hero-shot" aria-label="Potato Launcher preview">
+      <div class="screen">
+        <img src="assets/potato-launcher-main-private.png" alt="Potato Launcher account roster and band manager">
       </div>
     </div>
+
+    <div class="scroll-cue">Scroll</div>
   </header>
 
-  <main class="page-shell">
-    <section id="features" aria-labelledby="features-title">
-      <div class="section-head">
-        <h2 id="features-title">Built For FFXIV Account Launching</h2>
-        <p class="section-copy">Potato Launcher focuses on the boring-but-important parts of multibox management: starting the right accounts, keeping bands organized, and watching client resource usage.</p>
+  <main class="shell">
+    <section class="intro reveal" aria-labelledby="intro-title">
+      <div>
+        <h2 id="intro-title">Everything close. Nothing in the way.</h2>
       </div>
-      <div class="feature-grid">
-        <article class="card">
-          <h3>XIVLauncher Accounts</h3>
-          <p>Use shared or instanced launch modes for XIVLauncher account lists and profile folders.</p>
-        </article>
-        <article class="card">
-          <h3>Band Launcher</h3>
-          <p>Create bands of accounts and launch them in sequence with cooldown and initialization-wait controls.</p>
-        </article>
-        <article class="card">
-          <h3>Multibox Monitor</h3>
-          <p>Monitor FFXIV clients with CPU, GPU, memory, affinity, and RAM optimization tools.</p>
-        </article>
-        <article class="card">
-          <h3>Lodestone Portraits</h3>
-          <p>Link characters to Lodestone profiles and refresh portraits for a visual account roster.</p>
-        </article>
-        <article class="card">
-          <h3>Persistent Settings</h3>
-          <p>Settings, bands, account order, and portrait cache live in <code>%APPDATA%\Potato Launcher</code>.</p>
-        </article>
-        <article class="card">
-          <h3>Windows Installer</h3>
-          <p>Download a setup executable from GitHub Releases and choose where Potato Launcher is installed.</p>
-        </article>
-      </div>
-    </section>
-
-    <section id="screenshots" aria-labelledby="screenshots-title">
-      <div class="section-head">
-        <h2 id="screenshots-title">A Launcher You Can Actually Live In</h2>
-        <p class="section-copy">The app keeps launch controls, rosters, settings, and optimizer monitoring close without turning the workflow into a maze.</p>
-      </div>
-      <div class="showcase">
-        <article class="showcase-panel">
-          <img src="assets/potato-launcher-main-private.png" alt="Potato Launcher account roster and band manager">
-          <div class="caption">
-            <strong>Account roster and band manager</strong>
-            <span>Preview your roster, pick a band, and launch the group from one screen.</span>
+      <div>
+        <p class="quiet-copy">Potato Launcher keeps the daily multibox flow simple: pick accounts, launch the band, watch what is loaded, and keep performance tools nearby.</p>
+        <div class="feature-line">
+          <div>
+            <strong>Bands</strong>
+            <span>Launch groups in order with cooldowns and optional initialization waiting.</span>
           </div>
-        </article>
-        <div class="stack">
-          <article class="showcase-panel">
-            <img src="assets/potato-launcher-settings-private.png" alt="Potato Launcher settings drawer with local path hidden">
-            <div class="caption">
-              <strong>Settings drawer</strong>
-              <span>Switch launch mode, theme, exports, cooldowns, music, and queue behavior.</span>
-            </div>
-          </article>
-          <article class="showcase-panel">
-            <img src="assets/potato-launcher-optimizer.png" alt="Potato Optimizer monitor window">
-            <div class="caption">
-              <strong>Optimizer monitor</strong>
-              <span>Track system and client metrics, then apply CPU affinity lanes or RAM trimming.</span>
-            </div>
-          </article>
+          <div>
+            <strong>Portraits</strong>
+            <span>Use Lodestone portraits so each account is easy to recognize.</span>
+          </div>
+          <div>
+            <strong>Optimizer</strong>
+            <span>Monitor clients and tune CPU lanes or RAM usage when needed.</span>
+          </div>
+          <div>
+            <strong>Installer</strong>
+            <span>Install on Windows and keep settings between updates.</span>
+          </div>
         </div>
       </div>
-      <p class="privacy-note">Public screenshots are sanitized: account names, character names, and local paths are hidden before publishing.</p>
     </section>
 
-    <section aria-labelledby="download-title">
+    <section id="tour" class="tour" aria-label="Product tour">
+      <article class="scene">
+        <div class="scene-media">
+          <div class="screen">
+            <img src="assets/potato-launcher-main-private.png" alt="Potato Launcher dark theme roster and band manager">
+          </div>
+        </div>
+        <div class="scene-text">
+          <h3>Build a band in seconds.</h3>
+          <p>Select the accounts you need, save the group, and launch from one place.</p>
+        </div>
+      </article>
+
+      <article class="scene">
+        <div class="scene-media">
+          <div class="screen">
+            <img src="assets/potato-launcher-settings-private.png" alt="Potato Launcher settings drawer">
+          </div>
+        </div>
+        <div class="scene-text">
+          <h3>Keep your setup yours.</h3>
+          <p>Themes, launch mode, cooldowns, exports, music, and notifications stay under your control.</p>
+        </div>
+      </article>
+
+      <article class="scene">
+        <div class="scene-media">
+          <div class="screen">
+            <img src="assets/potato-launcher-optimizer.png" alt="Potato Optimizer monitor">
+          </div>
+        </div>
+        <div class="scene-text">
+          <h3>Watch the clients breathe.</h3>
+          <p>See client and system usage, then optimize CPU or RAM from the same tool.</p>
+        </div>
+      </article>
+    </section>
+
+    <section id="download" class="reveal" aria-labelledby="download-title">
       <div class="download">
         <div>
-          <h2 id="download-title">Download Potato Launcher For FF14</h2>
-          <p>Get the latest Windows installer or portable zip from the GitHub Releases page. The installer preserves app data in <code>%APPDATA%\Potato Launcher</code> between updates.</p>
+          <h2 id="download-title">Ready when your next band is.</h2>
+          <p>Download the Windows installer from GitHub Releases. Your app data stays in the Potato Launcher folder between updates.</p>
         </div>
         <div class="actions">
-          <a class="button" href="https://github.com/Naru6780/potato-launcher/releases/latest">Latest Release</a>
-          <a class="button secondary" href="https://github.com/Naru6780/potato-launcher#readme">Read The README</a>
+          <a class="button" href="https://github.com/Naru6780/potato-launcher/releases/latest">Latest release</a>
         </div>
       </div>
     </section>
   </main>
 
   <footer>
-    <p>Potato Launcher is an independent community tool and is not affiliated with Square Enix, Final Fantasy XIV, or XIVLauncher.</p>
+    <strong>Potato Launcher</strong>
+    <p>Independent community tool. Not affiliated with Square Enix, Final Fantasy XIV, or XIVLauncher. Preview images hide names and local paths.</p>
   </footer>
+
+  <script>
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+        }
+      });
+    }, { threshold: 0.22 });
+
+    document.querySelectorAll(".reveal, .scene").forEach((element) => observer.observe(element));
+  </script>
 </body>
 </html>
