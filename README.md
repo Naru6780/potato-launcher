@@ -1,11 +1,16 @@
-# Potato Launcher
+# Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher
 
 **Version:** `1.0.85`
 
-Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
+Potato Launcher is a Windows launcher for **Final Fantasy XIV / FF14** that helps manage **XIVLauncher** accounts, bands, portraits, and multibox client launches.
+
+[Website](https://naru6780.github.io/potato-launcher/) | [Download the latest release](https://github.com/Naru6780/potato-launcher/releases/latest)
 
 ## Features
 
+- FFXIV / FF14 account launcher built for XIVLauncher.
+- Band launcher for starting groups of accounts in sequence.
+- Multibox-friendly launch queue controls, cooldowns, and initialization waiting.
 - First-run launch method picker: `Instanced` or `Shared`.
 - Instanced mode for per-profile BAT launchers.
 - Shared mode for the default XIVLauncher account list from `accountsList.json`.

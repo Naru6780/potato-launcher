@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher</title>
+  <meta name="description" content="Potato Launcher is a Windows FFXIV / FF14 launcher for XIVLauncher accounts, bands, portraits, and multibox client management.">
+  <meta name="keywords" content="Potato Launcher, FFXIV launcher, FF14 launcher, XIVLauncher, FFXIV account launcher, FF14 account launcher, multibox launcher, Final Fantasy XIV launcher">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://naru6780.github.io/potato-launcher/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher">
+  <meta property="og:description" content="A Windows launcher for FFXIV / FF14 XIVLauncher accounts, bands, portraits, and multibox client management.">
+  <meta property="og:url" content="https://naru6780.github.io/potato-launcher/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher">
+  <meta name="twitter:description" content="A Windows launcher for FFXIV / FF14 XIVLauncher accounts, bands, portraits, and multibox client management.">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Potato Launcher",
+    "applicationCategory": "GameApplication",
+    "operatingSystem": "Windows",
+    "description": "Potato Launcher is a Windows FFXIV / FF14 launcher for XIVLauncher accounts, bands, portraits, and multibox client management.",
+    "url": "https://naru6780.github.io/potato-launcher/",
+    "downloadUrl": "https://github.com/Naru6780/potato-launcher/releases/latest",
+    "softwareVersion": "1.0.85",
+    "author": {
+      "@type": "Person",
+      "name": "Naru6780"
+    },
+    "codeRepository": "https://github.com/Naru6780/potato-launcher"
+  }
+  </script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #151225;
+      --panel: #211d34;
+      --panel-2: #2a2540;
+      --text: #fff7ff;
+      --muted: #d9cfea;
+      --blue: #6f8df6;
+      --pink: #e5578a;
+      --border: rgba(255,255,255,.16);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: radial-gradient(circle at 70% 0%, rgba(229,87,138,.25), transparent 34%),
+        linear-gradient(135deg, #111324 0%, #221935 100%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    a {
+      color: #b9c7ff;
+    }
+
+    header,
+    main,
+    footer {
+      width: min(1080px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    header {
+      min-height: 72vh;
+      display: grid;
+      align-content: center;
+      padding: 72px 0 48px;
+    }
+
+    .eyebrow {
+      margin: 0 0 14px;
+      color: #ffd6e6;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-size: .78rem;
+    }
+
+    h1 {
+      max-width: 880px;
+      margin: 0;
+      font-size: clamp(2.6rem, 8vw, 5.4rem);
+      line-height: .98;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 760px;
+      margin: 24px 0 0;
+      font-size: clamp(1.1rem, 2.2vw, 1.35rem);
+      color: var(--muted);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 34px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 20px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: white;
+      font-weight: 800;
+      text-decoration: none;
+      background: linear-gradient(135deg, var(--pink), var(--blue));
+      box-shadow: 0 10px 24px rgba(0,0,0,.24);
+    }
+
+    .button.secondary {
+      background: rgba(255,255,255,.08);
+    }
+
+    section {
+      padding: 44px 0;
+    }
+
+    h2 {
+      margin: 0 0 18px;
+      font-size: clamp(1.7rem, 3vw, 2.4rem);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .card {
+      min-height: 156px;
+      padding: 22px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.035));
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 1.05rem;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .download {
+      display: grid;
+      grid-template-columns: 1.4fr .9fr;
+      gap: 18px;
+      align-items: center;
+      padding: 28px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(255,255,255,.09);
+      color: #fff;
+    }
+
+    footer {
+      padding: 44px 0 60px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 760px) {
+      header {
+        min-height: auto;
+      }
+
+      .grid,
+      .download {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">FFXIV / FF14 XIVLauncher utility</p>
+    <h1>Potato Launcher</h1>
+    <p class="lead">A Windows launcher for Final Fantasy XIV players who manage multiple XIVLauncher accounts, bands, portraits, and multibox client launches.</p>
+    <nav class="actions" aria-label="Primary">
+      <a class="button" href="https://github.com/Naru6780/potato-launcher/releases/latest">Download Potato Launcher</a>
+      <a class="button secondary" href="https://github.com/Naru6780/potato-launcher">View GitHub Repository</a>
+    </nav>
+  </header>
+
+  <main>
+    <section aria-labelledby="features-title">
+      <h2 id="features-title">Built For FFXIV Account Launching</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>XIVLauncher Accounts</h3>
+          <p>Use shared or instanced launch modes for XIVLauncher account lists and profile folders.</p>
+        </article>
+        <article class="card">
+          <h3>Band Launcher</h3>
+          <p>Create bands of accounts and launch them in sequence with cooldown and initialization-wait controls.</p>
+        </article>
+        <article class="card">
+          <h3>Multibox Monitor</h3>
+          <p>Monitor FFXIV clients with CPU, GPU, memory, affinity, and RAM optimization tools.</p>
+        </article>
+        <article class="card">
+          <h3>Lodestone Portraits</h3>
+          <p>Link characters to Lodestone profiles and refresh portraits for a visual account roster.</p>
+        </article>
+        <article class="card">
+          <h3>Persistent Settings</h3>
+          <p>Settings, bands, account order, and portrait cache live in <code>%APPDATA%\Potato Launcher</code>.</p>
+        </article>
+        <article class="card">
+          <h3>Windows Installer</h3>
+          <p>Download a setup executable from GitHub Releases and choose where Potato Launcher is installed.</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="download-title">
+      <div class="download">
+        <div>
+          <h2 id="download-title">Download Potato Launcher For FF14</h2>
+          <p>Get the latest Windows installer or portable zip from the GitHub Releases page.</p>
+        </div>
+        <div class="actions">
+          <a class="button" href="https://github.com/Naru6780/potato-launcher/releases/latest">Latest Release</a>
+          <a class="button secondary" href="https://github.com/Naru6780/potato-launcher#readme">Read The README</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Potato Launcher is an independent community tool and is not affiliated with Square Enix, Final Fantasy XIV, or XIVLauncher.</p>
+  </footer>
+</body>
+</html>
