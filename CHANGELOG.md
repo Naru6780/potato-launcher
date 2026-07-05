@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.85 - 2026-07-05
+
+- Added a Settings checkbox to wait for each band client to reach `Initialized` before launching the next account.
+- Kept the new wait behavior off by default so existing launch queues continue using the old cooldown-only sequencing until enabled.
+- Updated Optimizer help text to describe affinity and memory optimization without the removed priority controls.
+
 ## 1.0.84 - 2026-07-05
 
 - Removed Optimizer process-priority controls because Windows priority changes were too subtle and confusing compared with CPU affinity lanes.

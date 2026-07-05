@@ -1,6 +1,6 @@
 # Potato Launcher
 
-**Version:** `1.0.84`
+**Version:** `1.0.85`
 
 Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 
@@ -31,6 +31,7 @@ Windows launcher for Final Fantasy XIV / XIVLauncher account groups.
 - The Accounts panel can be resized with the splitter between Accounts and Band Manager.
 - Roster drag-and-drop shows an insertion marker while moving accounts.
 - Configurable launch cooldown for band queues.
+- Optional band queue throttle that waits for each client to initialize before launching the next account.
 - Theme folders with background images and per-theme music playlists.
 - Built-in FFXIV news panel and emergency `Kill FFXIV` button.
 - Settings, bands, account order, and portrait cache are stored in `%APPDATA%\Potato Launcher` so app updates preserve them.

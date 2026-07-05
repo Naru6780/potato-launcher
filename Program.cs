@@ -65,6 +65,7 @@ internal sealed class AppSettings
     public bool StopMusicWhenAllLoaded { get; set; }
     public int MusicVolume { get; set; } = 45;
     public int LaunchCooldownSeconds { get; set; } = 0;
+    public bool WaitForClientInitializationBeforeNextLaunch { get; set; }
     public string AccountDisplayMode { get; set; } = "Text";
     public int AccountPanelWidth { get; set; }
     public bool RandomizeThemeAtLaunch { get; set; }
@@ -149,7 +150,7 @@ internal static class AppText
         Kill FFXIV closes every running FFXIV game process. Per-account and per-band kill actions only target clients Potato Launcher can match to those accounts.
 
         Optimizer
-        Optimizer opens a live monitor for running FFXIV clients. It can show per-client CPU, GPU, memory, priority, and affinity, and can apply CPU lanes, priority rules, and working-set trims when enabled.
+        Optimizer opens a live monitor for running FFXIV clients. It can show per-client CPU, GPU, memory, and affinity, and can apply CPU lanes and working-set trims when enabled.
         """);
     }
 
@@ -705,6 +706,7 @@ internal sealed class MainForm : Form
     private ComboBox accountDisplayInput = null!;
     private Label launchCooldownLabel = null!;
     private NumericUpDown launchCooldownInput = null!;
+    private CheckBox waitForClientInitializationInput = null!;
     private CheckBox randomizeThemeInput = null!;
     private CheckBox notificationsEnabledInput = null!;
     private Button settingsButton = null!;
@@ -837,7 +839,7 @@ internal sealed class MainForm : Form
         helpButton = Button("?", 586, 24, 34, 34, "Secondary");
         appToolTip = new AppToolTip(this);
         appToolTip.Attach(helpButton, "Help", "Open the Potato Launcher feature guide.");
-        appToolTip.Attach(optimizerButton, "Optimizer", "Monitor FFXIV clients and manage CPU, priority, and memory optimization.");
+        appToolTip.Attach(optimizerButton, "Optimizer", "Monitor FFXIV clients and manage CPU, affinity, and memory optimization.");
         helpButton.Click += (_, _) => ShowHelpWindow();
         background.Controls.Add(helpButton);
         newsBandroll = new NewsBandrollControl { Bounds = new Rectangle(620, 24, 320, 34), Visible = false };
@@ -1487,15 +1489,19 @@ internal sealed class MainForm : Form
         launchCooldownInput.ValueChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(launchCooldownInput);
 
-        randomizeThemeInput = new CheckBox { Text = "Randomize theme at launch", Checked = settings.RandomizeThemeAtLaunch, Bounds = new Rectangle(24, 560, 250, 28), BackColor = Color.Transparent };
+        waitForClientInitializationInput = new CheckBox { Text = "Wait until client is initialized before launching next", Checked = settings.WaitForClientInitializationBeforeNextLaunch, Bounds = new Rectangle(24, 560, 332, 28), BackColor = Color.Transparent };
+        waitForClientInitializationInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
+        settingsDrawer.Controls.Add(waitForClientInitializationInput);
+
+        randomizeThemeInput = new CheckBox { Text = "Randomize theme at launch", Checked = settings.RandomizeThemeAtLaunch, Bounds = new Rectangle(24, 594, 250, 28), BackColor = Color.Transparent };
         randomizeThemeInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(randomizeThemeInput);
 
-        notificationsEnabledInput = new CheckBox { Text = "Enable notifications", Checked = settings.NotificationsEnabled, Bounds = new Rectangle(24, 594, 250, 28), BackColor = Color.Transparent };
+        notificationsEnabledInput = new CheckBox { Text = "Enable notifications", Checked = settings.NotificationsEnabled, Bounds = new Rectangle(24, 628, 250, 28), BackColor = Color.Transparent };
         notificationsEnabledInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(notificationsEnabledInput);
 
-        updateButton = Button("Check for updates", 24, 606, 180, 34, "Secondary");
+        updateButton = Button("Check for updates", 24, 660, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
         UpdateMuteMusicButton();
@@ -1532,9 +1538,10 @@ internal sealed class MainForm : Form
             SetY(musicVolumeInput, 580);
             SetY(launchCooldownLabel, 628);
             SetY(launchCooldownInput, 650);
-            SetY(randomizeThemeInput, 686);
-            SetY(notificationsEnabledInput, 718);
-            SetY(updateButton, 754);
+            SetY(waitForClientInitializationInput, 686);
+            SetY(randomizeThemeInput, 718);
+            SetY(notificationsEnabledInput, 750);
+            SetY(updateButton, 786);
         }
         else
         {
@@ -1552,9 +1559,10 @@ internal sealed class MainForm : Form
             SetY(musicVolumeInput, 580);
             SetY(launchCooldownLabel, 628);
             SetY(launchCooldownInput, 650);
-            SetY(randomizeThemeInput, 686);
-            SetY(notificationsEnabledInput, 718);
-            SetY(updateButton, 754);
+            SetY(waitForClientInitializationInput, 686);
+            SetY(randomizeThemeInput, 718);
+            SetY(notificationsEnabledInput, 750);
+            SetY(updateButton, 786);
         }
     }
 
@@ -3505,8 +3513,18 @@ internal sealed class MainForm : Form
                 var client = await StartAccountAndWaitForClientAsync(account, cancellation.Token);
                 var startedClient = new StartedGameClient(account, client.ProcessId);
                 UpdateLoadingQueueItem(index, account, "Loading");
-                readinessTasks.Add(MonitorBandClientReadinessAsync(index, startedClient, cancellation.Token));
+                var readinessTask = MonitorBandClientReadinessAsync(index, startedClient, cancellation.Token);
                 SetStatus($"{band.Name}: started {account.Name} ({index + 1}/{bandAccounts.Count}).");
+                if (settings.WaitForClientInitializationBeforeNextLaunch)
+                {
+                    UpdateLoadingOverlay($"{band.Name}: waiting for {AccountDisplayName(account)} to initialize.");
+                    await readinessTask;
+                }
+                else
+                {
+                    readinessTasks.Add(readinessTask);
+                }
+
                 if (index < bandAccounts.Count - 1)
                 {
                     await WaitForLaunchCooldownAsync(band.Name, cancellation.Token);
@@ -4954,6 +4972,7 @@ internal sealed class MainForm : Form
         settings.StopMusicWhenAllLoaded = stopMusicWhenLoadedInput?.Checked ?? settings.StopMusicWhenAllLoaded;
         settings.MusicVolume = musicVolumeInput?.Value ?? settings.MusicVolume;
         settings.LaunchCooldownSeconds = (int)(launchCooldownInput?.Value ?? settings.LaunchCooldownSeconds);
+        settings.WaitForClientInitializationBeforeNextLaunch = waitForClientInitializationInput?.Checked ?? settings.WaitForClientInitializationBeforeNextLaunch;
         settings.AccountDisplayMode = NormalizeAccountDisplayMode(accountDisplayInput?.SelectedItem?.ToString() ?? settings.AccountDisplayMode);
         settings.RandomizeThemeAtLaunch = randomizeThemeInput?.Checked ?? settings.RandomizeThemeAtLaunch;
         settings.NotificationsEnabled = notificationsEnabledInput?.Checked ?? settings.NotificationsEnabled;
