@@ -46,6 +46,7 @@ internal sealed class OptimizerSettings
     public ProcessPriorityClass FollowerPriorityClass { get; set; } = ProcessPriorityClass.Normal;
     public CpuAssignmentMode CpuAssignmentMode { get; set; } = CpuAssignmentMode.SplitLanes;
     public List<int> ManualMainClientIds { get; set; } = [];
+    public Dictionary<string, int> MainReservedLogicalProcessorsByName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, ProcessPriorityClass> ClientPriorityOverridesByName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     [JsonIgnore]
@@ -108,6 +109,26 @@ internal sealed class OptimizerSettings
         }
     }
 
+    public int GetMainReservedLogicalProcessors(string clientName)
+    {
+        var key = NormalizeClientName(clientName);
+        return MainReservedLogicalProcessorsByName.TryGetValue(key, out var value) ? value : 0;
+    }
+
+    public void SetMainReservedLogicalProcessors(string clientName, int logicalProcessors)
+    {
+        var key = NormalizeClientName(clientName);
+        if (string.IsNullOrWhiteSpace(key)) return;
+        var normalizedValue = Math.Clamp(logicalProcessors, 0, Math.Max(0, Environment.ProcessorCount - 1));
+        if (normalizedValue == 0)
+        {
+            MainReservedLogicalProcessorsByName.Remove(key);
+            return;
+        }
+
+        MainReservedLogicalProcessorsByName[key] = normalizedValue;
+    }
+
     public void Normalize()
     {
         if (!Enum.IsDefined(CpuAssignmentMode)) CpuAssignmentMode = CpuAssignmentMode.SplitLanes;
@@ -121,6 +142,18 @@ internal sealed class OptimizerSettings
         if (!AllowedClientPriorityOverrides.Contains(FollowerPriorityClass)) FollowerPriorityClass = ProcessPriorityClass.Normal;
 
         ManualMainClientIds = (ManualMainClientIds ?? []).Where(id => id > 0).Distinct().ToList();
+        var normalizedMainReservations = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in MainReservedLogicalProcessorsByName ?? new Dictionary<string, int>())
+        {
+            var key = NormalizeClientName(entry.Key);
+            var value = Math.Clamp(entry.Value, 0, Math.Max(0, Environment.ProcessorCount - 1));
+            if (!string.IsNullOrWhiteSpace(key) && value > 0)
+            {
+                normalizedMainReservations[key] = value;
+            }
+        }
+
+        MainReservedLogicalProcessorsByName = normalizedMainReservations;
         var normalized = new Dictionary<string, ProcessPriorityClass>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in ClientPriorityOverridesByName ?? new Dictionary<string, ProcessPriorityClass>())
         {
@@ -706,12 +739,13 @@ internal sealed class CpuAffinityAllocator
         return masks.Count > 0 ? masks : [1L];
     }
 
-    private static Dictionary<int, CpuLane> CreateMainMasks(IReadOnlyList<Process> mainClients, IReadOnlyList<long> usablePhysicalCoreMasks, int requestedLogicalProcessors)
+    private Dictionary<int, CpuLane> CreateMainMasks(IReadOnlyList<Process> mainClients, IReadOnlyList<long> usablePhysicalCoreMasks, int defaultLogicalProcessors)
     {
         var lanes = new Dictionary<int, CpuLane>();
         var nextCoreIndex = 0;
         foreach (var client in mainClients)
         {
+            var requestedLogicalProcessors = GetMainLogicalProcessorReservation(client, defaultLogicalProcessors);
             var lane = CreateMaskFromPhysicalCores(usablePhysicalCoreMasks, nextCoreIndex, requestedLogicalProcessors);
             if (nextCoreIndex + lane.PhysicalCoreCount <= usablePhysicalCoreMasks.Count)
             {
@@ -724,6 +758,25 @@ internal sealed class CpuAffinityAllocator
         }
 
         return lanes;
+    }
+
+    private int GetMainLogicalProcessorReservation(Process client, int fallbackLogicalProcessors)
+    {
+        var clientName = ExtractProcessClientName(client);
+        var requestedLogicalProcessors = settings.GetMainReservedLogicalProcessors(clientName);
+        return Math.Min(Math.Max(1, requestedLogicalProcessors > 0 ? requestedLogicalProcessors : fallbackLogicalProcessors), Environment.ProcessorCount);
+    }
+
+    private static string ExtractProcessClientName(Process client)
+    {
+        try
+        {
+            return IntegratedOptimizerService.ExtractCharacterName(client.MainWindowTitle);
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static IReadOnlyList<long> CreateFollowerLaneMasks(IReadOnlyList<long> usablePhysicalCoreMasks, int reservedMainPhysicalCores, int laneLogicalProcessors)

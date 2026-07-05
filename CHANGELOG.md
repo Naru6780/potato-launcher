@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.83 - 2026-07-05
+
+- Added per-main logical processor reservations in the Optimizer so a selected main client can keep a dedicated CPU lane while followers use the remaining cores.
+- Saved main reservations by character name so the setting survives FFXIV process restarts.
+- Show reserved logical processor counts beside main clients in the Optimizer summary.
+
 ## 1.0.82 - 2026-07-04
 
 - Added a Settings checkbox to enable or disable Windows notification popups.

@@ -22,6 +22,7 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly ComboBox roleInput = new();
     private readonly Label mainClientsLabel = new();
     private readonly NumericUpDown reservedProcessors = new();
+    private readonly NumericUpDown mainReservedProcessors = new();
     private readonly NumericUpDown trimTrigger = new();
     private readonly Button applyButton = new NewsPillButton();
     private readonly Button saveButton = new NewsPillButton();
@@ -171,11 +172,12 @@ internal sealed class OptimizerMonitorForm : Form
 
         var controls = new OptimizerPanel { Dock = DockStyle.Fill, Radius = 20 };
         root.Controls.Add(controls, 0, 2);
-        var controlGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 4, Padding = new Padding(18, 14, 18, 14), BackColor = Color.Transparent };
-        controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        var controlGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 4, Padding = new Padding(18, 14, 18, 14), BackColor = Color.Transparent };
+        controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+        controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+        controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+        controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+        controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
@@ -220,12 +222,21 @@ internal sealed class OptimizerMonitorForm : Form
         mainClientsLabel.BackColor = Color.Transparent;
         mainClientsLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         ConfigureStepper(reservedProcessors, 0, Math.Max(0, Environment.ProcessorCount - 1));
+        ConfigureStepper(mainReservedProcessors, 0, Math.Max(0, Environment.ProcessorCount - 1));
         ConfigureStepper(trimTrigger, 128, 32768);
         reservedProcessors.ValueChanged += (_, _) =>
         {
             if (refreshing) return;
             optimizer.Settings.SystemReservedLogicalProcessors = (int)reservedProcessors.Value;
             optimizer.SaveSettings();
+        };
+        mainReservedProcessors.ValueChanged += (_, _) =>
+        {
+            if (refreshing) return;
+            if (roleClientInput.SelectedItem is not RoleClientItem item) return;
+            optimizer.Settings.SetMainReservedLogicalProcessors(item.ClientName, (int)mainReservedProcessors.Value);
+            optimizer.SaveSettings();
+            UpdateMainClientsLabel(optimizer.GetSnapshots());
         };
         trimTrigger.ValueChanged += (_, _) =>
         {
@@ -236,17 +247,18 @@ internal sealed class OptimizerMonitorForm : Form
 
         var autoOptions = AutoOptionsRow();
         controlGrid.Controls.Add(autoOptions, 0, 0);
-        controlGrid.SetColumnSpan(autoOptions, 4);
+        controlGrid.SetColumnSpan(autoOptions, 5);
         controlGrid.Controls.Add(Field("CPU lanes", assignmentMode), 0, 1);
         controlGrid.Controls.Add(Field("Main logical processors", mainProcessors), 1, 1);
         controlGrid.Controls.Add(Field("Follower logical processors", followerProcessors), 2, 1);
         controlGrid.Controls.Add(Field("Follower priority", followerPriority), 3, 1);
         controlGrid.Controls.Add(Field("Reserved logical processors", reservedProcessors), 0, 2);
-        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 1, 2);
-        controlGrid.Controls.Add(Field("Client", roleClientInput), 2, 2);
-        controlGrid.Controls.Add(Field("Selected client role", roleInput), 3, 2);
+        controlGrid.Controls.Add(Field("Main reserved logical processors", mainReservedProcessors), 1, 2);
+        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 2, 2);
+        controlGrid.Controls.Add(Field("Client", roleClientInput), 3, 2);
+        controlGrid.Controls.Add(Field("Selected client role", roleInput), 4, 2);
         controlGrid.Controls.Add(mainClientsLabel, 0, 3);
-        controlGrid.SetColumnSpan(mainClientsLabel, 1);
+        controlGrid.SetColumnSpan(mainClientsLabel, 2);
 
         applyButton.Text = "Optimize CPU Now";
         applyButton.Tag = "Secondary";
@@ -281,7 +293,7 @@ internal sealed class OptimizerMonitorForm : Form
             ShowFeedback("Client optimization restored.");
         };
         var buttonRow = ButtonRow();
-        controlGrid.Controls.Add(buttonRow, 1, 3);
+        controlGrid.Controls.Add(buttonRow, 2, 3);
         controlGrid.SetColumnSpan(buttonRow, 3);
     }
 
@@ -313,7 +325,7 @@ internal sealed class OptimizerMonitorForm : Form
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Color.Transparent };
         foreach (var button in new[] { applyButton, trimButton, saveButton, restoreButton })
         {
-            button.Width = 150;
+            button.Width = 130;
             button.Height = 36;
             button.Margin = new Padding(0, 10, 10, 0);
             button.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
@@ -584,10 +596,7 @@ internal sealed class OptimizerMonitorForm : Form
         }
 
         SyncRoleInputFromSelectedClient();
-        var mainNames = snapshots.Where(snapshot => snapshot.IsMain).Select(snapshot => snapshot.ClientName).ToList();
-        mainClientsLabel.Text = mainNames.Count == 0
-            ? "Main clients: none"
-            : $"Main clients: {string.Join(", ", mainNames)}";
+        UpdateMainClientsLabel(snapshots);
     }
 
     private void SyncRoleInputFromSelectedClient()
@@ -601,6 +610,24 @@ internal sealed class OptimizerMonitorForm : Form
 
         var target = item.IsMain ? "Main" : "Follower";
         if (!Equals(roleInput.SelectedItem, target)) roleInput.SelectedItem = target;
+        var reservedLogicalProcessors = optimizer.Settings.GetMainReservedLogicalProcessors(item.ClientName);
+        SetStepperValueIfIdle(mainReservedProcessors, reservedLogicalProcessors);
+        mainReservedProcessors.Enabled = item.IsMain;
+    }
+
+    private void UpdateMainClientsLabel(IReadOnlyList<OptimizerClientSnapshot> snapshots)
+    {
+        var mainNames = snapshots.Where(snapshot => snapshot.IsMain).Select(snapshot =>
+        {
+            var reservedLogicalProcessors = optimizer.Settings.GetMainReservedLogicalProcessors(snapshot.ClientName);
+            return reservedLogicalProcessors <= 0
+                ? snapshot.ClientName
+                : $"{snapshot.ClientName} ({reservedLogicalProcessors})";
+        }).ToList();
+
+        mainClientsLabel.Text = mainNames.Count == 0
+            ? "Main clients: none"
+            : $"Main clients: {string.Join(", ", mainNames)}";
     }
 
     private void ApplyThemeRecursive(Control control)
