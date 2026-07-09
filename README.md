@@ -23,10 +23,6 @@ The installer lets you choose the install folder and can create Start Menu or De
 
 Portable builds are also available as `PotatoLauncher.zip`.
 
-## Links
-
-- [Latest release](https://github.com/Naru6780/potato-launcher/releases/latest)
-- [Website](https://naru6780.github.io/potato-launcher/)
 
 ## Note
 
