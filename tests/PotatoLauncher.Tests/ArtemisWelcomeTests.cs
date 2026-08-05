@@ -68,4 +68,38 @@ public class ArtemisWelcomeTests
             ArtemisAnimationTiming.FrameCount - 1,
             ArtemisAnimationTiming.FrameAt(ArtemisAnimationState.Release, releaseDuration));
     }
+
+    [Fact]
+    public void DesktopPetAtlases_KeepEveryFrameAtOneCharacterHeight()
+    {
+        var atlasPaths = new[]
+        {
+            ArtemisAnimationAssets.Idle,
+            ArtemisAnimationAssets.Run,
+            ArtemisAnimationAssets.Release,
+            ArtemisAnimationAssets.Wave
+        };
+
+        foreach (var atlasPath in atlasPaths)
+        {
+            using var atlas = new Bitmap(atlasPath);
+            for (var frameIndex = 0; frameIndex < ArtemisSpriteSheetLayout.FrameCount; frameIndex++)
+            {
+                var frame = ArtemisSpriteSheetLayout.SourceFrameBounds(atlas.Size, frameIndex);
+                var top = frame.Bottom;
+                var bottom = frame.Top - 1;
+                for (var y = frame.Top; y < frame.Bottom; y++)
+                {
+                    for (var x = frame.Left; x < frame.Right; x++)
+                    {
+                        if (atlas.GetPixel(x, y).A == 0) continue;
+                        top = Math.Min(top, y);
+                        bottom = Math.Max(bottom, y);
+                    }
+                }
+
+                Assert.Equal(300, bottom - top + 1);
+            }
+        }
+    }
 }

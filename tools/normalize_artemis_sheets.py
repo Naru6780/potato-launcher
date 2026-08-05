@@ -50,18 +50,20 @@ def normalize_sheet(source_path: Path, output_path: Path) -> None:
 
     cell_width = 420
     cell_height = 340
-    maximum_width = max(right - left for left, _, right, _ in regions)
-    maximum_height = max(bottom - top for _, top, _, bottom in regions)
-    scale = min((cell_width - 16) / maximum_width, (cell_height - 16) / maximum_height, 1.0)
+    character_height = 300
     atlas = Image.new("RGBA", (cell_width * 4, cell_height * 3), (0, 0, 0, 0))
 
     for index, (left, top, right, bottom) in enumerate(regions):
         frame = source.crop((left, top, right, bottom))
-        if scale < 1:
-            frame = frame.resize(
-                (max(1, round(frame.width * scale)), max(1, round(frame.height * scale))),
-                Image.Resampling.LANCZOS,
-            )
+        visible_bounds = frame.getchannel("A").getbbox()
+        if visible_bounds is None:
+            raise RuntimeError(f"Frame {index} of {source_path.name} has no visible pixels")
+        frame = frame.crop(visible_bounds)
+        scale = min(character_height / frame.height, (cell_width - 16) / frame.width)
+        frame = frame.resize(
+            (max(1, round(frame.width * scale)), max(1, round(frame.height * scale))),
+            Image.Resampling.LANCZOS,
+        )
         column = index % 4
         row = index // 4
         x = column * cell_width + (cell_width - frame.width) // 2
@@ -69,7 +71,7 @@ def normalize_sheet(source_path: Path, output_path: Path) -> None:
         atlas.alpha_composite(frame, (x, y))
 
     atlas.save(output_path, optimize=True)
-    print(f"{source_path.name}: rows={row_runs}, scale={scale:.4f}, output={output_path.name}")
+    print(f"{source_path.name}: rows={row_runs}, height={character_height}, output={output_path.name}")
 
 
 def main() -> None:

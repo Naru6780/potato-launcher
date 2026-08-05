@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.87 - 2026-08-05
+
+- Replaced the startup card with a minimal transparent Artemis scene, a rotating crystal cogwheel, and one short greeting.
+- Normalized all 48 Artemis animation frames to a fixed character height and baseline so the desktop pet no longer changes size.
+- Removed the obsolete Accounts/Band Manager drag divider that could render through modal windows.
+- Added a persistent Settings option to disable the Artemis desktop pet while keeping the startup welcome screen.
+- Refreshed the public project documentation and version metadata.
+
 ## 1.0.86 - 2026-08-05
 
 - Added a three-second animated Artemis welcome screen that displays a random greeting, waves, and smoothly cross-fades into the launcher.

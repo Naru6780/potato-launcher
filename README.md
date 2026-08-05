@@ -1,32 +1,55 @@
 # Potato Launcher
 
-Potato Launcher is a Windows launcher for FFXIV / FF14 players using XIVLauncher.
+Potato Launcher is a Windows companion for FFXIV players who manage several XIVLauncher accounts. It keeps account groups, launch controls, Lodestone portraits, and client monitoring in one place.
 
-It helps you keep accounts organized, launch saved bands in order, refresh Lodestone portraits, and watch client performance from one place.
+[Website](https://naru6780.github.io/potato-launcher/) | [Latest release](https://github.com/Naru6780/potato-launcher/releases/latest)
 
-[Website](https://naru6780.github.io/potato-launcher/) | [Download latest](https://github.com/Naru6780/potato-launcher/releases/latest)
+## Highlights
 
-## What It Does
+- Save accounts into reusable bands and launch them in a predictable order.
+- Add a cooldown between clients or wait for each client to initialize before continuing.
+- Pair two trusted PCs on the same private network and start local and remote bands together.
+- Browse accounts as a compact list or a portrait roster populated from the Lodestone.
+- Watch FFXIV CPU, GPU, memory, affinity, and working-set status from the built-in monitor.
+- Use Artemis as an optional desktop pet while the launcher is minimized.
+- Install updates directly from GitHub Releases without losing local settings.
 
-- Save groups of accounts as bands.
-- Launch a band in order with cooldowns and optional client-initialization waiting.
-- Pair two PCs on the same private network and launch a saved band on each PC together.
-- Meet animated Artemis at startup with a randomly selected, lore-inspired greeting and a smooth three-second cross-fade.
-- Keep Artemis as a draggable desktop pet whenever the launcher is minimized; she runs while moving, reacts when released, and waves while idle.
-- Show Lodestone portraits in the account roster.
-- Monitor client CPU, GPU, RAM, affinity, and trim status.
-- Keep settings, bands, accounts, and portraits in `%APPDATA%\Potato Launcher`.
-- Update through GitHub Releases.
+## Installation
 
-## Install
+Download `PotatoLauncherSetup.exe` from the [latest release](https://github.com/Naru6780/potato-launcher/releases/latest) and run it. A portable `PotatoLauncher.zip` is provided alongside the installer.
 
-Download `PotatoLauncherSetup.exe` from the latest release and run it.
+Potato Launcher stores its configuration in `%APPDATA%\Potato Launcher`, separately from the application files. Updating or reinstalling the launcher does not reset saved bands or account settings.
 
-The installer lets you choose the install folder and can create Start Menu or Desktop shortcuts. Your settings stay in `%APPDATA%\Potato Launcher`, so updates do not reset your bands or accounts.
+## First run
 
-Portable builds are also available as `PotatoLauncher.zip`.
+1. Choose the launch mode that matches the XIVLauncher setup.
+2. Select the folder containing the account batch files, or the shared `accountsList.json` folder.
+3. Add accounts to a band and choose the launch timing in Settings.
+4. Use **Launch band** to start the selected group.
 
+The Artemis desktop pet can be enabled or disabled under Settings. This preference does not affect the short startup welcome animation.
 
-## Note
+## Two-PC Multiband
 
-Potato Launcher is an independent community tool. It is not affiliated with Square Enix, Final Fantasy XIV, XIVLauncher, or Dalamud.
+Open **Multiband** on both PCs, pair them using the displayed code, then save a launch plan containing one band from each computer. The main PC coordinates the countdown and launch progress; credentials and local account files remain on their original PC.
+
+Use this feature only on a trusted private network.
+
+## Building from source
+
+Requirements:
+
+- Windows 10 or Windows 11, x64
+- .NET 8 SDK
+
+```powershell
+dotnet restore
+dotnet build PotatoLauncher.csproj --configuration Release
+dotnet test tests/PotatoLauncher.Tests/PotatoLauncher.Tests.csproj --configuration Release
+```
+
+Release packaging scripts are kept in [`scripts`](scripts), and the Inno Setup definition is in [`installer`](installer).
+
+## Project status
+
+Potato Launcher is an independent community project. It is not affiliated with Square Enix, Final Fantasy XIV, XIVLauncher, or Dalamud.

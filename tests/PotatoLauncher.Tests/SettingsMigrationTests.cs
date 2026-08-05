@@ -28,6 +28,7 @@ public class SettingsMigrationTests
         Assert.Equal("C:\\Launchers", document.RootElement.GetProperty("DalamudFolder").GetString());
         Assert.Equal("Shared", document.RootElement.GetProperty("LaunchMode").GetString());
         Assert.True(document.RootElement.GetProperty("NotificationsEnabled").GetBoolean());
+        Assert.True(document.RootElement.GetProperty("DesktopPetEnabled").GetBoolean());
         Assert.False(document.RootElement.GetProperty("WaitForClientInitializationBeforeNextLaunch").GetBoolean());
         Assert.False(document.RootElement.TryGetProperty("SharedAccountOrder", out _));
         Assert.False(document.RootElement.TryGetProperty("InstancedAccountOrder", out _));

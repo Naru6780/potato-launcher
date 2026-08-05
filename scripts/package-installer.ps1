@@ -46,8 +46,6 @@ if ([string]::IsNullOrWhiteSpace($version)) {
     throw "Could not read <Version> from PotatoLauncher.csproj."
 }
 
-Get-Process | Where-Object { $_.ProcessName -like "Potato Launcher*" } | Stop-Process -Force -ErrorAction SilentlyContinue
-
 & (Join-Path $PSScriptRoot "package-release.ps1") -Configuration $Configuration -PublishDir $PublishDir -ReleaseDir $ReleaseDir
 
 foreach ($fileName in $persistedFiles) {

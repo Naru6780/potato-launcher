@@ -13,13 +13,13 @@ internal static class ArtemisWelcomeContent
         "A brave little potato can cross all of Eorzea.",
         "Even the smallest adventurer can carry a great light.",
         "Kupo! Today feels perfect for an adventure.",
-        "The moon is watching—give it your best smile!",
+        "The moon is watching - give it your best smile!",
         "A chocobo ride fixes almost everything.",
         "By the Twelve, you look ready for a little mischief.",
-        "Warm cocoa and rested EXP—an adventurer's dream.",
+        "Warm cocoa and rested EXP - an adventurer's dream.",
         "Keep your courage close and your minions closer.",
         "Every grand journey begins with one tiny step.",
-        "The Crystal has excellent taste—it chose you!",
+        "The Crystal has excellent taste - it chose you!",
         "Eorzea is brighter whenever you log in."
     ];
 
@@ -43,7 +43,6 @@ internal static class ArtemisSpriteSheetLayout
         var bottom = (row + 1) * sheetSize.Height / Rows;
         return Rectangle.FromLTRB(left, top, right, bottom);
     }
-
 }
 
 internal readonly record struct ArtemisWelcomeFrame(ArtemisAnimationState State, int FrameIndex);
@@ -125,6 +124,7 @@ internal sealed class StartupApplicationContext : ApplicationContext
 
 internal sealed class ArtemisWelcomeForm : Form
 {
+    private static readonly Color TransparentBackground = Color.FromArgb(1, 2, 3);
     private readonly System.Windows.Forms.Timer animationTimer = new() { Interval = 16 };
     private readonly TaskCompletionSource introCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Stopwatch animationClock = new();
@@ -132,19 +132,20 @@ internal sealed class ArtemisWelcomeForm : Form
     private readonly bool reduceMotion = !ClientAreaAnimationsEnabled();
     private Bitmap? idleSpriteSheet;
     private Bitmap? waveSpriteSheet;
-    private int animationTick;
 
     public ArtemisWelcomeForm()
     {
         Text = "Potato Launcher";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(720, 420);
+        ClientSize = new Size(620, 400);
         ShowInTaskbar = true;
         TopMost = true;
         DoubleBuffered = true;
         KeyPreview = true;
-        BackColor = Color.FromArgb(25, 20, 46);
+        AllowTransparency = true;
+        BackColor = TransparentBackground;
+        TransparencyKey = TransparentBackground;
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         LoadSpriteSheets();
 
@@ -190,14 +191,9 @@ internal sealed class ArtemisWelcomeForm : Form
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
         graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-
-        using var background = new LinearGradientBrush(ClientRectangle, Color.FromArgb(34, 27, 61), Color.FromArgb(83, 39, 91), 18F);
-        graphics.FillRectangle(background, ClientRectangle);
-        DrawGlow(graphics);
-        DrawStars(graphics);
         DrawPet(graphics);
-        DrawSpeechBubble(graphics);
-        DrawLoadingCaption(graphics);
+        DrawCogwheel(graphics);
+        DrawQuote(graphics);
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
@@ -212,7 +208,6 @@ internal sealed class ArtemisWelcomeForm : Form
 
     private void AdvanceAnimation()
     {
-        animationTick++;
         Invalidate();
         if (animationClock.Elapsed >= ArtemisWelcomeTimeline.Duration)
         {
@@ -227,88 +222,81 @@ internal sealed class ArtemisWelcomeForm : Form
         introCompleted.TrySetResult();
     }
 
-    private void DrawGlow(Graphics graphics)
-    {
-        var glowBounds = new Rectangle(-80, 178, 430, 330);
-        using var path = new GraphicsPath();
-        path.AddEllipse(glowBounds);
-        using var brush = new PathGradientBrush(path)
-        {
-            CenterColor = Color.FromArgb(94, 234, 96, 154),
-            SurroundColors = [Color.FromArgb(0, 234, 96, 154)]
-        };
-        graphics.FillEllipse(brush, glowBounds);
-    }
-
-    private void DrawStars(Graphics graphics)
-    {
-        var stars = new[]
-        {
-            new Point(42, 58), new Point(92, 28), new Point(304, 48), new Point(670, 58),
-            new Point(642, 342), new Point(368, 372), new Point(688, 222), new Point(24, 320)
-        };
-        for (var index = 0; index < stars.Length; index++)
-        {
-            var pulse = 0.55 + 0.45 * Math.Sin(animationClock.Elapsed.TotalSeconds * 2.4 + index);
-            var radius = 2 + (int)Math.Round(pulse * 2);
-            using var starBrush = new SolidBrush(Color.FromArgb((int)(90 + pulse * 130), 255, 226, 244));
-            graphics.FillEllipse(starBrush, stars[index].X - radius, stars[index].Y - radius, radius * 2, radius * 2);
-        }
-    }
-
     private void DrawPet(Graphics graphics)
     {
         var welcomeFrame = ArtemisWelcomeTimeline.FrameAt(animationClock.Elapsed, reduceMotion);
-        var frame = welcomeFrame.FrameIndex;
-        var destination = new Rectangle(44, 72, 286, 286);
+        var destination = new Rectangle(52, 30, 300, 300);
         var spriteSheet = welcomeFrame.State == ArtemisAnimationState.Wave ? waveSpriteSheet : idleSpriteSheet;
         if (spriteSheet is not null)
         {
-            var source = ArtemisSpriteSheetLayout.SourceFrameBounds(spriteSheet.Size, frame);
+            var source = ArtemisSpriteSheetLayout.SourceFrameBounds(spriteSheet.Size, welcomeFrame.FrameIndex);
             graphics.DrawImage(spriteSheet, destination, source, GraphicsUnit.Pixel);
             return;
         }
 
-        using var fallbackFont = new Font("Segoe UI Emoji", 86F, FontStyle.Regular, GraphicsUnit.Pixel);
-        TextRenderer.DrawText(graphics, "🌙", fallbackFont, destination, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        using var fallbackFont = new Font("Segoe UI", 42F, FontStyle.Bold, GraphicsUnit.Pixel);
+        TextRenderer.DrawText(graphics, "Artemis", fallbackFont, destination, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 
-    private void DrawSpeechBubble(Graphics graphics)
+    private void DrawCogwheel(Graphics graphics)
     {
-        var bubble = new Rectangle(318, 78, 350, 205);
-        using var bubblePath = RoundedRectangle(bubble, 26);
-        using var shadowPath = RoundedRectangle(new Rectangle(bubble.X + 5, bubble.Y + 8, bubble.Width, bubble.Height), 26);
-        using var shadowBrush = new SolidBrush(Color.FromArgb(45, Color.Black));
-        graphics.FillPath(shadowBrush, shadowPath);
-        using var bubbleBrush = new SolidBrush(Color.FromArgb(248, 255, 250, 254));
-        graphics.FillPath(bubbleBrush, bubblePath);
-        using var borderPen = new Pen(Color.FromArgb(225, 239, 123, 180), 2F);
-        graphics.DrawPath(borderPen, bubblePath);
+        const float centerX = 470F;
+        const float centerY = 162F;
+        const int toothCount = 12;
+        var angle = reduceMotion ? 0F : (float)(animationClock.Elapsed.TotalSeconds * 55);
+        var points = new PointF[toothCount * 4];
+        for (var index = 0; index < points.Length; index++)
+        {
+            var radians = index * Math.PI * 2 / points.Length;
+            var radius = index % 4 is 0 or 3 ? 66F : 55F;
+            points[index] = new PointF((float)Math.Cos(radians) * radius, (float)Math.Sin(radians) * radius);
+        }
 
-        var tail = new[] { new Point(321, 218), new Point(286, 244), new Point(329, 247) };
-        graphics.FillPolygon(bubbleBrush, tail);
-        graphics.DrawLines(borderPen, new Point[] { tail[0], tail[1], tail[2] });
+        var saved = graphics.Save();
+        graphics.TranslateTransform(centerX, centerY);
+        graphics.RotateTransform(angle);
+        using var gearPath = new GraphicsPath();
+        gearPath.AddPolygon(points);
+        using var glowPen = new Pen(Color.FromArgb(70, 255, 229, 168), 8F) { LineJoin = LineJoin.Round };
+        using var gearPen = new Pen(Color.FromArgb(245, 235, 207, 139), 3F) { LineJoin = LineJoin.Round };
+        using var detailPen = new Pen(Color.FromArgb(220, 255, 250, 224), 1.5F);
+        graphics.DrawPath(glowPen, gearPath);
+        graphics.DrawPath(gearPen, gearPath);
+        graphics.DrawEllipse(detailPen, -45, -45, 90, 90);
+        graphics.DrawEllipse(gearPen, -16, -16, 32, 32);
+        for (var spoke = 0; spoke < 8; spoke++)
+        {
+            var spokeAngle = spoke * Math.PI / 4;
+            graphics.DrawLine(
+                detailPen,
+                (float)Math.Cos(spokeAngle) * 18,
+                (float)Math.Sin(spokeAngle) * 18,
+                (float)Math.Cos(spokeAngle) * 43,
+                (float)Math.Sin(spokeAngle) * 43);
+        }
+        graphics.Restore(saved);
 
-        using var greetingFont = new Font("Segoe UI", 15F, FontStyle.Bold);
-        using var quoteFont = new Font("Segoe UI", 12F, FontStyle.Regular);
-        using var signatureFont = new Font("Segoe UI", 10F, FontStyle.Italic);
-        using var titleBrush = new SolidBrush(Color.FromArgb(177, 42, 105));
-        using var textBrush = new SolidBrush(Color.FromArgb(54, 41, 67));
-        using var signatureFormat = new StringFormat { Alignment = StringAlignment.Far };
-        graphics.DrawString("Welcome back, adventurer!", greetingFont, titleBrush, new RectangleF(342, 102, 302, 34));
-        graphics.DrawString(quote, quoteFont, textBrush, new RectangleF(342, 145, 300, 86));
-        graphics.DrawString("— Artemis", signatureFont, titleBrush, new RectangleF(342, 238, 294, 24), signatureFormat);
+        var crystal = new[]
+        {
+            new PointF(centerX, centerY - 12),
+            new PointF(centerX + 8, centerY),
+            new PointF(centerX, centerY + 12),
+            new PointF(centerX - 8, centerY)
+        };
+        using var crystalBrush = new SolidBrush(Color.FromArgb(240, 255, 250, 226));
+        graphics.FillPolygon(crystalBrush, crystal);
     }
 
-    private void DrawLoadingCaption(Graphics graphics)
+    private void DrawQuote(Graphics graphics)
     {
-        var dots = new string('.', animationTick / 4 % 4);
-        using var captionFont = new Font("Segoe UI", 10F, FontStyle.Bold);
-        using var hintFont = new Font("Segoe UI", 8.5F, FontStyle.Regular);
-        using var captionBrush = new SolidBrush(Color.FromArgb(235, 255, 235, 248));
-        using var hintBrush = new SolidBrush(Color.FromArgb(175, 239, 211, 232));
-        graphics.DrawString($"Preparing Potato Launcher{dots}", captionFont, captionBrush, new RectangleF(340, 316, 300, 26));
-        graphics.DrawString("Click, Enter, or Space to continue", hintFont, hintBrush, new RectangleF(340, 348, 300, 22));
+        var text = $"\u201c{quote}\u201d  \u2014 Artemis";
+        var bounds = new RectangleF(34, 330, 552, 54);
+        using var font = new Font("Segoe UI", 12F, FontStyle.Italic);
+        using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        using var shadowBrush = new SolidBrush(Color.FromArgb(210, 12, 8, 22));
+        using var textBrush = new SolidBrush(Color.FromArgb(250, 255, 250, 235));
+        graphics.DrawString(text, font, shadowBrush, new RectangleF(bounds.X + 2, bounds.Y + 2, bounds.Width, bounds.Height), format);
+        graphics.DrawString(text, font, textBrush, bounds, format);
     }
 
     private void LoadSpriteSheets()
@@ -330,18 +318,6 @@ internal sealed class ArtemisWelcomeForm : Form
         {
             return null;
         }
-    }
-
-    private static GraphicsPath RoundedRectangle(Rectangle bounds, int radius)
-    {
-        var path = new GraphicsPath();
-        var diameter = radius * 2;
-        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
-        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
-        path.CloseFigure();
-        return path;
     }
 
     private static bool ClientAreaAnimationsEnabled()

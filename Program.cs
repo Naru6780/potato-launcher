@@ -83,6 +83,7 @@ internal sealed class AppSettings
     public int AccountPanelWidth { get; set; }
     public bool RandomizeThemeAtLaunch { get; set; }
     public bool NotificationsEnabled { get; set; } = true;
+    public bool DesktopPetEnabled { get; set; } = true;
     public string LastShownChangelogVersion { get; set; } = "";
     public Dictionary<string, AccountIconProfile> AccountIcons { get; set; } = [];
     public List<BandConfig> Bands { get; set; } = [];
@@ -708,7 +709,6 @@ internal sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer settingsDrawerTimer = new();
     private ListBox accountList = null!;
     private AccountRosterGrid accountRosterGrid = null!;
-    private Panel accountResizeHandle = null!;
     private ListBox bandList = null!;
     private BandMemberChecklist memberList = null!;
     private Label folderLabel = null!;
@@ -728,6 +728,7 @@ internal sealed class MainForm : Form
     private CheckBox waitForClientInitializationInput = null!;
     private CheckBox randomizeThemeInput = null!;
     private CheckBox notificationsEnabledInput = null!;
+    private CheckBox desktopPetEnabledInput = null!;
     private Button settingsButton = null!;
     private Button killGameButton = null!;
     private Button multibandButton = null!;
@@ -792,14 +793,6 @@ internal sealed class MainForm : Form
     private int selectedNewsBannerIndex;
     private int accountDragIndex = -1;
     private Point accountDragStart;
-    private bool resizingAccountPanel;
-    private int accountResizeStartX;
-    private int accountResizeStartWidth;
-    private int accountResizeMinWidth;
-    private int accountResizeMaxWidth;
-    private int pendingAccountPanelWidth;
-    private bool accountResizeFrameQueued;
-    private bool accountResizeListsSuspended;
     private readonly TextUpdateGate statusUpdateGate = new(TimeSpan.FromMilliseconds(750));
     private readonly TextUpdateGate loadingStatusUpdateGate = new(TimeSpan.FromMilliseconds(250));
     private DateTime lastSaveNotificationUtc = DateTime.MinValue;
@@ -1023,6 +1016,11 @@ internal sealed class MainForm : Form
     private void UpdateDesktopPetVisibility()
     {
         if (artemisDesktopPet is null || artemisDesktopPet.IsDisposed) return;
+        if (!settings.DesktopPetEnabled)
+        {
+            artemisDesktopPet.Hide();
+            return;
+        }
         if (WindowState == FormWindowState.Minimized)
         {
             artemisDesktopPet.ShowNear(Screen.FromControl(this).WorkingArea);
@@ -1226,35 +1224,6 @@ internal sealed class MainForm : Form
         bandCard.Controls.Add(bandButtonPanel);
         tab.Controls.Add(accountCard);
         tab.Controls.Add(bandCard);
-        accountResizeHandle = new Panel { Cursor = Cursors.VSplit, BackColor = Color.Transparent };
-        accountResizeHandle.MouseDown += (_, e) =>
-        {
-            if (e.Button != MouseButtons.Left) return;
-            resizingAccountPanel = true;
-            accountResizeStartX = Cursor.Position.X;
-            accountResizeStartWidth = accountCard.Width;
-            accountResizeMinWidth = 300;
-            accountResizeMaxWidth = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, int.MaxValue).AccountWidth;
-            pendingAccountPanelWidth = accountResizeStartWidth;
-            accountResizeFrameQueued = false;
-            BeginAccountResizeInteraction();
-            accountResizeHandle.Capture = true;
-        };
-        accountResizeHandle.MouseMove += (_, _) =>
-        {
-            if (!resizingAccountPanel) return;
-            QueueAccountPanelResize(Cursor.Position.X);
-        };
-        accountResizeHandle.MouseUp += (_, _) =>
-        {
-            if (!resizingAccountPanel) return;
-            ApplyQueuedAccountPanelResize();
-            resizingAccountPanel = false;
-            accountResizeHandle.Capture = false;
-            EndAccountResizeInteraction();
-            SaveSettings(settings);
-        };
-        tab.Controls.Add(accountResizeHandle);
     }
 
     private void ApplyTopNavigationLayout(LauncherLayoutMetrics layout)
@@ -1306,7 +1275,7 @@ internal sealed class MainForm : Form
         if (accountCard is null || bandCard is null || statusPill is null) return;
 
         var oldPanelBounds = Rectangle.Union(accountCard.Bounds, bandCard.Bounds);
-        var layout = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, settings.AccountPanelWidth);
+        var layout = LauncherLayoutMetrics.Calculate(ClientSize.Width, ClientSize.Height, 0);
 
         using var redraw = forceRepaint ? null : BeginRedrawScope(background);
         background.SuspendLayout();
@@ -1315,12 +1284,6 @@ internal sealed class MainForm : Form
         ApplyTopNavigationLayout(layout);
         accountCard.SetBounds(layout.Margin, layout.Top, layout.AccountWidth, layout.ContentHeight);
         bandCard.SetBounds(layout.Margin + layout.AccountWidth + layout.Gap, layout.Top, layout.BandWidth, layout.ContentHeight);
-        if (accountResizeHandle is not null)
-        {
-            accountResizeHandle.SetBounds(accountCard.Right + 3, layout.Top + 8, Math.Max(8, layout.Gap - 6), layout.ContentHeight - 16);
-            accountResizeHandle.BringToFront();
-        }
-
         accountList.Bounds = new Rectangle(18, 58, accountCard.Width - 36, accountCard.Height - 82);
         accountRosterGrid.Bounds = accountList.Bounds;
 
@@ -1352,47 +1315,7 @@ internal sealed class MainForm : Form
             background.Invalidate(dirty, false);
             accountCard.Invalidate(false);
             bandCard.Invalidate(false);
-            accountResizeHandle?.Invalidate();
         }
-    }
-
-    private void QueueAccountPanelResize(int screenX)
-    {
-        pendingAccountPanelWidth = Math.Clamp(accountResizeStartWidth + screenX - accountResizeStartX, accountResizeMinWidth, accountResizeMaxWidth);
-        if (accountResizeFrameQueued) return;
-        accountResizeFrameQueued = true;
-        BeginInvoke(new Action(ApplyQueuedAccountPanelResize));
-    }
-
-    private void ApplyQueuedAccountPanelResize()
-    {
-        if (!accountResizeFrameQueued && pendingAccountPanelWidth == settings.AccountPanelWidth) return;
-        accountResizeFrameQueued = false;
-        if (pendingAccountPanelWidth == settings.AccountPanelWidth) return;
-        settings.AccountPanelWidth = pendingAccountPanelWidth;
-        ApplyLauncherLayout(forceRepaint: true);
-    }
-
-    private void BeginAccountResizeInteraction()
-    {
-        if (accountResizeListsSuspended) return;
-        accountResizeListsSuspended = true;
-        accountList.BeginUpdate();
-        bandList.BeginUpdate();
-        memberList.BeginUpdate();
-    }
-
-    private void EndAccountResizeInteraction()
-    {
-        if (!accountResizeListsSuspended) return;
-        accountResizeListsSuspended = false;
-        memberList.EndUpdate();
-        bandList.EndUpdate();
-        accountList.EndUpdate();
-        accountRosterGrid.Invalidate();
-        memberList.Invalidate();
-        bandList.Invalidate();
-        accountList.Invalidate();
     }
 
     private void ApplyResponsiveLayout()
@@ -1518,7 +1441,11 @@ internal sealed class MainForm : Form
         notificationsEnabledInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(notificationsEnabledInput);
 
-        updateButton = Button("Check for updates", 24, 660, 180, 34, "Secondary");
+        desktopPetEnabledInput = new CheckBox { Text = "Show Artemis desktop pet when minimized", Checked = settings.DesktopPetEnabled, Bounds = new Rectangle(24, 662, 332, 28), BackColor = Color.Transparent };
+        desktopPetEnabledInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
+        settingsDrawer.Controls.Add(desktopPetEnabledInput);
+
+        updateButton = Button("Check for updates", 24, 700, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
         UpdateLaunchModeUi();
@@ -1553,7 +1480,8 @@ internal sealed class MainForm : Form
             SetY(waitForClientInitializationInput, 560);
             SetY(randomizeThemeInput, 594);
             SetY(notificationsEnabledInput, 628);
-            SetY(updateButton, 660);
+            SetY(desktopPetEnabledInput, 662);
+            SetY(updateButton, 700);
         }
         else
         {
@@ -1570,7 +1498,8 @@ internal sealed class MainForm : Form
             SetY(waitForClientInitializationInput, 560);
             SetY(randomizeThemeInput, 594);
             SetY(notificationsEnabledInput, 628);
-            SetY(updateButton, 660);
+            SetY(desktopPetEnabledInput, 662);
+            SetY(updateButton, 700);
         }
     }
 
@@ -5024,7 +4953,9 @@ internal sealed class MainForm : Form
         settings.AccountDisplayMode = NormalizeAccountDisplayMode(accountDisplayInput?.SelectedItem?.ToString() ?? settings.AccountDisplayMode);
         settings.RandomizeThemeAtLaunch = randomizeThemeInput?.Checked ?? settings.RandomizeThemeAtLaunch;
         settings.NotificationsEnabled = notificationsEnabledInput?.Checked ?? settings.NotificationsEnabled;
+        settings.DesktopPetEnabled = desktopPetEnabledInput?.Checked ?? settings.DesktopPetEnabled;
         SaveSettings(settings);
+        UpdateDesktopPetVisibility();
         if (showFeedback) ShowSaveFeedback("Settings saved.");
     }
 
