@@ -7,10 +7,10 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AssemblyName>Potato Launcher</AssemblyName>
     <RootNamespace>PotatoLauncher</RootNamespace>
-    <Version>1.1.0</Version>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
-    <FileVersion>1.1.0.0</FileVersion>
-    <InformationalVersion>1.1.0</InformationalVersion>
+    <Version>1.0.86</Version>
+    <AssemblyVersion>1.0.86.0</AssemblyVersion>
+    <FileVersion>1.0.86.0</FileVersion>
+    <InformationalVersion>1.0.86</InformationalVersion>
     <ApplicationHighDpiMode>DpiUnawareGdiScaled</ApplicationHighDpiMode>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -27,9 +27,11 @@
     <None Remove="tests\**\*" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="Potato Launcher Assets\**\*">
+    <Content Include="Potato Launcher Assets\**\*"
+             Exclude="Potato Launcher Assets\Assets\Artemis\*-chroma.png;Potato Launcher Assets\Assets\Artemis\artemis-idle.png;Potato Launcher Assets\Assets\Artemis\artemis-run.png;Potato Launcher Assets\Assets\Artemis\artemis-release.png;Potato Launcher Assets\Assets\Artemis\artemis-wave.png;Potato Launcher Assets\Assets\artemis-welcome-sheet.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
   </ItemGroup>
 </Project>

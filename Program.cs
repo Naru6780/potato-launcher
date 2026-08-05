@@ -28,10 +28,26 @@ namespace PotatoLauncher;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
-        Application.Run(new MainForm());
+        if (args.Contains("--welcome-preview", StringComparer.OrdinalIgnoreCase))
+        {
+            Application.Run(new ArtemisWelcomeForm());
+            return;
+        }
+        if (args.Contains("--pet-preview", StringComparer.OrdinalIgnoreCase))
+        {
+            var pet = ArtemisDesktopPetForm.TryCreate();
+            if (pet is null)
+            {
+                MessageBox.Show("Artemis animation assets could not be loaded.", "Potato Launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            Application.Run(pet);
+            return;
+        }
+        Application.Run(new StartupApplicationContext());
     }
 }
 
@@ -720,6 +736,7 @@ internal sealed class MainForm : Form
     private Button helpButton = null!;
     private AppToolTip? appToolTip;
     private MascotOverlayForm? mascotOverlay;
+    private ArtemisDesktopPetForm? artemisDesktopPet;
     private RoundedPanel statusPill = null!;
     private Label status = null!;
     private Button launchBandButton = null!;
@@ -848,12 +865,22 @@ internal sealed class MainForm : Form
         newsBandroll.ItemClicked += (_, url) => OpenUrl(url);
         background.Controls.Add(newsBandroll);
         mascotOverlay = CreateMascotOverlay();
-        Shown += (_, _) => UpdateMascotOverlay();
+        artemisDesktopPet = ArtemisDesktopPetForm.TryCreate();
+        if (artemisDesktopPet is not null)
+        {
+            artemisDesktopPet.RestoreRequested += (_, _) => RestoreFromDesktopPet();
+        }
+        Shown += (_, _) =>
+        {
+            UpdateMascotOverlay();
+            UpdateDesktopPetVisibility();
+        };
         Move += (_, _) => UpdateMascotOverlay();
         Resize += (_, _) =>
         {
             ApplyResponsiveLayout();
             UpdateMascotOverlay();
+            UpdateDesktopPetVisibility();
         };
         Activated += (_, _) => UpdateMascotOverlay();
         FormClosed += async (_, _) =>
@@ -864,6 +891,7 @@ internal sealed class MainForm : Form
             optimizerService.Dispose();
             appToolTip?.Dispose();
             mascotOverlay?.Close();
+            artemisDesktopPet?.Close();
         };
         BuildLauncherTab(background);
         BuildSettingsDrawer();
@@ -990,6 +1018,27 @@ internal sealed class MainForm : Form
         mascotOverlay.Bounds = new Rectangle(mascotLocation, mascotOverlay.Size);
         if (!mascotOverlay.Visible) mascotOverlay.Show(this);
         mascotOverlay.Invalidate();
+    }
+
+    private void UpdateDesktopPetVisibility()
+    {
+        if (artemisDesktopPet is null || artemisDesktopPet.IsDisposed) return;
+        if (WindowState == FormWindowState.Minimized)
+        {
+            artemisDesktopPet.ShowNear(Screen.FromControl(this).WorkingArea);
+            return;
+        }
+        artemisDesktopPet.Hide();
+    }
+
+    private void RestoreFromDesktopPet()
+    {
+        if (IsDisposed) return;
+        WindowState = FormWindowState.Normal;
+        Show();
+        Activate();
+        BringToFront();
+        artemisDesktopPet?.Hide();
     }
 
     private void LoadMascotFrames()

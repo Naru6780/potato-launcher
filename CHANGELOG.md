@@ -1,15 +1,17 @@
 # Changelog
 
-## 1.1.0 - 2026-08-03
+## 1.0.86 - 2026-08-05
 
+- Added a three-second animated Artemis welcome screen that displays a random greeting, waves, and smoothly cross-fades into the launcher.
+- Added a transparent Artemis desktop pet that appears when the launcher is minimized, runs while dragged, performs a recovery animation when released, and occasionally waves while idle.
+- Added 48 detailed capless Artemis animation frames across idle, running, release, and wave states.
+- Added a randomized collection of short, original FFXIV lore-inspired greetings for Artemis.
+- Added click, Enter, Space, and Escape shortcuts to skip the welcome, plus reduced-motion support through the Windows animation preference.
 - Added encrypted LAN pairing between trusted Potato Launcher PCs using a temporary six-digit pairing code and pinned device certificate.
 - Added saved Multiband launch plans that link one local band with one band stored on a second PC without transferring account credentials or launcher commands.
 - Added a prepare/ready barrier and synchronized countdown so both band queues start together, plus combined per-account progress and distributed cancellation.
 - Added permanent band IDs so launch plans survive band renames, with automatic migration for existing bands.
 - Restricted Multiband traffic to private-network addresses and made duplicate launch commits idempotent.
-
-## 1.0.86 - 2026-08-03
-
 - Removed theme music playback, playlists, volume controls, mute controls, and launch-queue music behavior.
 - Removed bundled theme audio files, reducing the packaged assets by about 36.8 MB.
 - Removed obsolete music values from saved settings while preserving all remaining launcher preferences.
