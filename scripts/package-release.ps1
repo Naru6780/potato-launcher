@@ -9,7 +9,6 @@ $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $publishPath = Join-Path $repoRoot $PublishDir
 $releasePath = Join-Path $repoRoot $ReleaseDir
-$assetsSource = Join-Path $repoRoot "Potato Launcher Assets"
 $assetsPublish = Join-Path $publishPath "Potato Launcher Assets"
 $zipPath = Join-Path $releasePath "PotatoLauncher.zip"
 $persistedFiles = @("settings.json", "accountList.json", "optimizer.json", "band.json")
@@ -34,9 +33,6 @@ dotnet publish .\PotatoLauncher.csproj -c $Configuration -o $publishPath
 foreach ($fileName in $persistedFiles) {
     Remove-Item -LiteralPath (Join-Path $publishPath $fileName) -Force -ErrorAction SilentlyContinue
 }
-
-Remove-Item -LiteralPath $assetsPublish -Recurse -Force -ErrorAction SilentlyContinue
-Copy-Item -LiteralPath $assetsSource -Destination $assetsPublish -Recurse -Force
 
 if (Test-Path -LiteralPath $releasePath) {
     Remove-Item -LiteralPath $releasePath -Recurse -Force
