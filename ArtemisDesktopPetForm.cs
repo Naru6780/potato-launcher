@@ -51,8 +51,52 @@ internal static class ArtemisAnimationTiming
         !Loops(state) && elapsed.TotalMilliseconds >= FrameDurationMilliseconds(state) * FrameCount;
 }
 
+internal static class ArtemisPetScale
+{
+    public const int DefaultPercent = 100;
+    public const int MinimumPercent = 60;
+    public const int MaximumPercent = 180;
+    public const int StepPercent = 10;
+    private static readonly Size BaseSize = new(270, 300);
+
+    public static int Normalize(int percent)
+    {
+        var clamped = Math.Clamp(percent, MinimumPercent, MaximumPercent);
+        return Math.Clamp(
+            (int)Math.Round(clamped / (double)StepPercent, MidpointRounding.AwayFromZero) * StepPercent,
+            MinimumPercent,
+            MaximumPercent);
+    }
+
+    public static Size SizeForPercent(int percent)
+    {
+        var normalized = Normalize(percent);
+        return new Size(
+            BaseSize.Width * normalized / 100,
+            BaseSize.Height * normalized / 100);
+    }
+}
+
+internal static class ArtemisPetHitTarget
+{
+    public static Rectangle Calculate(Rectangle frameBounds)
+    {
+        var verticalPadding = Math.Max(2, frameBounds.Height / 80);
+        var height = Math.Max(1, frameBounds.Height - verticalPadding * 2);
+        var width = Math.Min(frameBounds.Width, Math.Max(1, (int)MathF.Round(frameBounds.Height * 0.78F)));
+        return new Rectangle(
+            frameBounds.Left + (frameBounds.Width - width) / 2,
+            frameBounds.Top + verticalPadding,
+            width,
+            height);
+    }
+}
+
 internal sealed class ArtemisDesktopPetForm : Form
 {
+    private const int WmNcHitTest = 0x0084;
+    private const int HtClient = 1;
+    private const int HtTransparent = -1;
     private const int WsExLayered = 0x00080000;
     private const int WsExToolWindow = 0x00000080;
     private const int UlwAlpha = 0x00000002;
@@ -70,20 +114,23 @@ internal sealed class ArtemisDesktopPetForm : Form
     private Point dragOffset;
     private Point lastCursorPosition;
     private int lastFrame = -1;
+    private int sizePercent;
 
     public event EventHandler? RestoreRequested;
+    public event EventHandler? SizePercentChanged;
 
-    private ArtemisDesktopPetForm(Dictionary<ArtemisAnimationState, Bitmap> sheets)
+    public int SizePercent => sizePercent;
+
+    private ArtemisDesktopPetForm(Dictionary<ArtemisAnimationState, Bitmap> sheets, int initialSizePercent)
     {
         this.sheets = sheets;
+        sizePercent = ArtemisPetScale.Normalize(initialSizePercent);
         Text = "Artemis";
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
-        ClientSize = new Size(270, 300);
-        MinimumSize = ClientSize;
-        MaximumSize = ClientSize;
+        ClientSize = ArtemisPetScale.SizeForPercent(sizePercent);
         DoubleBuffered = true;
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
@@ -120,7 +167,7 @@ internal sealed class ArtemisDesktopPetForm : Form
         DoubleClick += (_, _) => RestoreRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    public static ArtemisDesktopPetForm? TryCreate()
+    public static ArtemisDesktopPetForm? TryCreate(int initialSizePercent = ArtemisPetScale.DefaultPercent)
     {
         if (!ArtemisAnimationAssets.AllAnimationSheetsExist()) return null;
         var loaded = new Dictionary<ArtemisAnimationState, Bitmap>();
@@ -130,7 +177,7 @@ internal sealed class ArtemisDesktopPetForm : Form
             loaded[ArtemisAnimationState.Run] = LoadBitmap(ArtemisAnimationAssets.Run);
             loaded[ArtemisAnimationState.Release] = LoadBitmap(ArtemisAnimationAssets.Release);
             loaded[ArtemisAnimationState.Wave] = LoadBitmap(ArtemisAnimationAssets.Wave);
-            return new ArtemisDesktopPetForm(loaded);
+            return new ArtemisDesktopPetForm(loaded, initialSizePercent);
         }
         catch
         {
@@ -156,6 +203,15 @@ internal sealed class ArtemisDesktopPetForm : Form
         }
     }
 
+    protected override void WndProc(ref Message message)
+    {
+        base.WndProc(ref message);
+        if (message.Msg == WmNcHitTest && message.Result == (IntPtr)HtTransparent)
+        {
+            message.Result = (IntPtr)HtClient;
+        }
+    }
+
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
@@ -177,6 +233,29 @@ internal sealed class ArtemisDesktopPetForm : Form
         lastCursorPosition = cursor;
         Location = ClampToVirtualScreen(new Point(cursor.X - dragOffset.X, cursor.Y - dragOffset.Y));
         RenderCurrentFrame(force: true);
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (!dragging || (Control.MouseButtons & MouseButtons.Left) == 0 || e.Delta == 0) return;
+
+        var nextPercent = ArtemisPetScale.Normalize(sizePercent + Math.Sign(e.Delta) * ArtemisPetScale.StepPercent);
+        if (nextPercent == sizePercent) return;
+
+        var oldSize = ClientSize;
+        var horizontalAnchor = dragOffset.X / (float)Math.Max(1, oldSize.Width);
+        var verticalAnchor = dragOffset.Y / (float)Math.Max(1, oldSize.Height);
+        sizePercent = nextPercent;
+        ClientSize = ArtemisPetScale.SizeForPercent(sizePercent);
+        dragOffset = new Point(
+            (int)MathF.Round(ClientSize.Width * horizontalAnchor),
+            (int)MathF.Round(ClientSize.Height * verticalAnchor));
+        var cursor = Cursor.Position;
+        Location = ClampToVirtualScreen(new Point(cursor.X - dragOffset.X, cursor.Y - dragOffset.Y));
+        lastFrame = -1;
+        RenderCurrentFrame(force: true);
+        SizePercentChanged?.Invoke(this, EventArgs.Empty);
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -243,6 +322,7 @@ internal sealed class ArtemisDesktopPetForm : Form
 
             var source = ArtemisSpriteSheetLayout.SourceFrameBounds(sheets[state].Size, frame);
             var destination = ArtemisSpriteSheetLayout.FitFrameBounds(source.Size, ClientRectangle);
+            DrawInteractionMask(graphics, ArtemisPetHitTarget.Calculate(destination));
             var flip = state == ArtemisAnimationState.Run
                 ? facingLeft
                 : state == ArtemisAnimationState.Release && releaseStartedFacingLeft && frame < 8;
@@ -254,6 +334,25 @@ internal sealed class ArtemisDesktopPetForm : Form
             graphics.DrawImage(sheets[state], destination, source, GraphicsUnit.Pixel);
         }
         UpdateLayeredBitmap(rendered);
+    }
+
+    private static void DrawInteractionMask(Graphics graphics, Rectangle bounds)
+    {
+        if (bounds.Width <= 0 || bounds.Height <= 0) return;
+        using var path = new GraphicsPath();
+        var radius = Math.Max(8, Math.Min(bounds.Width / 3, bounds.Height / 3));
+        var diameter = radius * 2;
+        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+
+        var previousMode = graphics.CompositingMode;
+        graphics.CompositingMode = CompositingMode.SourceCopy;
+        using var brush = new SolidBrush(Color.FromArgb(2, 0, 0, 0));
+        graphics.FillPath(brush, path);
+        graphics.CompositingMode = previousMode;
     }
 
     private void PlaceNearBottomRight()

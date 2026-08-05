@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.89 - 2026-08-05
+
+- Added desktop-pet resizing: hold the left mouse button over Artemis and scroll up or down.
+- Kept the cursor anchored to the same point on Artemis while resizing, with sizes from 60% to 180% in 10% steps.
+- Remembered the selected pet size across launcher restarts.
+- Added a scalable silhouette hit target and explicit layered-window hit testing for reliable dragging on high-DPI multi-monitor desktops.
+
 ## 1.0.88 - 2026-08-05
 
 - Preserved the original Artemis frame aspect ratio on the startup screen so the character no longer appears vertically stretched.

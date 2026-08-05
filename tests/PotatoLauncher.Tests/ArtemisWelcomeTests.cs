@@ -84,6 +84,29 @@ public class ArtemisWelcomeTests
             ArtemisAnimationTiming.FrameAt(ArtemisAnimationState.Release, releaseDuration));
     }
 
+    [Theory]
+    [InlineData(20, 60, 162, 180)]
+    [InlineData(64, 60, 162, 180)]
+    [InlineData(105, 110, 297, 330)]
+    [InlineData(176, 180, 486, 540)]
+    [InlineData(250, 180, 486, 540)]
+    public void DesktopPetScale_NormalizesAndCalculatesAStableSize(int requested, int expectedPercent, int width, int height)
+    {
+        Assert.Equal(expectedPercent, ArtemisPetScale.Normalize(requested));
+        Assert.Equal(new Size(width, height), ArtemisPetScale.SizeForPercent(requested));
+    }
+
+    [Fact]
+    public void DesktopPetHitTarget_ScalesWithTheRenderedFrameAndAvoidsAFullWindowBlocker()
+    {
+        var frame = new Rectangle(0, 40, 270, 219);
+        var hitTarget = ArtemisPetHitTarget.Calculate(frame);
+
+        Assert.Equal(new Rectangle(49, 42, 171, 215), hitTarget);
+        Assert.True(hitTarget.Width < frame.Width);
+        Assert.True(frame.Contains(hitTarget));
+    }
+
     [Fact]
     public void DesktopPetAtlases_KeepEveryFrameAtOneCharacterHeight()
     {

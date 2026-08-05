@@ -84,6 +84,7 @@ internal sealed class AppSettings
     public bool RandomizeThemeAtLaunch { get; set; }
     public bool NotificationsEnabled { get; set; } = true;
     public bool DesktopPetEnabled { get; set; } = true;
+    public int DesktopPetSizePercent { get; set; } = ArtemisPetScale.DefaultPercent;
     public string LastShownChangelogVersion { get; set; } = "";
     public Dictionary<string, AccountIconProfile> AccountIcons { get; set; } = [];
     public List<BandConfig> Bands { get; set; } = [];
@@ -156,6 +157,9 @@ internal static class AppText
 
         Display and themes
         Switch the account list between Text and Roster display in Settings. Themes can change colors and backgrounds, and can be randomized each time the app starts.
+
+        Artemis desktop pet
+        Minimize Potato Launcher to show Artemis. Drag her with the left mouse button. While holding the left button, scroll the mouse wheel to resize her. The selected size is remembered automatically.
 
         Import and export
         Export accounts or bands when sharing setup data with friends. Import modes let you append, merge, replace, or overwrite existing data.
@@ -858,10 +862,16 @@ internal sealed class MainForm : Form
         newsBandroll.ItemClicked += (_, url) => OpenUrl(url);
         background.Controls.Add(newsBandroll);
         mascotOverlay = CreateMascotOverlay();
-        artemisDesktopPet = ArtemisDesktopPetForm.TryCreate();
+        settings.DesktopPetSizePercent = ArtemisPetScale.Normalize(settings.DesktopPetSizePercent);
+        artemisDesktopPet = ArtemisDesktopPetForm.TryCreate(settings.DesktopPetSizePercent);
         if (artemisDesktopPet is not null)
         {
             artemisDesktopPet.RestoreRequested += (_, _) => RestoreFromDesktopPet();
+            artemisDesktopPet.SizePercentChanged += (_, _) =>
+            {
+                settings.DesktopPetSizePercent = artemisDesktopPet.SizePercent;
+                SaveSettings(settings);
+            };
         }
         Shown += (_, _) =>
         {

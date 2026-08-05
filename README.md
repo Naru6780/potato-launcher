@@ -27,7 +27,7 @@ Potato Launcher stores its configuration in `%APPDATA%\Potato Launcher`, separat
 3. Add accounts to a band and choose the launch timing in Settings.
 4. Use **Launch band** to start the selected group.
 
-The Artemis desktop pet can be enabled or disabled under Settings. This preference does not affect the short startup welcome animation.
+The Artemis desktop pet can be enabled or disabled under Settings. Drag her with the left mouse button; while holding it, use the mouse wheel to resize her. The chosen size is remembered. This preference does not affect the short startup welcome animation.
 
 ## Two-PC Multiband
 
