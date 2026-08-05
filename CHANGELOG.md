@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.88 - 2026-08-05
+
+- Preserved the original Artemis frame aspect ratio on the startup screen so the character no longer appears vertically stretched.
+- Moved the crystal cogwheel closer to Artemis and added an irregular painted splash behind the welcome composition.
+- Shared the same aspect-fit calculation between startup and desktop-pet rendering.
+
 ## 1.0.87 - 2026-08-05
 
 - Replaced the startup card with a minimal transparent Artemis scene, a rotating crystal cogwheel, and one short greeting.

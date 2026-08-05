@@ -41,6 +41,21 @@ public class ArtemisWelcomeTests
     }
 
     [Fact]
+    public void FitFrameBounds_PreservesTheAtlasCellAspectRatio()
+    {
+        var destination = ArtemisSpriteSheetLayout.FitFrameBounds(
+            new Size(420, 340),
+            new Rectangle(35, 30, 340, 300));
+
+        Assert.Equal(340, destination.Width);
+        Assert.Equal(275, destination.Height);
+        Assert.InRange(
+            Math.Abs(destination.Width / (double)destination.Height - 420D / 340D),
+            0,
+            0.002);
+    }
+
+    [Fact]
     public void WelcomeTimeline_PlaysIdleWaveAndSettlesOverThreeSeconds()
     {
         Assert.Equal(TimeSpan.FromSeconds(3), ArtemisWelcomeTimeline.Duration);

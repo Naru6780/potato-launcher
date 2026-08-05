@@ -242,7 +242,7 @@ internal sealed class ArtemisDesktopPetForm : Form
             graphics.SmoothingMode = SmoothingMode.HighQuality;
 
             var source = ArtemisSpriteSheetLayout.SourceFrameBounds(sheets[state].Size, frame);
-            var destination = FitRectangle(source.Size, ClientRectangle);
+            var destination = ArtemisSpriteSheetLayout.FitFrameBounds(source.Size, ClientRectangle);
             var flip = state == ArtemisAnimationState.Run
                 ? facingLeft
                 : state == ArtemisAnimationState.Release && releaseStartedFacingLeft && frame < 8;
@@ -334,15 +334,6 @@ internal sealed class ArtemisDesktopPetForm : Form
         using var stream = new MemoryStream(File.ReadAllBytes(path));
         using var decoded = Image.FromStream(stream);
         return new Bitmap(decoded);
-    }
-
-    private static Rectangle FitRectangle(Size imageSize, Rectangle bounds)
-    {
-        if (imageSize.Width <= 0 || imageSize.Height <= 0) return bounds;
-        var scale = Math.Min(bounds.Width / (float)imageSize.Width, bounds.Height / (float)imageSize.Height);
-        var width = (int)MathF.Round(imageSize.Width * scale);
-        var height = (int)MathF.Round(imageSize.Height * scale);
-        return new Rectangle(bounds.Left + (bounds.Width - width) / 2, bounds.Top + (bounds.Height - height) / 2, width, height);
     }
 
     [StructLayout(LayoutKind.Sequential)]

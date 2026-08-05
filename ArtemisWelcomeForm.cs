@@ -43,6 +43,19 @@ internal static class ArtemisSpriteSheetLayout
         var bottom = (row + 1) * sheetSize.Height / Rows;
         return Rectangle.FromLTRB(left, top, right, bottom);
     }
+
+    public static Rectangle FitFrameBounds(Size frameSize, Rectangle bounds)
+    {
+        if (frameSize.Width <= 0 || frameSize.Height <= 0) return bounds;
+        var scale = Math.Min(bounds.Width / (float)frameSize.Width, bounds.Height / (float)frameSize.Height);
+        var width = (int)MathF.Round(frameSize.Width * scale);
+        var height = (int)MathF.Round(frameSize.Height * scale);
+        return new Rectangle(
+            bounds.Left + (bounds.Width - width) / 2,
+            bounds.Top + (bounds.Height - height) / 2,
+            width,
+            height);
+    }
 }
 
 internal readonly record struct ArtemisWelcomeFrame(ArtemisAnimationState State, int FrameIndex);
@@ -191,6 +204,7 @@ internal sealed class ArtemisWelcomeForm : Form
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
         graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        DrawPaintSplash(graphics);
         DrawPet(graphics);
         DrawCogwheel(graphics);
         DrawQuote(graphics);
@@ -222,25 +236,75 @@ internal sealed class ArtemisWelcomeForm : Form
         introCompleted.TrySetResult();
     }
 
+    private static void DrawPaintSplash(Graphics graphics)
+    {
+        using var splashPath = new GraphicsPath();
+        splashPath.StartFigure();
+        splashPath.AddBezier(66, 226, 48, 174, 84, 105, 146, 90);
+        splashPath.AddBezier(196, 76, 235, 105, 276, 78, 323, 96);
+        splashPath.AddBezier(365, 112, 398, 91, 449, 119, 466, 158);
+        splashPath.AddBezier(466, 158, 486, 204, 449, 250, 398, 258);
+        splashPath.AddBezier(398, 258, 340, 267, 303, 250, 252, 276);
+        splashPath.AddBezier(252, 276, 199, 301, 139, 286, 101, 259);
+        splashPath.AddBezier(101, 259, 84, 247, 74, 236, 66, 226);
+        splashPath.CloseFigure();
+
+        using var splashBrush = new LinearGradientBrush(
+            new Rectangle(58, 78, 420, 210),
+            Color.FromArgb(225, 91, 42, 124),
+            Color.FromArgb(225, 177, 58, 106),
+            12F);
+        graphics.FillPath(splashBrush, splashPath);
+
+        using var lightStroke = new Pen(Color.FromArgb(190, 232, 160, 184), 18F)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round
+        };
+        graphics.DrawBezier(lightStroke, new Point(92, 238), new Point(184, 196), new Point(286, 224), new Point(444, 142));
+
+        using var goldStroke = new Pen(Color.FromArgb(220, 213, 174, 103), 5F)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round
+        };
+        graphics.DrawBezier(goldStroke, new Point(88, 113), new Point(193, 65), new Point(331, 101), new Point(464, 196));
+
+        using var dropletBrush = new SolidBrush(Color.FromArgb(230, 166, 57, 111));
+        foreach (var droplet in new[]
+        {
+            new Rectangle(62, 83, 12, 12),
+            new Rectangle(92, 58, 7, 7),
+            new Rectangle(470, 101, 11, 11),
+            new Rectangle(489, 136, 6, 6),
+            new Rectangle(63, 278, 9, 9),
+            new Rectangle(454, 272, 8, 8)
+        })
+        {
+            graphics.FillEllipse(dropletBrush, droplet);
+        }
+    }
+
     private void DrawPet(Graphics graphics)
     {
         var welcomeFrame = ArtemisWelcomeTimeline.FrameAt(animationClock.Elapsed, reduceMotion);
-        var destination = new Rectangle(52, 30, 300, 300);
         var spriteSheet = welcomeFrame.State == ArtemisAnimationState.Wave ? waveSpriteSheet : idleSpriteSheet;
         if (spriteSheet is not null)
         {
             var source = ArtemisSpriteSheetLayout.SourceFrameBounds(spriteSheet.Size, welcomeFrame.FrameIndex);
+            var destination = ArtemisSpriteSheetLayout.FitFrameBounds(source.Size, new Rectangle(35, 30, 340, 300));
             graphics.DrawImage(spriteSheet, destination, source, GraphicsUnit.Pixel);
             return;
         }
 
+        var fallbackBounds = new Rectangle(35, 30, 340, 300);
         using var fallbackFont = new Font("Segoe UI", 42F, FontStyle.Bold, GraphicsUnit.Pixel);
-        TextRenderer.DrawText(graphics, "Artemis", fallbackFont, destination, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        TextRenderer.DrawText(graphics, "Artemis", fallbackFont, fallbackBounds, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 
     private void DrawCogwheel(Graphics graphics)
     {
-        const float centerX = 470F;
+        const float centerX = 410F;
         const float centerY = 162F;
         const int toothCount = 12;
         var angle = reduceMotion ? 0F : (float)(animationClock.Elapsed.TotalSeconds * 55);
