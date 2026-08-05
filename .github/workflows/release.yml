@@ -1,0 +1,59 @@
+name: Build release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft release tag, such as v1.0.88
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check release tag
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Invalid release tag: $env:RELEASE_TAG"
+          }
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Run tests
+        shell: pwsh
+        run: dotnet test tests/PotatoLauncher.Tests/PotatoLauncher.Tests.csproj --configuration Release
+
+      - name: Build release packages
+        shell: pwsh
+        run: ./scripts/package-installer.ps1 -Configuration Release -DesktopPath ''
+
+      - name: Upload release assets
+        shell: pwsh
+        run: |
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json isDraft --jq '.isDraft' | ForEach-Object {
+            if ($_ -ne 'true') { throw "$env:RELEASE_TAG is not a draft release." }
+          }
+          gh release upload $env:RELEASE_TAG release/PotatoLauncher.zip release/PotatoLauncherSetup.exe --repo $env:GITHUB_REPOSITORY --clobber
+
+      - name: Publish release
+        shell: pwsh
+        run: gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest
