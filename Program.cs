@@ -17,7 +17,6 @@ using WpfGrid = System.Windows.Controls.Grid;
 using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
 using WpfImage = System.Windows.Controls.Image;
 using WpfMediaElement = System.Windows.Controls.MediaElement;
-using WpfMediaPlayer = System.Windows.Media.MediaPlayer;
 using WpfStretch = System.Windows.Media.Stretch;
 using WpfThickness = System.Windows.Thickness;
 using WpfVerticalAlignment = System.Windows.VerticalAlignment;
@@ -49,6 +48,7 @@ internal sealed record Account(string Name, string BatchFile, int SortOrder, str
 
 internal sealed class BandConfig
 {
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "New Band";
     public List<string> BatchFiles { get; set; } = [];
     public override string ToString() => $"{Name} ({BatchFiles.Count})";
@@ -61,9 +61,6 @@ internal sealed class AppSettings
     public string SharedProfileFolder { get; set; } = "";
     public bool LaunchModeChosen { get; set; }
     public string Theme { get; set; } = "Pink";
-    public bool MusicMuted { get; set; }
-    public bool StopMusicWhenAllLoaded { get; set; }
-    public int MusicVolume { get; set; } = 45;
     public int LaunchCooldownSeconds { get; set; } = 0;
     public bool WaitForClientInitializationBeforeNextLaunch { get; set; }
     public string AccountDisplayMode { get; set; } = "Text";
@@ -134,11 +131,14 @@ internal static class AppText
         Bands
         Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence. Right-click a band to rename it or terminate the running clients for only that band.
 
+        Multiband
+        Pair two Potato Launcher PCs on the same private network, choose one local band and one remote band, and save them as a launch plan. Launch both queues from the main PC with a synchronized countdown and combined progress. Account credentials always stay on their own PC.
+
         Launching
         OTP-enabled accounts launch with autologin disabled so you can finish login manually. The launch cooldown setting adds a delay between band launches.
 
         Display and themes
-        Switch the account list between Text and Roster display in Settings. Themes can change colors, backgrounds, and music. Music can be muted, randomized, or stopped when a launch queue finishes.
+        Switch the account list between Text and Roster display in Settings. Themes can change colors and backgrounds, and can be randomized each time the app starts.
 
         Import and export
         Export accounts or bands when sharing setup data with friends. Import modes let you append, merge, replace, or overwrite existing data.
@@ -397,7 +397,6 @@ internal static class SettingsMigration
         settings.LaunchMode = NormalizeLaunchModeValue(settings.LaunchMode);
         settings.SharedProfileFolder ??= "";
         settings.Theme = string.IsNullOrWhiteSpace(settings.Theme) ? "Pink" : settings.Theme.Trim();
-        settings.MusicVolume = Math.Clamp(settings.MusicVolume, 0, 100);
         settings.LaunchCooldownSeconds = Math.Clamp(settings.LaunchCooldownSeconds, 0, 300);
         settings.AccountDisplayMode = NormalizeAccountDisplayModeValue(settings.AccountDisplayMode);
         settings.LastShownChangelogVersion ??= "";
@@ -476,8 +475,16 @@ internal static class SettingsMigration
 
     private static void CleanBands(List<BandConfig> bands)
     {
+        var usedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var band in bands)
         {
+            var id = band.Id?.Trim() ?? "";
+            if (!Guid.TryParse(id, out var parsedId) || !usedIds.Add(parsedId.ToString("N")))
+            {
+                id = Guid.NewGuid().ToString("N");
+                usedIds.Add(id);
+            }
+            band.Id = id;
             band.Name = string.IsNullOrWhiteSpace(band.Name) ? "New Band" : band.Name.Trim();
             CleanOrder(band.BatchFiles);
         }
@@ -698,10 +705,6 @@ internal sealed class MainForm : Form
     private Button browseBatButton = null!;
     private Button browseSharedProfileButton = null!;
     private Button updateButton = null!;
-    private CheckBox muteMusicInput = null!;
-    private CheckBox stopMusicWhenLoadedInput = null!;
-    private ThemeSlider musicVolumeInput = null!;
-    private Label musicVolumeLabel = null!;
     private Label accountDisplayLabel = null!;
     private ComboBox accountDisplayInput = null!;
     private Label launchCooldownLabel = null!;
@@ -711,10 +714,10 @@ internal sealed class MainForm : Form
     private CheckBox notificationsEnabledInput = null!;
     private Button settingsButton = null!;
     private Button killGameButton = null!;
+    private Button multibandButton = null!;
     private Button whatsNewButton = null!;
     private Button optimizerButton = null!;
     private Button helpButton = null!;
-    private Button muteMusicButton = null!;
     private AppToolTip? appToolTip;
     private MascotOverlayForm? mascotOverlay;
     private RoundedPanel statusPill = null!;
@@ -747,7 +750,6 @@ internal sealed class MainForm : Form
     private Button newsCloseButton = null!;
     private ElementHost videoHost = null!;
     private WpfMediaElement backgroundVideo = null!;
-    private readonly WpfMediaPlayer themeMusic = new();
     private WpfImage wpfMascot = null!;
     private readonly DispatcherTimer mascotTimer = new();
     private readonly List<BitmapSource> mascotFrames = [];
@@ -756,6 +758,11 @@ internal sealed class MainForm : Form
     private readonly Dictionary<string, int> runningClientProcessIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly IntegratedOptimizerService optimizerService = new(OptimizerSettings.Load());
     private OptimizerMonitorForm? optimizerMonitor;
+    private MultibandSettingsStore multibandSettingsStore = null!;
+    private MultibandSettings multibandSettings = null!;
+    private MultibandServer multibandServer = null!;
+    private MultibandClient multibandClient = null!;
+    private MultibandForm? multibandForm;
     private ThemePalette palette = Palettes["Pink"];
     private CancellationTokenSource? queueCancel;
     private bool loadingQueueActive;
@@ -763,9 +770,6 @@ internal sealed class MainForm : Form
     private bool themeHasVideo;
     private bool themeHasImage;
     private bool settingsDrawerOpen;
-    private readonly List<string> currentMusicPlaylist = [];
-    private string? currentMusicFolder;
-    private int currentMusicIndex;
     private readonly List<NewsBanner> newsBanners = [];
     private readonly List<NewsEntry> newsEntries = [];
     private int selectedNewsBannerIndex;
@@ -792,6 +796,7 @@ internal sealed class MainForm : Form
         RemoveOldDefaultBands();
         LoadAccounts();
         BuildUi();
+        InitializeMultiband();
         MigrateLegacyBands();
         PopulateLists();
         ApplyTheme(settings.Theme);
@@ -816,10 +821,6 @@ internal sealed class MainForm : Form
         background = new CuteBackgroundPanel { Dock = DockStyle.Fill, AnimateBubbles = true };
         Controls.Add(background);
         BuildVideoBackground();
-        themeMusic.MediaEnded += (_, _) =>
-        {
-            PlayNextThemeSong();
-        };
 
         settingsButton = Button("Settings", 36, 24, 102, 34, "Secondary");
         settingsButton.Click += (_, _) => ToggleSettingsDrawer();
@@ -827,22 +828,23 @@ internal sealed class MainForm : Form
         killGameButton = Button("Kill FFXIV", 154, 24, 104, 34, "Danger");
         killGameButton.Click += (_, _) => KillGameInstances();
         background.Controls.Add(killGameButton);
-        muteMusicButton = Button("", 272, 24, 108, 34, "Secondary");
-        muteMusicButton.Click += (_, _) => ToggleMusicMute();
-        background.Controls.Add(muteMusicButton);
-        whatsNewButton = NewsPillButton(394, 24, 68, 34);
+        multibandButton = Button("Multiband", 272, 24, 110, 34, "Secondary");
+        multibandButton.Click += (_, _) => ShowMultibandWindow();
+        background.Controls.Add(multibandButton);
+        whatsNewButton = NewsPillButton(396, 24, 68, 34);
         whatsNewButton.Click += async (_, _) => await ShowNewsOverlayAsync();
         background.Controls.Add(whatsNewButton);
-        optimizerButton = Button("Optimizer", 476, 24, 96, 34, "Primary");
+        optimizerButton = Button("Optimizer", 478, 24, 96, 34, "Primary");
         optimizerButton.Click += (_, _) => ShowOptimizerMonitor();
         background.Controls.Add(optimizerButton);
-        helpButton = Button("?", 586, 24, 34, 34, "Secondary");
+        helpButton = Button("?", 588, 24, 34, 34, "Secondary");
         appToolTip = new AppToolTip(this);
         appToolTip.Attach(helpButton, "Help", "Open the Potato Launcher feature guide.");
         appToolTip.Attach(optimizerButton, "Optimizer", "Monitor FFXIV clients and manage CPU, affinity, and memory optimization.");
+        appToolTip.Attach(multibandButton, "Multiband", "Pair another PC and launch one band on each PC together.");
         helpButton.Click += (_, _) => ShowHelpWindow();
         background.Controls.Add(helpButton);
-        newsBandroll = new NewsBandrollControl { Bounds = new Rectangle(620, 24, 320, 34), Visible = false };
+        newsBandroll = new NewsBandrollControl { Bounds = new Rectangle(636, 24, 304, 34), Visible = false };
         newsBandroll.ItemClicked += (_, url) => OpenUrl(url);
         background.Controls.Add(newsBandroll);
         mascotOverlay = CreateMascotOverlay();
@@ -854,10 +856,10 @@ internal sealed class MainForm : Form
             UpdateMascotOverlay();
         };
         Activated += (_, _) => UpdateMascotOverlay();
-        FormClosed += (_, _) =>
+        FormClosed += async (_, _) =>
         {
-            themeMusic.Stop();
-            themeMusic.Close();
+            multibandForm?.Close();
+            if (multibandServer is not null) await multibandServer.DisposeAsync();
             optimizerMonitor?.Close();
             optimizerService.Dispose();
             appToolTip?.Dispose();
@@ -1217,7 +1219,7 @@ internal sealed class MainForm : Form
         {
             (settingsButton, 102),
             (killGameButton, 104),
-            (muteMusicButton, 108),
+            (multibandButton, 110),
             (whatsNewButton, 68),
             (optimizerButton, 96),
             (helpButton, 34)
@@ -1443,40 +1445,6 @@ internal sealed class MainForm : Form
         themeInput.SelectedIndexChanged += (_, _) => { SaveSettingsFromInputs(showFeedback: true); ApplyTheme(settings.Theme); };
         settingsDrawer.Controls.AddRange([themeLabel, themeInput]);
 
-        muteMusicInput = new CheckBox { Text = "Mute theme music", Checked = settings.MusicMuted, Bounds = new Rectangle(24, 420, 220, 28), BackColor = Color.Transparent };
-        muteMusicInput.CheckedChanged += (_, _) =>
-        {
-            SaveSettingsFromInputs(showFeedback: true);
-            UpdateMuteMusicButton();
-            ApplyThemeMusic(settings.Theme);
-        };
-        settingsDrawer.Controls.Add(muteMusicInput);
-
-        stopMusicWhenLoadedInput = new CheckBox { Text = "Stop music when all loaded", Checked = settings.StopMusicWhenAllLoaded, Bounds = new Rectangle(24, 454, 260, 28), BackColor = Color.Transparent };
-        stopMusicWhenLoadedInput.CheckedChanged += (_, _) =>
-        {
-            SaveSettingsFromInputs(showFeedback: true);
-            ApplyThemeMusic(settings.Theme);
-        };
-        settingsDrawer.Controls.Add(stopMusicWhenLoadedInput);
-
-        musicVolumeLabel = Label($"Music volume: {Math.Clamp(settings.MusicVolume, 0, 100)}%", 24, 488, 180, 24);
-        musicVolumeInput = new ThemeSlider
-        {
-            Minimum = 0,
-            Maximum = 100,
-            Value = Math.Clamp(settings.MusicVolume, 0, 100),
-            Bounds = new Rectangle(24, 512, 260, ThemeSliderMetrics.Height),
-            Palette = palette
-        };
-        musicVolumeInput.ValueChanged += (_, _) =>
-        {
-            musicVolumeLabel.Text = $"Music volume: {musicVolumeInput.Value}%";
-            SaveSettingsFromInputs(showFeedback: true);
-            themeMusic.Volume = MusicVolume();
-        };
-        settingsDrawer.Controls.AddRange([musicVolumeLabel, musicVolumeInput]);
-
         launchCooldownLabel = Label("Launch cooldown: seconds between clients", 24, 488, 300, 24);
         settingsDrawer.Controls.Add(launchCooldownLabel);
         launchCooldownInput = new NumericUpDown
@@ -1504,7 +1472,6 @@ internal sealed class MainForm : Form
         updateButton = Button("Check for updates", 24, 660, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
-        UpdateMuteMusicButton();
         UpdateLaunchModeUi();
         background.Controls.Add(settingsDrawer);
     }
@@ -1532,16 +1499,12 @@ internal sealed class MainForm : Form
             SetY(importBandsButton, 374);
             SetY(themeLabel, 420);
             SetY(themeInput, 448);
-            SetY(muteMusicInput, 496);
-            SetY(stopMusicWhenLoadedInput, 526);
-            SetY(musicVolumeLabel, 558);
-            SetY(musicVolumeInput, 580);
-            SetY(launchCooldownLabel, 628);
-            SetY(launchCooldownInput, 650);
-            SetY(waitForClientInitializationInput, 686);
-            SetY(randomizeThemeInput, 718);
-            SetY(notificationsEnabledInput, 750);
-            SetY(updateButton, 786);
+            SetY(launchCooldownLabel, 488);
+            SetY(launchCooldownInput, 522);
+            SetY(waitForClientInitializationInput, 560);
+            SetY(randomizeThemeInput, 594);
+            SetY(notificationsEnabledInput, 628);
+            SetY(updateButton, 660);
         }
         else
         {
@@ -1553,16 +1516,12 @@ internal sealed class MainForm : Form
             SetY(importBandsButton, 374);
             SetY(themeLabel, 420);
             SetY(themeInput, 448);
-            SetY(muteMusicInput, 496);
-            SetY(stopMusicWhenLoadedInput, 526);
-            SetY(musicVolumeLabel, 558);
-            SetY(musicVolumeInput, 580);
-            SetY(launchCooldownLabel, 628);
-            SetY(launchCooldownInput, 650);
-            SetY(waitForClientInitializationInput, 686);
-            SetY(randomizeThemeInput, 718);
-            SetY(notificationsEnabledInput, 750);
-            SetY(updateButton, 786);
+            SetY(launchCooldownLabel, 488);
+            SetY(launchCooldownInput, 522);
+            SetY(waitForClientInitializationInput, 560);
+            SetY(randomizeThemeInput, 594);
+            SetY(notificationsEnabledInput, 628);
+            SetY(updateButton, 660);
         }
     }
 
@@ -2990,6 +2949,7 @@ internal sealed class MainForm : Form
                     break;
                 case ImportMode.Merge:
                 case ImportMode.ReplaceExisting:
+                    imported.Id = target[existingIndex].Id;
                     target[existingIndex] = imported;
                     replaced++;
                     break;
@@ -3048,12 +3008,13 @@ internal sealed class MainForm : Form
 
     private static BandConfig CloneBand(BandConfig band)
     {
-        return new BandConfig { Name = band.Name, BatchFiles = band.BatchFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList() };
+        return new BandConfig { Id = band.Id, Name = band.Name, BatchFiles = band.BatchFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToList() };
     }
 
     private static BandConfig CloneBandWithDefaultName(BandConfig band)
     {
         var clone = CloneBand(band);
+        clone.Id = Guid.NewGuid().ToString("N");
         clone.Name = string.IsNullOrWhiteSpace(clone.Name) ? "Imported Band" : clone.Name;
         return clone;
     }
@@ -3488,32 +3449,65 @@ internal sealed class MainForm : Form
             SetStatus("Choose or create a band first.", force: true);
             return;
         }
+        await LaunchBandAsync(band, DateTimeOffset.UtcNow, null, CancellationToken.None);
+    }
+
+    private async Task LaunchBandAsync(BandConfig band, DateTimeOffset startAtUtc, Action<MultibandLaunchProgress>? progress, CancellationToken externalToken)
+    {
         var bandAccounts = AccountsForBand(band);
         if (bandAccounts.Count == 0)
         {
             SetStatus($"{band.Name} has no accounts selected.", force: true);
+            progress?.Invoke(new MultibandLaunchProgress("Failed", $"{band.Name} has no accounts selected.", []));
             return;
         }
         queueCancel?.Cancel();
         queueCancel?.Dispose();
-        var cancellation = new CancellationTokenSource();
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
         queueCancel = cancellation;
         launchBandButton.Enabled = false;
         ShowLoadingOverlay($"Loading {band.Name}", $"Queueing {bandAccounts.Count} account{(bandAccounts.Count == 1 ? "" : "s")}...");
         BeginLoadingQueue(bandAccounts);
         var readinessTasks = new List<Task>();
+        var accountStatuses = bandAccounts.Select(account => new MultibandAccountStatus(AccountDisplayName(account), "Queued")).ToList();
+        void Report(string state, string detail)
+        {
+            progress?.Invoke(new MultibandLaunchProgress(state, detail, accountStatuses.ToList()));
+        }
         try
         {
+            var startDelay = startAtUtc - DateTimeOffset.UtcNow;
+            if (startDelay > TimeSpan.Zero)
+            {
+                Report("Scheduled", $"Starting at {startAtUtc.LocalDateTime:T}.");
+                while (startAtUtc > DateTimeOffset.UtcNow)
+                {
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    var remaining = Math.Max(1, (int)Math.Ceiling((startAtUtc - DateTimeOffset.UtcNow).TotalSeconds));
+                    UpdateLoadingOverlay($"{band.Name}: synchronized start in {remaining}s.", force: true);
+                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(500, Math.Max(1, (startAtUtc - DateTimeOffset.UtcNow).TotalMilliseconds))), cancellation.Token);
+                }
+            }
+
             for (var index = 0; index < bandAccounts.Count; index++)
             {
                 var account = bandAccounts[index];
+                accountStatuses[index] = accountStatuses[index] with { Status = "Launching" };
                 SetRandomLoadingGif();
                 loadingTitle.Text = $"Loading {band.Name}";
                 UpdateLoadingOverlay($"{band.Name}: launching {account.Name} ({index + 1}/{bandAccounts.Count}).");
+                Report("Launching", $"Launching {AccountDisplayName(account)} ({index + 1}/{bandAccounts.Count}).");
                 var client = await StartAccountAndWaitForClientAsync(account, cancellation.Token);
                 var startedClient = new StartedGameClient(account, client.ProcessId);
                 UpdateLoadingQueueItem(index, account, "Loading");
-                var readinessTask = MonitorBandClientReadinessAsync(index, startedClient, cancellation.Token);
+                accountStatuses[index] = accountStatuses[index] with { Status = "Loading" };
+                Report("Launching", $"{AccountDisplayName(account)} is loading.");
+                var capturedIndex = index;
+                var readinessTask = MonitorBandClientReadinessAsync(index, startedClient, cancellation.Token, readinessStatus =>
+                {
+                    accountStatuses[capturedIndex] = accountStatuses[capturedIndex] with { Status = readinessStatus };
+                    Report("Launching", $"{AccountDisplayName(account)}: {readinessStatus}.");
+                });
                 SetStatus($"{band.Name}: started {account.Name} ({index + 1}/{bandAccounts.Count}).");
                 if (settings.WaitForClientInitializationBeforeNextLaunch)
                 {
@@ -3532,6 +3526,7 @@ internal sealed class MainForm : Form
             }
             await Task.WhenAll(readinessTasks);
             var loadedMessage = $"All of {band.Name} is loaded.";
+            Report("Completed", loadedMessage);
             SetStatus(loadedMessage, force: true);
             UpdateLoadingOverlay(loadedMessage, force: true);
             await Task.Delay(800);
@@ -3549,12 +3544,14 @@ internal sealed class MainForm : Form
             }
             SetStatus($"{band.Name} queue cancelled.", force: true);
             UpdateLoadingOverlay($"{band.Name} queue cancelled.");
+            Report("Cancelled", $"{band.Name} queue cancelled.");
         }
         catch (Exception ex)
         {
             var message = $"{band.Name} queue failed: {ex.Message}";
             SetStatus(message, force: true);
             UpdateLoadingOverlay(message, force: true);
+            Report("Failed", message);
         }
         finally
         {
@@ -3575,12 +3572,18 @@ internal sealed class MainForm : Form
             .ToList();
     }
 
-    private async Task MonitorBandClientReadinessAsync(int queueIndex, StartedGameClient client, CancellationToken token)
+    private async Task MonitorBandClientReadinessAsync(int queueIndex, StartedGameClient client, CancellationToken token, Action<string>? progress = null)
     {
         UpdateLoadingQueueItem(queueIndex, client.Account, "Loading");
+        progress?.Invoke("Loading");
         await WaitForGameClientCharacterTitleAsync(client, token, status =>
-            UpdateLoadingQueueItem(queueIndex, client.Account, status.Equals("Initialized", StringComparison.OrdinalIgnoreCase) ? "Initialized" : "Loading"));
+        {
+            var normalizedStatus = status.Equals("Initialized", StringComparison.OrdinalIgnoreCase) ? "Initialized" : "Loading";
+            UpdateLoadingQueueItem(queueIndex, client.Account, normalizedStatus);
+            progress?.Invoke(normalizedStatus);
+        });
         UpdateLoadingQueueItem(queueIndex, client.Account, "Initialized");
+        progress?.Invoke("Initialized");
         RememberAccountConnected(client.Account);
     }
 
@@ -4174,7 +4177,6 @@ internal sealed class MainForm : Form
         statusPill.Visible = false;
         loadingOverlay.Focus();
         loadingOverlay.Invalidate(false);
-        if (settings.StopMusicWhenAllLoaded) ApplyThemeMusic(settings.Theme);
     }
 
     private void UpdateLoadingOverlay(string detail, bool force = false)
@@ -4319,7 +4321,6 @@ internal sealed class MainForm : Form
         loadingOverlay.Visible = false;
         statusPill.Visible = true;
         statusPill.BringToFront();
-        if (settings.StopMusicWhenAllLoaded) themeMusic.Stop();
     }
 
     private async Task ShowNewsOverlayAsync()
@@ -4467,6 +4468,7 @@ internal sealed class MainForm : Form
             "Accounts",
             "Lodestone profiles and portraits",
             "Bands",
+            "Multiband",
             "Launching",
             "Display and themes",
             "Import and export",
@@ -4968,9 +4970,6 @@ internal sealed class MainForm : Form
         settings.LaunchMode = NormalizeLaunchMode(launchModeInput?.SelectedItem?.ToString() ?? settings.LaunchMode);
         settings.LaunchModeChosen = true;
         settings.Theme = themeInput?.SelectedItem?.ToString() ?? settings.Theme;
-        settings.MusicMuted = muteMusicInput?.Checked ?? settings.MusicMuted;
-        settings.StopMusicWhenAllLoaded = stopMusicWhenLoadedInput?.Checked ?? settings.StopMusicWhenAllLoaded;
-        settings.MusicVolume = musicVolumeInput?.Value ?? settings.MusicVolume;
         settings.LaunchCooldownSeconds = (int)(launchCooldownInput?.Value ?? settings.LaunchCooldownSeconds);
         settings.WaitForClientInitializationBeforeNextLaunch = waitForClientInitializationInput?.Checked ?? settings.WaitForClientInitializationBeforeNextLaunch;
         settings.AccountDisplayMode = NormalizeAccountDisplayMode(accountDisplayInput?.SelectedItem?.ToString() ?? settings.AccountDisplayMode);
@@ -4978,27 +4977,6 @@ internal sealed class MainForm : Form
         settings.NotificationsEnabled = notificationsEnabledInput?.Checked ?? settings.NotificationsEnabled;
         SaveSettings(settings);
         if (showFeedback) ShowSaveFeedback("Settings saved.");
-    }
-
-    private void ToggleMusicMute()
-    {
-        settings.MusicMuted = !settings.MusicMuted;
-        if (muteMusicInput is not null)
-        {
-            muteMusicInput.Checked = settings.MusicMuted;
-        }
-        SaveSettingsFromInputs(showFeedback: true);
-        UpdateMuteMusicButton();
-        ApplyThemeMusic(settings.Theme);
-    }
-
-    private void UpdateMuteMusicButton()
-    {
-        if (muteMusicButton is null) return;
-        muteMusicButton.Text = settings.MusicMuted ? "Music Off" : "Music On";
-        muteMusicButton.Tag = settings.MusicMuted ? "Danger" : "Secondary";
-        muteMusicButton.BackColor = settings.MusicMuted ? palette.Danger : palette.Secondary;
-        muteMusicButton.ForeColor = Color.White;
     }
 
     private async Task CheckForUpdatesAsync()
@@ -5167,6 +5145,108 @@ internal sealed class MainForm : Form
 
     private static string EscapePowerShellString(string value) => value.Replace("'", "''");
 
+    private void InitializeMultiband()
+    {
+        var dataRoot = PersistentDataRoot();
+        multibandSettingsStore = new MultibandSettingsStore(Path.Combine(dataRoot, "multiband.json"));
+        multibandSettings = multibandSettingsStore.Load();
+        var certificate = new MultibandCertificateStore(Path.Combine(dataRoot, "multiband-server.pfx")).LoadOrCreate(multibandSettings.DeviceName);
+        multibandServer = new MultibandServer(
+            multibandSettings,
+            multibandSettingsStore,
+            certificate,
+            () => RunOnUiAsync<IReadOnlyList<MultibandBandSummary>>(() => Task.FromResult(GetMultibandBandCatalog())),
+            bandId => RunOnUiAsync(() => Task.FromResult(CanLaunchMultibandBand(bandId))),
+            (bandId, startAtUtc, progress, token) => RunOnUiAsync(() => LaunchMultibandBandAsync(bandId, startAtUtc, progress, token)));
+        multibandClient = new MultibandClient(multibandSettings, multibandSettingsStore, multibandServer.CertificateFingerprint);
+
+        if (!multibandSettings.ListenEnabled) return;
+        try
+        {
+            multibandServer.StartAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            multibandSettings.ListenEnabled = false;
+            multibandSettingsStore.Save(multibandSettings);
+            SetStatus($"Multiband listener could not start: {ex.Message}", force: true);
+        }
+    }
+
+    private void ShowMultibandWindow()
+    {
+        if (multibandForm is null || multibandForm.IsDisposed)
+        {
+            multibandForm = new MultibandForm(
+                multibandSettings,
+                multibandSettingsStore,
+                multibandServer,
+                multibandClient,
+                GetMultibandBandCatalog,
+                bandId => Task.FromResult(CanLaunchMultibandBand(bandId)),
+                LaunchMultibandBandAsync,
+                palette);
+            multibandForm.FormClosed += (_, _) => multibandForm = null;
+            multibandForm.Show(this);
+        }
+        else
+        {
+            multibandForm.ApplyPalette(palette);
+            multibandForm.Show();
+            multibandForm.Activate();
+        }
+    }
+
+    private IReadOnlyList<MultibandBandSummary> GetMultibandBandCatalog()
+    {
+        return CurrentBands()
+            .Select(band => new MultibandBandSummary(band.Id, band.Name, AccountsForBand(band).Count, NormalizeLaunchMode(settings.LaunchMode)))
+            .ToList();
+    }
+
+    private MultibandReadiness CanLaunchMultibandBand(string bandId)
+    {
+        if (queueCancel is not null) return MultibandReadiness.Fail("This PC already has an active launch queue.");
+        var band = CurrentBands().FirstOrDefault(item => item.Id.Equals(bandId, StringComparison.OrdinalIgnoreCase));
+        if (band is null) return MultibandReadiness.Fail("The selected band no longer exists in the active launch mode.");
+        if (AccountsForBand(band).Count == 0) return MultibandReadiness.Fail($"{band.Name} has no available accounts.");
+        return MultibandReadiness.Success();
+    }
+
+    private Task LaunchMultibandBandAsync(string bandId, DateTimeOffset startAtUtc, Action<MultibandLaunchProgress> progress, CancellationToken token)
+    {
+        var readiness = CanLaunchMultibandBand(bandId);
+        if (!readiness.Ready) return Task.FromException(new InvalidOperationException(readiness.Error));
+        var band = CurrentBands().FirstOrDefault(item => item.Id.Equals(bandId, StringComparison.OrdinalIgnoreCase));
+        return band is null
+            ? Task.FromException(new InvalidOperationException("The selected band no longer exists in the active launch mode."))
+            : LaunchBandAsync(band, startAtUtc, progress, token);
+    }
+
+    private Task<T> RunOnUiAsync<T>(Func<Task<T>> action)
+    {
+        if (!InvokeRequired) return action();
+        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        BeginInvoke(new Action(async () =>
+        {
+            try { completion.SetResult(await action()); }
+            catch (Exception ex) { completion.SetException(ex); }
+        }));
+        return completion.Task;
+    }
+
+    private Task RunOnUiAsync(Func<Task> action)
+    {
+        if (!InvokeRequired) return action();
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        BeginInvoke(new Action(async () =>
+        {
+            try { await action(); completion.SetResult(); }
+            catch (Exception ex) { completion.SetException(ex); }
+        }));
+        return completion.Task;
+    }
+
     private void ApplyTheme(string themeName)
     {
         using var redraw = BeginRedrawScope(this);
@@ -5180,9 +5260,9 @@ internal sealed class MainForm : Form
             launchChoiceOverlay.Palette = palette;
             if (appToolTip is not null) appToolTip.Palette = palette;
             ApplyThemeAssets(themeName);
-            ApplyThemeMusic(themeName);
             ApplyThemeRecursive(this);
             optimizerMonitor?.ApplyTheme(palette);
+            multibandForm?.ApplyPalette(palette);
             background.Invalidate();
             loadingOverlay.Invalidate();
             launchChoiceOverlay.Invalidate();
@@ -5218,9 +5298,9 @@ internal sealed class MainForm : Form
             wpfMascot.Visibility = System.Windows.Visibility.Collapsed;
             settingsButton.BringToFront();
             killGameButton.BringToFront();
+            multibandButton.BringToFront();
             whatsNewButton.BringToFront();
             helpButton.BringToFront();
-            muteMusicButton.BringToFront();
             newsBandroll.BringToFront();
             backgroundVideo.Stop();
             backgroundVideo.Source = new Uri(video, UriKind.Absolute);
@@ -5245,85 +5325,13 @@ internal sealed class MainForm : Form
         UpdateMascotOverlay();
         settingsButton.BringToFront();
         killGameButton.BringToFront();
+        multibandButton.BringToFront();
         whatsNewButton.BringToFront();
         helpButton.BringToFront();
-        muteMusicButton.BringToFront();
         newsBandroll.BringToFront();
         statusPill.BringToFront();
         if (newsOverlay.Visible) newsOverlay.BringToFront();
         if (settingsDrawerOpen) settingsDrawer.BringToFront();
-    }
-
-    private void ApplyThemeMusic(string themeName)
-    {
-        themeName = NormalizeThemeName(themeName);
-        if (settings.MusicMuted)
-        {
-            themeMusic.Stop();
-            return;
-        }
-
-        var musicFolder = ThemeFolder(themeName);
-        var playlist = PickThemeAssets(musicFolder, [".mp3", ".wav", ".wma", ".aac", ".m4a"]);
-        if (playlist.Count == 0)
-        {
-            themeMusic.Stop();
-            currentMusicPlaylist.Clear();
-            currentMusicFolder = null;
-            currentMusicIndex = 0;
-            return;
-        }
-
-        if (!ShouldPlayThemeMusic())
-        {
-            themeMusic.Stop();
-            currentMusicPlaylist.Clear();
-            currentMusicPlaylist.AddRange(playlist);
-            currentMusicFolder = musicFolder;
-            currentMusicIndex = 0;
-            return;
-        }
-
-        if (!musicFolder.Equals(currentMusicFolder, StringComparison.OrdinalIgnoreCase) ||
-            !playlist.SequenceEqual(currentMusicPlaylist, StringComparer.OrdinalIgnoreCase))
-        {
-            themeMusic.Stop();
-            currentMusicPlaylist.Clear();
-            currentMusicPlaylist.AddRange(playlist);
-            currentMusicFolder = musicFolder;
-            currentMusicIndex = 0;
-            PlayCurrentThemeSong();
-            return;
-        }
-
-        themeMusic.Volume = MusicVolume();
-        themeMusic.Play();
-    }
-
-    private void PlayCurrentThemeSong()
-    {
-        if (!ShouldPlayThemeMusic() || currentMusicPlaylist.Count == 0) return;
-        currentMusicIndex = Math.Clamp(currentMusicIndex, 0, currentMusicPlaylist.Count - 1);
-        themeMusic.Open(new Uri(currentMusicPlaylist[currentMusicIndex], UriKind.Absolute));
-        themeMusic.Volume = MusicVolume();
-        themeMusic.Play();
-    }
-
-    private void PlayNextThemeSong()
-    {
-        if (!ShouldPlayThemeMusic() || currentMusicPlaylist.Count == 0) return;
-        currentMusicIndex = (currentMusicIndex + 1) % currentMusicPlaylist.Count;
-        PlayCurrentThemeSong();
-    }
-
-    private bool ShouldPlayThemeMusic()
-    {
-        return !settings.MusicMuted && (!settings.StopMusicWhenAllLoaded || loadingOverlay is { Visible: true });
-    }
-
-    private double MusicVolume()
-    {
-        return Math.Clamp(settings.MusicVolume, 0, 100) / 100d;
     }
 
     private static Image? LoadUnlockedImage(string path)
@@ -5394,9 +5402,6 @@ internal sealed class MainForm : Form
                 case AccountRosterGrid roster:
                     roster.Palette = palette;
                     break;
-                case ThemeSlider slider:
-                    slider.Palette = palette;
-                    break;
                 case BandMemberChecklist checklist:
                     checklist.Palette = palette;
                     break;
@@ -5439,7 +5444,6 @@ internal sealed class MainForm : Form
             }
             ApplyThemeRecursive(control);
         }
-        UpdateMuteMusicButton();
     }
 
     private Color CurrentCardColor(RoundedPanel panel)
@@ -6074,225 +6078,6 @@ internal sealed class AppToolTip : Form
         using var border = new Pen(palette.Border, 1.4F);
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
-    }
-
-    private static GraphicsPath Rounded(Rectangle bounds, int radius)
-    {
-        var path = new GraphicsPath();
-        if (bounds.Width <= 0 || bounds.Height <= 0) return path;
-        radius = Math.Min(radius, Math.Max(1, Math.Min(bounds.Width, bounds.Height) / 2));
-        var diameter = radius * 2;
-        var rect = new Rectangle(bounds.Location, new Size(diameter, diameter));
-        path.AddArc(rect, 180, 90);
-        rect.X = bounds.Right - diameter - 1;
-        path.AddArc(rect, 270, 90);
-        rect.Y = bounds.Bottom - diameter - 1;
-        path.AddArc(rect, 0, 90);
-        rect.X = bounds.Left;
-        path.AddArc(rect, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
-}
-
-internal static class ThemeSliderMetrics
-{
-    public const int Height = 30;
-    public const int TrackHeight = 6;
-    public const int ThumbRadius = 8;
-}
-
-internal sealed class ThemeSlider : Control
-{
-    private int minimum;
-    private int maximum = 100;
-    private int value = 45;
-    private bool dragging;
-    private ThemePalette palette = MainForm.Palettes["Pink"];
-
-    public event EventHandler? ValueChanged;
-
-    public int Minimum
-    {
-        get => minimum;
-        set
-        {
-            minimum = value;
-            if (maximum < minimum) maximum = minimum;
-            Value = Math.Clamp(this.value, minimum, maximum);
-            Invalidate();
-        }
-    }
-
-    public int Maximum
-    {
-        get => maximum;
-        set
-        {
-            maximum = Math.Max(minimum, value);
-            Value = Math.Clamp(this.value, minimum, maximum);
-            Invalidate();
-        }
-    }
-
-    public int Value
-    {
-        get => value;
-        set
-        {
-            var clamped = Math.Clamp(value, minimum, maximum);
-            if (this.value == clamped) return;
-            this.value = clamped;
-            Invalidate();
-            ValueChanged?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
-    public ThemePalette Palette
-    {
-        get => palette;
-        set
-        {
-            palette = value;
-            BackColor = Color.FromArgb(255, palette.Card);
-            Invalidate();
-        }
-    }
-
-    public ThemeSlider()
-    {
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
-        Height = ThemeSliderMetrics.Height;
-        TabStop = true;
-        Cursor = Cursors.Hand;
-        BackColor = Color.FromArgb(255, palette.Card);
-    }
-
-    protected override bool IsInputKey(Keys keyData)
-    {
-        return keyData is Keys.Left or Keys.Right or Keys.Up or Keys.Down or Keys.Home or Keys.End || base.IsInputKey(keyData);
-    }
-
-    protected override void OnKeyDown(KeyEventArgs e)
-    {
-        base.OnKeyDown(e);
-        switch (e.KeyCode)
-        {
-            case Keys.Left:
-            case Keys.Down:
-                Value -= e.Shift ? 10 : 1;
-                e.Handled = true;
-                break;
-            case Keys.Right:
-            case Keys.Up:
-                Value += e.Shift ? 10 : 1;
-                e.Handled = true;
-                break;
-            case Keys.Home:
-                Value = Minimum;
-                e.Handled = true;
-                break;
-            case Keys.End:
-                Value = Maximum;
-                e.Handled = true;
-                break;
-        }
-    }
-
-    protected override void OnMouseDown(MouseEventArgs e)
-    {
-        base.OnMouseDown(e);
-        if (e.Button != MouseButtons.Left) return;
-        Focus();
-        dragging = true;
-        Capture = true;
-        SetValueFromPoint(e.X);
-    }
-
-    protected override void OnMouseMove(MouseEventArgs e)
-    {
-        base.OnMouseMove(e);
-        if (dragging) SetValueFromPoint(e.X);
-    }
-
-    protected override void OnMouseUp(MouseEventArgs e)
-    {
-        base.OnMouseUp(e);
-        if (e.Button != MouseButtons.Left) return;
-        dragging = false;
-        Capture = false;
-        SetValueFromPoint(e.X);
-    }
-
-    protected override void OnMouseWheel(MouseEventArgs e)
-    {
-        base.OnMouseWheel(e);
-        Value += e.Delta > 0 ? 2 : -2;
-    }
-
-    private void SetValueFromPoint(int x)
-    {
-        var track = TrackBounds();
-        var ratio = track.Width <= 0 ? 0 : Math.Clamp((x - track.Left) / (float)track.Width, 0, 1);
-        Value = minimum + (int)Math.Round((maximum - minimum) * ratio);
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e);
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.Clear(BackColor);
-
-        var track = TrackBounds();
-        using var trackPath = Rounded(track, ThemeSliderMetrics.TrackHeight / 2);
-        using var trackBrush = new SolidBrush(Color.FromArgb(110, palette.Border));
-        e.Graphics.FillPath(trackBrush, trackPath);
-
-        var fillWidth = ThumbCenterX() - track.Left;
-        if (fillWidth > 0)
-        {
-            using var fillPath = Rounded(new Rectangle(track.Left, track.Top, fillWidth, track.Height), ThemeSliderMetrics.TrackHeight / 2);
-            using var fillBrush = new LinearGradientBrush(track, palette.Primary, palette.Secondary, 0F);
-            e.Graphics.FillPath(fillBrush, fillPath);
-        }
-
-        using var tickPen = new Pen(Color.FromArgb(150, palette.Muted), 1F);
-        for (var tick = minimum; tick <= maximum; tick += 10)
-        {
-            var x = ValueToX(tick);
-            e.Graphics.DrawLine(tickPen, x, track.Bottom + 4, x, track.Bottom + 7);
-        }
-
-        var thumbCenter = new Point(ThumbCenterX(), track.Top + track.Height / 2);
-        var thumbRect = new Rectangle(thumbCenter.X - ThemeSliderMetrics.ThumbRadius, thumbCenter.Y - ThemeSliderMetrics.ThumbRadius, ThemeSliderMetrics.ThumbRadius * 2, ThemeSliderMetrics.ThumbRadius * 2);
-        using var shadow = new SolidBrush(Color.FromArgb(50, Color.Black));
-        e.Graphics.FillEllipse(shadow, thumbRect.X + 1, thumbRect.Y + 2, thumbRect.Width, thumbRect.Height);
-        using var thumbBrush = new SolidBrush(palette.Primary);
-        using var thumbPen = new Pen(Color.FromArgb(230, Color.White), 2F);
-        e.Graphics.FillEllipse(thumbBrush, thumbRect);
-        e.Graphics.DrawEllipse(thumbPen, thumbRect);
-
-        if (Focused)
-        {
-            using var focusPen = new Pen(Color.FromArgb(170, palette.Secondary), 1F) { DashStyle = DashStyle.Dash };
-            e.Graphics.DrawRectangle(focusPen, new Rectangle(1, 1, Width - 3, Height - 3));
-        }
-    }
-
-    private Rectangle TrackBounds()
-    {
-        var horizontalPadding = ThemeSliderMetrics.ThumbRadius + 2;
-        return new Rectangle(horizontalPadding, (Height - ThemeSliderMetrics.TrackHeight) / 2 - 1, Math.Max(1, Width - horizontalPadding * 2), ThemeSliderMetrics.TrackHeight);
-    }
-
-    private int ThumbCenterX() => ValueToX(value);
-
-    private int ValueToX(int sliderValue)
-    {
-        var track = TrackBounds();
-        var range = Math.Max(1, maximum - minimum);
-        var ratio = Math.Clamp((sliderValue - minimum) / (float)range, 0, 1);
-        return track.Left + (int)Math.Round(track.Width * ratio);
     }
 
     private static GraphicsPath Rounded(Rectangle bounds, int radius)

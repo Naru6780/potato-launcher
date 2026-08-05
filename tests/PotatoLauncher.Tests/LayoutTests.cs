@@ -215,7 +215,7 @@ public class LayoutTests
         const int buttonHeight = 34;
         const int gap = 12;
         var launcher = LauncherLayoutMetrics.Calculate(clientWidth, clientHeight, requestedAccountWidth: 0);
-        var leftEdge = Math.Max(24, launcher.Margin) + 102 + 104 + 108 + 68 + 96 + buttonHeight + gap * 6;
+        var leftEdge = Math.Max(24, launcher.Margin) + 102 + 104 + 110 + 68 + 96 + buttonHeight + gap * 6;
 
         var bandroll = TopNavigationBandrollMetrics.Calculate(clientWidth, clientHeight, leftEdge, buttonHeight, topY: 20, launcher.Margin);
 

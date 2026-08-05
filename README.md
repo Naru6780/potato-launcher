@@ -10,6 +10,7 @@ It helps you keep accounts organized, launch saved bands in order, refresh Lodes
 
 - Save groups of accounts as bands.
 - Launch a band in order with cooldowns and optional client-initialization waiting.
+- Pair two PCs on the same private network and launch a saved band on each PC together.
 - Show Lodestone portraits in the account roster.
 - Monitor client CPU, GPU, RAM, affinity, and trim status.
 - Keep settings, bands, accounts, and portraits in `%APPDATA%\Potato Launcher`.

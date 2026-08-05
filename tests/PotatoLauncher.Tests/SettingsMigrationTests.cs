@@ -14,6 +14,9 @@ public class SettingsMigrationTests
           "SharedAccountOrder": ["old"],
           "InstancedAccountOrder": ["old"],
           "LastConnectedUtc": { "old": "2026-01-01T00:00:00Z" },
+          "MusicMuted": true,
+          "StopMusicWhenAllLoaded": true,
+          "MusicVolume": 80,
           "UnexpectedFutureConflict": true
         }
         """;
@@ -29,6 +32,9 @@ public class SettingsMigrationTests
         Assert.False(document.RootElement.TryGetProperty("SharedAccountOrder", out _));
         Assert.False(document.RootElement.TryGetProperty("InstancedAccountOrder", out _));
         Assert.False(document.RootElement.TryGetProperty("LastConnectedUtc", out _));
+        Assert.False(document.RootElement.TryGetProperty("MusicMuted", out _));
+        Assert.False(document.RootElement.TryGetProperty("StopMusicWhenAllLoaded", out _));
+        Assert.False(document.RootElement.TryGetProperty("MusicVolume", out _));
         Assert.False(document.RootElement.TryGetProperty("UnexpectedFutureConflict", out _));
     }
 
@@ -96,5 +102,28 @@ public class SettingsMigrationTests
         Assert.Equal("Balmung", profile.GetProperty("World").GetString());
         Assert.Equal("12345", profile.GetProperty("LodestoneId").GetString());
         Assert.Equal("alpha-face.png", profile.GetProperty("IconFileName").GetString());
+    }
+
+    [Fact]
+    public void CleanSettingsJson_AssignsStableUniqueBandIds()
+    {
+        var duplicateId = Guid.NewGuid().ToString("N");
+        var dirtyJson = $$"""
+        {
+          "InstancedBands": [
+            { "Name": "One", "BatchFiles": [], "Id": "{{duplicateId}}" },
+            { "Name": "Two", "BatchFiles": [], "Id": "{{duplicateId}}" },
+            { "Name": "Three", "BatchFiles": [] }
+          ]
+        }
+        """;
+
+        var cleanedJson = SettingsMigration.CleanSettingsJson(dirtyJson, out var changed);
+        var settings = JsonSerializer.Deserialize<AppSettings>(cleanedJson)!;
+        var ids = settings.InstancedBands.Select(band => band.Id).ToList();
+
+        Assert.True(changed);
+        Assert.Equal(3, ids.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(ids, id => Assert.True(Guid.TryParse(id, out _)));
     }
 }

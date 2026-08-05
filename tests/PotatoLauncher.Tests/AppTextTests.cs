@@ -71,6 +71,7 @@ public class AppTextTests
 
         Assert.Contains($"Launch modes{Environment.NewLine}", text);
         Assert.Contains($"{Environment.NewLine}{Environment.NewLine}Accounts", text);
+        Assert.Contains($"{Environment.NewLine}{Environment.NewLine}Multiband", text);
         Assert.DoesNotContain("\nAccounts", text.Replace(Environment.NewLine, ""));
     }
 
