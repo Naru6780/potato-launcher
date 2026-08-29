@@ -184,10 +184,11 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.SaveSettings();
         };
         mainProcessors.DropDownStyle = ComboBoxStyle.DropDownList;
-        mainProcessors.DataSource = OptimizerSettings.AllowedMainLogicalProcessors.ToList();
+        var supportedLogicalProcessorCount = ProcessorAffinity.GetSupportedLogicalProcessorCount(Environment.ProcessorCount);
+        mainProcessors.DataSource = OptimizerSettings.GetAllowedLogicalProcessorCounts(supportedLogicalProcessorCount).ToList();
         mainProcessors.SelectedIndexChanged += (_, _) => SaveSelectedProcessorCounts();
         followerProcessors.DropDownStyle = ComboBoxStyle.DropDownList;
-        followerProcessors.DataSource = OptimizerSettings.AllowedFollowerLogicalProcessors.ToList();
+        followerProcessors.DataSource = OptimizerSettings.GetAllowedLogicalProcessorCounts(supportedLogicalProcessorCount).ToList();
         followerProcessors.SelectedIndexChanged += (_, _) => SaveSelectedProcessorCounts();
         roleClientInput.DropDownStyle = ComboBoxStyle.DropDownList;
         roleClientInput.SelectedIndexChanged += (_, _) => SyncRoleInputFromSelectedClient();
@@ -204,8 +205,8 @@ internal sealed class OptimizerMonitorForm : Form
         mainClientsLabel.AutoEllipsis = true;
         mainClientsLabel.BackColor = Color.Transparent;
         mainClientsLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        ConfigureStepper(reservedProcessors, 0, Math.Max(0, Environment.ProcessorCount - 1));
-        ConfigureStepper(mainReservedProcessors, 0, Math.Max(0, Environment.ProcessorCount - 1));
+        ConfigureStepper(reservedProcessors, 0, Math.Max(0, supportedLogicalProcessorCount - 1));
+        ConfigureStepper(mainReservedProcessors, 0, supportedLogicalProcessorCount);
         ConfigureStepper(trimTrigger, 128, 32768);
         reservedProcessors.ValueChanged += (_, _) =>
         {
@@ -372,7 +373,7 @@ internal sealed class OptimizerMonitorForm : Form
             summaryLabel.Text =
                 $"Clients: {snapshots.Count} | CPU {clientCpu:0.0}% | {clientGpuText} | RAM {FormatMb(clientRam)}" +
                 Environment.NewLine +
-                $"System: CPU {system.CpuPercent:0.0}% | {systemGpuText} | RAM {FormatMb(system.UsedMemoryBytes)} / {FormatMb(system.TotalMemoryBytes)} ({systemRamPercent:0}%)";
+                $"System: {ProcessorAffinity.FormatLogicalProcessorCapacity(Environment.ProcessorCount)} | CPU {system.CpuPercent:0.0}% | {systemGpuText} | RAM {FormatMb(system.UsedMemoryBytes)} / {FormatMb(system.TotalMemoryBytes)} ({systemRamPercent:0}%)";
             gpuStatusLabel.Text = optimizer.GpuStatusText;
         }
         finally

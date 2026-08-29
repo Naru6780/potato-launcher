@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -22,8 +23,8 @@ internal sealed class OptimizerSettings
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public static IReadOnlyList<int> AllowedMainLogicalProcessors { get; } = [2, 4, 6, 8, 10, 12];
-    public static IReadOnlyList<int> AllowedFollowerLogicalProcessors { get; } = [1, 2, 4, 6, 8];
+    public static IReadOnlyList<int> AllowedMainLogicalProcessors => GetAllowedLogicalProcessorCounts(Environment.ProcessorCount);
+    public static IReadOnlyList<int> AllowedFollowerLogicalProcessors => GetAllowedLogicalProcessorCounts(Environment.ProcessorCount);
 
     public bool OptimizerEnabled { get; set; }
     public bool CpuAffinityOptimizationEnabled { get; set; }
@@ -106,7 +107,7 @@ internal sealed class OptimizerSettings
     {
         var key = NormalizeClientName(clientName);
         if (string.IsNullOrWhiteSpace(key)) return;
-        var normalizedValue = Math.Clamp(logicalProcessors, 0, Math.Max(0, Environment.ProcessorCount - 1));
+        var normalizedValue = Math.Clamp(logicalProcessors, 0, ProcessorAffinity.GetSupportedLogicalProcessorCount(Environment.ProcessorCount));
         if (normalizedValue == 0)
         {
             MainReservedLogicalProcessorsByName.Remove(key);
@@ -118,10 +119,16 @@ internal sealed class OptimizerSettings
 
     public void Normalize()
     {
+        Normalize(Environment.ProcessorCount);
+    }
+
+    internal void Normalize(int logicalProcessorCount)
+    {
+        var supportedLogicalProcessorCount = ProcessorAffinity.GetSupportedLogicalProcessorCount(logicalProcessorCount);
         if (!Enum.IsDefined(CpuAssignmentMode)) CpuAssignmentMode = CpuAssignmentMode.SplitLanes;
-        MainLogicalProcessors = NearestAllowed(MainLogicalProcessors, AllowedMainLogicalProcessors, 6);
-        FollowerLogicalProcessors = NearestAllowed(FollowerLogicalProcessors, AllowedFollowerLogicalProcessors, 4);
-        SystemReservedLogicalProcessors = Math.Clamp(SystemReservedLogicalProcessors, 0, Math.Max(0, Environment.ProcessorCount - 1));
+        MainLogicalProcessors = Math.Clamp(MainLogicalProcessors, 1, supportedLogicalProcessorCount);
+        FollowerLogicalProcessors = Math.Clamp(FollowerLogicalProcessors, 1, supportedLogicalProcessorCount);
+        SystemReservedLogicalProcessors = Math.Clamp(SystemReservedLogicalProcessors, 0, Math.Max(0, supportedLogicalProcessorCount - 1));
         TrimTriggerMBPerClient = Math.Clamp(TrimTriggerMBPerClient, 128, 32768);
         TrimIntervalSeconds = Math.Clamp(TrimIntervalSeconds, 1, 300);
         TrimCooldownSeconds = Math.Clamp(TrimCooldownSeconds, 1, 3600);
@@ -132,7 +139,7 @@ internal sealed class OptimizerSettings
         foreach (var entry in MainReservedLogicalProcessorsByName ?? new Dictionary<string, int>())
         {
             var key = NormalizeClientName(entry.Key);
-            var value = Math.Clamp(entry.Value, 0, Math.Max(0, Environment.ProcessorCount - 1));
+            var value = Math.Clamp(entry.Value, 0, supportedLogicalProcessorCount);
             if (!string.IsNullOrWhiteSpace(key) && value > 0)
             {
                 normalizedMainReservations[key] = value;
@@ -142,11 +149,10 @@ internal sealed class OptimizerSettings
         MainReservedLogicalProcessorsByName = normalizedMainReservations;
     }
 
-    private static int NearestAllowed(int value, IReadOnlyList<int> allowed, int fallback)
+    internal static IReadOnlyList<int> GetAllowedLogicalProcessorCounts(int logicalProcessorCount)
     {
-        return allowed.Contains(value)
-            ? value
-            : allowed.OrderBy(candidate => Math.Abs(candidate - value)).FirstOrDefault(fallback);
+        var supportedLogicalProcessorCount = ProcessorAffinity.GetSupportedLogicalProcessorCount(logicalProcessorCount);
+        return Enumerable.Range(1, supportedLogicalProcessorCount).ToArray();
     }
 
     internal static string NormalizeClientName(string clientName)
@@ -692,7 +698,7 @@ internal sealed class CpuAffinityAllocator
         var masks = new List<long>();
         foreach (var physicalCoreMask in physicalCoreMasks)
         {
-            for (var index = 0; index < 62; index++)
+            for (var index = 0; index < ProcessorAffinity.MaskBitCount; index++)
             {
                 var logicalProcessorMask = 1L << index;
                 if ((physicalCoreMask & logicalProcessorMask) != 0)
@@ -830,7 +836,7 @@ internal static class ProcessorTopology
     public static IReadOnlyList<long> CreateFallbackSiblingPairs(int logicalProcessorCount)
     {
         var masks = new List<long>();
-        var maxLogicalProcessor = Math.Min(logicalProcessorCount, 62);
+        var maxLogicalProcessor = ProcessorAffinity.GetSupportedLogicalProcessorCount(logicalProcessorCount);
         for (var index = 0; index < maxLogicalProcessor; index += 2)
         {
             var width = Math.Min(2, maxLogicalProcessor - index);
@@ -859,9 +865,9 @@ internal static class ProcessorTopology
                 var entry = Marshal.PtrToStructure<LogicalProcessorInformation>(pointer);
                 if (entry.Relationship != RelationProcessorCore) continue;
                 var mask = unchecked((long)entry.ProcessorMask.ToUInt64());
-                if (mask <= 0) continue;
+                if (mask == 0) continue;
                 mask &= ProcessorAffinity.CreateMask(0, logicalProcessorCount, logicalProcessorCount);
-                if (mask > 0) masks.Add(mask);
+                if (mask != 0) masks.Add(mask);
             }
 
             return masks.Distinct().OrderBy(GetLowestSetBitIndex).ThenBy(ProcessorAffinity.CountSetBits).ToList();
@@ -874,7 +880,7 @@ internal static class ProcessorTopology
 
     private static int GetLowestSetBitIndex(long mask)
     {
-        for (var index = 0; index < 62; index++)
+        for (var index = 0; index < ProcessorAffinity.MaskBitCount; index++)
         {
             if ((mask & (1L << index)) != 0) return index;
         }
@@ -924,10 +930,26 @@ internal static class ProcessScheduling
 
 internal static class ProcessorAffinity
 {
+    public const int MaskBitCount = sizeof(long) * 8;
+
+    public static int GetSupportedLogicalProcessorCount(int logicalProcessorCount)
+    {
+        return Math.Clamp(logicalProcessorCount, 1, MaskBitCount);
+    }
+
+    public static string FormatLogicalProcessorCapacity(int logicalProcessorCount)
+    {
+        var detectedLogicalProcessorCount = Math.Max(1, logicalProcessorCount);
+        var supportedLogicalProcessorCount = GetSupportedLogicalProcessorCount(detectedLogicalProcessorCount);
+        return detectedLogicalProcessorCount == supportedLogicalProcessorCount
+            ? $"{detectedLogicalProcessorCount} logical CPUs"
+            : $"{detectedLogicalProcessorCount} logical CPUs detected ({supportedLogicalProcessorCount} affinity-addressable)";
+    }
+
     public static long CreateMask(int startIndex, int count, int logicalProcessorCount)
     {
         long mask = 0;
-        var lastIndex = Math.Min(startIndex + count - 1, Math.Min(logicalProcessorCount - 1, 61));
+        var lastIndex = Math.Min(startIndex + count - 1, GetSupportedLogicalProcessorCount(logicalProcessorCount) - 1);
         for (var index = startIndex; index <= lastIndex; index++)
         {
             if (index >= 0) mask |= 1L << index;
@@ -938,19 +960,13 @@ internal static class ProcessorAffinity
 
     public static int CountSetBits(long mask)
     {
-        var count = 0;
-        for (var index = 0; index < 62; index++)
-        {
-            if ((mask & (1L << index)) != 0) count++;
-        }
-
-        return count;
+        return BitOperations.PopCount(unchecked((ulong)mask));
     }
 
     public static string FormatMask(long mask)
     {
         var cpuIndices = new List<int>();
-        var maxIndex = Math.Min(Environment.ProcessorCount - 1, 61);
+        var maxIndex = GetSupportedLogicalProcessorCount(Environment.ProcessorCount) - 1;
         for (var index = 0; index <= maxIndex; index++)
         {
             if ((mask & (1L << index)) != 0) cpuIndices.Add(index);

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.91 - 2026-08-29
+
+- Replaced the optimizer's fixed 12/8 logical-processor limits with choices discovered from the current PC, including full 32-thread support for processors such as the Ryzen 9 9950X3D.
+- Expanded per-main-client reservations to the detected processor capacity and added the detected logical CPU count to the optimizer summary.
+- Corrected affinity-mask handling to use all 64 bits and report the native affinity limit clearly on larger processor-group systems.
+
 ## 1.0.90 - 2026-08-29
 
 - Fixed Instanced-mode launches for normal multi-line BAT files that include `@echo off`, comments, quoted `set` variables, `@start`, or a `/d` working directory before the XIVLauncher command.

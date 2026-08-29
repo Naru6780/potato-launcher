@@ -41,8 +41,60 @@ public class OptimizerCoreTests
         Assert.Equal(1, settings.TrimCooldownSeconds);
         Assert.Equal(1, settings.CpuLaneIntervalSeconds);
         Assert.Equal([7], settings.ManualMainClientIds);
-        Assert.InRange(settings.GetMainReservedLogicalProcessors("Artemis Potato"), 1, Math.Max(1, Environment.ProcessorCount - 1));
+        Assert.InRange(settings.GetMainReservedLogicalProcessors("Artemis Potato"), 1, Math.Max(1, Environment.ProcessorCount));
         Assert.Equal(0, settings.GetMainReservedLogicalProcessors("Hermes Potato"));
+    }
+
+    [Fact]
+    public void OptimizerSettings_ProcessorChoices_UseDetectedLogicalProcessorCount()
+    {
+        var choices = OptimizerSettings.GetAllowedLogicalProcessorCounts(32);
+
+        Assert.Equal(Enumerable.Range(1, 32), choices);
+    }
+
+    [Fact]
+    public void OptimizerSettings_ProcessorChoices_RespectNativeAffinityMaskCapacity()
+    {
+        var choices = OptimizerSettings.GetAllowedLogicalProcessorCounts(128);
+
+        Assert.Equal(ProcessorAffinity.MaskBitCount, choices.Count);
+        Assert.Equal(ProcessorAffinity.MaskBitCount, choices[^1]);
+    }
+
+    [Theory]
+    [InlineData(32, "32 logical CPUs")]
+    [InlineData(128, "128 logical CPUs detected (64 affinity-addressable)")]
+    public void ProcessorAffinity_FormatLogicalProcessorCapacity_ReportsDetectedAndSupportedCounts(int detected, string expected)
+    {
+        Assert.Equal(expected, ProcessorAffinity.FormatLogicalProcessorCapacity(detected));
+    }
+
+    [Fact]
+    public void OptimizerSettings_Normalize_UsesDetectedLogicalProcessorCount()
+    {
+        var settings = new OptimizerSettings
+        {
+            MainLogicalProcessors = 32,
+            FollowerLogicalProcessors = 24,
+            SystemReservedLogicalProcessors = 40
+        };
+        settings.MainReservedLogicalProcessorsByName["Artemis Potato"] = 40;
+
+        settings.Normalize(32);
+
+        Assert.Equal(32, settings.MainLogicalProcessors);
+        Assert.Equal(24, settings.FollowerLogicalProcessors);
+        Assert.Equal(31, settings.SystemReservedLogicalProcessors);
+        Assert.Equal(32, settings.GetMainReservedLogicalProcessors("Artemis Potato"));
+    }
+
+    [Fact]
+    public void ProcessorAffinity_UsesAllBitsInNativeAffinityMask()
+    {
+        var mask = ProcessorAffinity.CreateMask(0, 64, 64);
+
+        Assert.Equal(64, ProcessorAffinity.CountSetBits(mask));
     }
 
     [Fact]
