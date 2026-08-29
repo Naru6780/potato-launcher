@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.90 - 2026-08-29
+
+- Fixed Instanced-mode launches for normal multi-line BAT files that include `@echo off`, comments, quoted `set` variables, `@start`, or a `/d` working directory before the XIVLauncher command.
+- Kept account selection and OTP autologin overrides intact while expanding supported local BAT variables without executing the script.
+
 ## 1.0.89 - 2026-08-05
 
 - Added desktop-pet resizing: hold the left mouse button over Artemis and scroll up or down.

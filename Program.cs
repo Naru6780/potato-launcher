@@ -3658,7 +3658,7 @@ internal sealed class MainForm : Form
         {
             throw new FileNotFoundException($"Missing BAT file: {account.BatchFile}", batchPath);
         }
-        return BuildBatchLaunchCommand(batchPath, account);
+        return BuildBatchLaunchCommand(batchPath, account, settings.DalamudFolder);
     }
 
     private LaunchCommand BuildSharedLaunchCommand(Account account)
@@ -3690,15 +3690,16 @@ internal sealed class MainForm : Form
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    private LaunchCommand BuildBatchLaunchCommand(string batchPath, Account account)
+    internal static LaunchCommand BuildBatchLaunchCommand(string batchPath, Account account, string fallbackWorkingDirectory)
     {
-        var line = File.ReadLines(batchPath).FirstOrDefault(text => !string.IsNullOrWhiteSpace(text) && !text.TrimStart().StartsWith("rem", StringComparison.OrdinalIgnoreCase)) ?? "";
-        var tokens = TokenizeCommandLine(Environment.ExpandEnvironmentVariables(line));
-        if (tokens.Count > 0 && tokens[0].Equals("start", StringComparison.OrdinalIgnoreCase))
+        foreach (var line in ReadExpandedBatchLines(batchPath))
         {
+            var tokens = TokenizeCommandLine(line);
+            if (tokens.Count == 0 || !tokens[0].TrimStart('@').Equals("start", StringComparison.OrdinalIgnoreCase)) continue;
+
             var index = 1;
             if (index < tokens.Count && string.IsNullOrWhiteSpace(tokens[index])) index++;
-            var workingDirectory = Path.GetDirectoryName(batchPath) ?? settings.DalamudFolder;
+            var workingDirectory = Path.GetDirectoryName(batchPath) ?? fallbackWorkingDirectory;
             while (index < tokens.Count)
             {
                 if (tokens[index].Equals("/d", StringComparison.OrdinalIgnoreCase) && index + 1 < tokens.Count)
@@ -3717,6 +3718,51 @@ internal sealed class MainForm : Form
             }
         }
         throw new InvalidOperationException($"Unsupported BAT format. Expected a start command that points to an .exe: {Path.GetFileName(batchPath)}");
+    }
+
+    private static IEnumerable<string> ReadExpandedBatchLines(string batchPath)
+    {
+        var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rawLine in File.ReadLines(batchPath))
+        {
+            var line = rawLine.Trim();
+            if (line.StartsWith('@')) line = line[1..].TrimStart();
+            if (line.Length == 0 ||
+                line.StartsWith("::", StringComparison.Ordinal) ||
+                line.StartsWith("rem ", StringComparison.OrdinalIgnoreCase) ||
+                line.Equals("rem", StringComparison.OrdinalIgnoreCase) ||
+                line.Equals("echo off", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (TryReadBatchVariable(line, out var name, out var value))
+            {
+                variables[name] = ExpandBatchVariables(value, variables);
+                continue;
+            }
+
+            yield return Environment.ExpandEnvironmentVariables(ExpandBatchVariables(line, variables));
+        }
+    }
+
+    private static bool TryReadBatchVariable(string line, out string name, out string value)
+    {
+        name = "";
+        value = "";
+        if (!line.StartsWith("set ", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var assignment = line[4..].Trim();
+        if (assignment.Length >= 2 && assignment[0] == '"' && assignment[^1] == '"')
+        {
+            assignment = assignment[1..^1];
+        }
+
+        var separator = assignment.IndexOf('=');
+        if (separator <= 0) return false;
+        name = assignment[..separator].Trim();
+        value = assignment[(separator + 1)..].Trim();
+        return name.Length > 0;
     }
 
     private static string BuildAccountAwareArguments(IEnumerable<string> rawTokens, Account account)
