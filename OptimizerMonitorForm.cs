@@ -220,6 +220,7 @@ internal sealed class OptimizerMonitorForm : Form
             if (refreshing) return;
             optimizer.Settings.CpuAssignmentMode = (CpuAssignmentMode)assignmentMode.SelectedItem!;
             optimizer.SaveSettings();
+            UpdateModeControls();
         };
         mainProcessors.DropDownStyle = ComboBoxStyle.DropDownList;
         var supportedLogicalProcessorCount = ProcessorAffinity.GetSupportedLogicalProcessorCount(Environment.ProcessorCount);
@@ -271,7 +272,7 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.SetColumnSpan(autoOptions, 5);
         controlGrid.Controls.Add(Field("CPU lanes", assignmentMode), 0, 1);
         controlGrid.Controls.Add(Field("Main logical processors", mainProcessors), 1, 1);
-        controlGrid.Controls.Add(Field("Follower logical processors", followerProcessors), 2, 1);
+        controlGrid.Controls.Add(Field("Follower logical processors (Split Lanes only)", followerProcessors), 2, 1);
         controlGrid.Controls.Add(Field("Reserved logical processors", reservedProcessors), 3, 1);
         controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 4, 1);
         controlGrid.Controls.Add(Field("Client", roleClientInput), 0, 2);
@@ -326,6 +327,7 @@ internal sealed class OptimizerMonitorForm : Form
         var buttonRow = ButtonRow();
         controlGrid.Controls.Add(buttonRow, 2, 3);
         controlGrid.SetColumnSpan(buttonRow, 3);
+        UpdateModeControls();
     }
 
     private FlowLayoutPanel AutoOptionsRow()
@@ -444,6 +446,7 @@ internal sealed class OptimizerMonitorForm : Form
                 : "Live optimization — apply CPU affinity");
             applyButton.Text = settings.CpuPreviewOnly ? "Preview CPU Plan" : "Optimize CPU Now";
             SetSelectedItemIfIdle(assignmentMode, settings.CpuAssignmentMode);
+            UpdateModeControls();
             SetSelectedItemIfIdle(mainProcessors, settings.MainLogicalProcessors);
             SetSelectedItemIfIdle(followerProcessors, settings.FollowerLogicalProcessors);
             SetStepperValueIfIdle(reservedProcessors, settings.SystemReservedLogicalProcessors);
@@ -603,6 +606,31 @@ internal sealed class OptimizerMonitorForm : Form
         if (mainProcessors.SelectedItem is int mainCount) optimizer.Settings.MainLogicalProcessors = mainCount;
         if (followerProcessors.SelectedItem is int followerCount) optimizer.Settings.FollowerLogicalProcessors = followerCount;
         optimizer.SaveSettings();
+    }
+
+    private void UpdateModeControls()
+    {
+        var mode = assignmentMode.SelectedItem is CpuAssignmentMode selectedMode
+            ? selectedMode
+            : optimizer.Settings.CpuAssignmentMode;
+        mainProcessors.Enabled = UsesManualMainProcessorCount(mode);
+        followerProcessors.Enabled = UsesManualFollowerProcessorCount(mode);
+        reservedProcessors.Enabled = UsesReservedProcessorCount(mode);
+    }
+
+    internal static bool UsesManualMainProcessorCount(CpuAssignmentMode mode)
+    {
+        return mode is CpuAssignmentMode.SplitLanes or CpuAssignmentMode.AdaptiveSharedPools;
+    }
+
+    internal static bool UsesManualFollowerProcessorCount(CpuAssignmentMode mode)
+    {
+        return mode == CpuAssignmentMode.SplitLanes;
+    }
+
+    internal static bool UsesReservedProcessorCount(CpuAssignmentMode mode)
+    {
+        return mode is CpuAssignmentMode.SplitLanes or CpuAssignmentMode.AdaptiveSharedPools;
     }
 
     private void UpdateRoleControls(IReadOnlyList<OptimizerClientSnapshot> snapshots)

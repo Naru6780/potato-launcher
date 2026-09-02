@@ -6,6 +6,23 @@ namespace PotatoLauncher.Tests;
 
 public class OptimizerMonitorFormTests
 {
+    [Theory]
+    [InlineData((int)CpuAssignmentMode.SplitLanes, true, true, true)]
+    [InlineData((int)CpuAssignmentMode.AdaptiveSharedPools, true, false, true)]
+    [InlineData((int)CpuAssignmentMode.OnePhysicalCorePerClient, false, false, false)]
+    [InlineData((int)CpuAssignmentMode.AllAvailableCores, false, false, false)]
+    public void ProcessorCountControls_MatchAssignmentMode(
+        int modeValue,
+        bool mainEnabled,
+        bool followerEnabled,
+        bool reservedEnabled)
+    {
+        var mode = (CpuAssignmentMode)modeValue;
+        Assert.Equal(mainEnabled, OptimizerMonitorForm.UsesManualMainProcessorCount(mode));
+        Assert.Equal(followerEnabled, OptimizerMonitorForm.UsesManualFollowerProcessorCount(mode));
+        Assert.Equal(reservedEnabled, OptimizerMonitorForm.UsesReservedProcessorCount(mode));
+    }
+
     [Fact]
     public void RefreshView_IgnoresGridAfterColumnsAreDisposed()
     {

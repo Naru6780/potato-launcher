@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.93 - 2026-09-02
+
+- Clarified that the follower logical-processor count applies only to Split Lanes mode.
+- Disabled processor-count controls in assignment modes that calculate or ignore those values, while keeping the manual main count available in Adaptive Shared Pools.
+
 ## 1.0.92 - 2026-09-02
 
 - Added Adaptive Shared Pools, which keeps one selected main client on a cache-local CPU allocation while sharing the remaining processor pools among followers.

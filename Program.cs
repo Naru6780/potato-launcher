@@ -202,7 +202,7 @@ internal static class AppText
         Kill FFXIV closes every running FFXIV game process. Per-account and per-band kill actions only target clients Potato Launcher can match to those accounts.
 
         Optimizer
-        Optimizer opens a live monitor for running FFXIV clients. Adaptive Shared Pools gives the active main a cache-local CPU allocation and shares the remaining pools among followers. Main selection order chooses one active main when multiple configured candidates are running. Live optimization applies CPU affinity; Planning only shows the proposed allocation without changing it. Pressure-aware RAM trims one eligible follower at a time only when system memory is constrained, and Rescue selected temporarily expands a stalled follower's CPU allocation.
+        Optimizer opens a live monitor for running FFXIV clients. Adaptive Shared Pools uses the chosen main processor count to size a cache-local allocation, then automatically shares the remaining pools among followers; the follower processor count is used only by Split Lanes. Main selection order chooses one active main when multiple configured candidates are running. Live optimization applies CPU affinity; Planning only shows the proposed allocation without changing it. Pressure-aware RAM trims one eligible follower at a time only when system memory is constrained, and Rescue selected temporarily expands a stalled follower's CPU allocation.
         """);
     }
 
