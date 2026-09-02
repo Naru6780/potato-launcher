@@ -30,6 +30,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        RuntimeOptions.Configure(args);
         ApplicationConfiguration.Initialize();
         if (args.Contains("--welcome-preview", StringComparer.OrdinalIgnoreCase))
         {
@@ -48,6 +49,36 @@ internal static class Program
             return;
         }
         Application.Run(new StartupApplicationContext());
+    }
+}
+
+internal static class RuntimeOptions
+{
+    public static string? DataRootOverride { get; private set; }
+
+    public static void Configure(IReadOnlyList<string> args)
+    {
+        DataRootOverride = null;
+        for (var index = 0; index < args.Count; index++)
+        {
+            var argument = args[index];
+            if (argument.StartsWith("--data-dir=", StringComparison.OrdinalIgnoreCase))
+            {
+                DataRootOverride = NormalizeDataRoot(argument["--data-dir=".Length..]);
+                return;
+            }
+            if (argument.Equals("--data-dir", StringComparison.OrdinalIgnoreCase) && index + 1 < args.Count)
+            {
+                DataRootOverride = NormalizeDataRoot(args[index + 1]);
+                return;
+            }
+        }
+    }
+
+    private static string? NormalizeDataRoot(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return Path.GetFullPath(Environment.ExpandEnvironmentVariables(value.Trim().Trim('"')));
     }
 }
 
@@ -171,7 +202,7 @@ internal static class AppText
         Kill FFXIV closes every running FFXIV game process. Per-account and per-band kill actions only target clients Potato Launcher can match to those accounts.
 
         Optimizer
-        Optimizer opens a live monitor for running FFXIV clients. It can show per-client CPU, GPU, memory, and affinity, and can apply CPU lanes and working-set trims when enabled.
+        Optimizer opens a live monitor for running FFXIV clients. Adaptive Shared Pools gives the active main a cache-local CPU allocation and shares the remaining pools among followers. Main selection order chooses one active main when multiple configured candidates are running. Live optimization applies CPU affinity; Planning only shows the proposed allocation without changing it. Pressure-aware RAM trims one eligible follower at a time only when system memory is constrained, and Rescue selected temporarily expands a stalled follower's CPU allocation.
         """);
     }
 
@@ -803,6 +834,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
+        optimizerService.Alert += OptimizerAlert;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         UpdateStyles();
         EnsureThemeAssetFolders();
@@ -821,6 +853,18 @@ internal sealed class MainForm : Form
             await RefreshLinkedAccountIconsOnStartupAsync();
         };
         if (!settings.LaunchModeChosen) Shown += (_, _) => ShowLaunchChoiceOverlay();
+    }
+
+    private void OptimizerAlert(object? sender, OptimizerAlertEventArgs e)
+    {
+        if (IsDisposed) return;
+        if (InvokeRequired)
+        {
+            BeginInvoke((Action)(() => OptimizerAlert(sender, e)));
+            return;
+        }
+        SetStatus(e.Message, force: true);
+        if (settings.NotificationsEnabled) AppNotification.Show(this, "Potato Optimizer", e.Message);
     }
 
     private void BuildUi()
@@ -5674,7 +5718,8 @@ internal sealed class MainForm : Form
 
     internal static string PersistentDataRoot()
     {
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Potato Launcher");
+        return RuntimeOptions.DataRootOverride
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Potato Launcher");
     }
 
     internal static string SettingsPath()

@@ -12,6 +12,7 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly Label gpuStatusLabel = new();
     private readonly CheckBox optimizerEnabled = new();
     private readonly CheckBox trimEnabled = new();
+    private readonly ComboBox cpuOperationMode = new();
     private readonly ComboBox assignmentMode = new();
     private readonly ComboBox mainProcessors = new();
     private readonly ComboBox followerProcessors = new();
@@ -19,13 +20,18 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly ComboBox roleInput = new();
     private readonly Label mainClientsLabel = new();
     private readonly NumericUpDown reservedProcessors = new();
-    private readonly NumericUpDown mainReservedProcessors = new();
+    private readonly NumericUpDown mainPriority = new();
     private readonly NumericUpDown trimTrigger = new();
     private readonly Button applyButton = new NewsPillButton();
     private readonly Button saveButton = new NewsPillButton();
     private readonly Button restoreButton = new NewsPillButton();
     private readonly Button trimButton = new NewsPillButton();
+    private readonly Button rescueButton = new NewsPillButton();
     private bool refreshing;
+    private bool refreshQueued;
+    private bool moveOrResizeActive;
+    private bool closing;
+    private DateTime lastPeriodicRefreshUtc = DateTime.MinValue;
 
     public OptimizerMonitorForm(IntegratedOptimizerService optimizer, ThemePalette palette, Func<bool>? notificationsEnabled = null)
     {
@@ -41,8 +47,28 @@ internal sealed class OptimizerMonitorForm : Form
         BuildUi();
         ApplyTheme(palette);
         optimizer.Updated += OptimizerUpdated;
-        FormClosed += (_, _) => optimizer.Updated -= OptimizerUpdated;
+        ResizeBegin += (_, _) => moveOrResizeActive = true;
+        ResizeEnd += (_, _) =>
+        {
+            moveOrResizeActive = false;
+            QueueRefresh(force: true);
+        };
+        FormClosing += (_, _) => BeginClosing();
         RefreshView();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) BeginClosing();
+        base.Dispose(disposing);
+    }
+
+    private void BeginClosing()
+    {
+        if (closing) return;
+        closing = true;
+        refreshQueued = false;
+        optimizer.Updated -= OptimizerUpdated;
     }
 
     public void ApplyTheme(ThemePalette themePalette)
@@ -118,7 +144,7 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.SetCpuOptimizationEnabled(optimizerEnabled.Checked);
             RefreshView();
         };
-        trimEnabled.Text = "Auto RAM Optimization";
+        trimEnabled.Text = "Pressure-aware RAM";
         trimEnabled.Dock = DockStyle.None;
         trimEnabled.Width = 230;
         trimEnabled.Height = 26;
@@ -127,6 +153,17 @@ internal sealed class OptimizerMonitorForm : Form
             if (refreshing) return;
             optimizer.Settings.WorkingSetTrimEnabled = trimEnabled.Checked;
             optimizer.SaveSettings();
+        };
+        cpuOperationMode.DropDownStyle = ComboBoxStyle.DropDownList;
+        cpuOperationMode.Items.AddRange(["Live optimization — apply CPU affinity", "Planning only — no CPU changes"]);
+        cpuOperationMode.Width = 290;
+        cpuOperationMode.Height = 28;
+        cpuOperationMode.SelectedIndexChanged += (_, _) =>
+        {
+            if (refreshing) return;
+            optimizer.Settings.CpuPreviewOnly = cpuOperationMode.SelectedIndex == 1;
+            optimizer.SaveSettings();
+            RefreshView();
         };
 
         gpuStatusLabel.Dock = DockStyle.Fill;
@@ -158,6 +195,7 @@ internal sealed class OptimizerMonitorForm : Form
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Threads", HeaderText = "Threads", ReadOnly = true, FillWeight = 72 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Role", HeaderText = "Role", ReadOnly = true, FillWeight = 78 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Affinity", HeaderText = "Affinity", ReadOnly = true, FillWeight = 130 });
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Planned", HeaderText = "Planned", ReadOnly = true, FillWeight = 130 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Trim", HeaderText = "Last trim", ReadOnly = true, FillWeight = 96 });
         root.Controls.Add(grid, 0, 1);
 
@@ -198,7 +236,7 @@ internal sealed class OptimizerMonitorForm : Form
         {
             if (refreshing) return;
             if (roleClientInput.SelectedItem is not RoleClientItem item) return;
-            optimizer.SetMainClient(item.ProcessId, string.Equals(roleInput.SelectedItem?.ToString(), "Main", StringComparison.OrdinalIgnoreCase));
+            optimizer.SetMainClient(item.ProcessId, item.ClientName, string.Equals(roleInput.SelectedItem?.ToString(), "Main", StringComparison.OrdinalIgnoreCase));
             RefreshView();
         };
         mainClientsLabel.Dock = DockStyle.Fill;
@@ -206,7 +244,7 @@ internal sealed class OptimizerMonitorForm : Form
         mainClientsLabel.BackColor = Color.Transparent;
         mainClientsLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         ConfigureStepper(reservedProcessors, 0, Math.Max(0, supportedLogicalProcessorCount - 1));
-        ConfigureStepper(mainReservedProcessors, 0, supportedLogicalProcessorCount);
+        ConfigureStepper(mainPriority, 1, 100);
         ConfigureStepper(trimTrigger, 128, 32768);
         reservedProcessors.ValueChanged += (_, _) =>
         {
@@ -214,13 +252,12 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.Settings.SystemReservedLogicalProcessors = (int)reservedProcessors.Value;
             optimizer.SaveSettings();
         };
-        mainReservedProcessors.ValueChanged += (_, _) =>
+        mainPriority.ValueChanged += (_, _) =>
         {
             if (refreshing) return;
-            if (roleClientInput.SelectedItem is not RoleClientItem item) return;
-            optimizer.Settings.SetMainReservedLogicalProcessors(item.ClientName, (int)mainReservedProcessors.Value);
-            optimizer.SaveSettings();
-            UpdateMainClientsLabel(optimizer.GetSnapshots());
+            if (roleClientInput.SelectedItem is not RoleClientItem item || !item.IsMainCandidate) return;
+            optimizer.SetMainPriority(item.ClientName, (int)mainPriority.Value);
+            RefreshView();
         };
         trimTrigger.ValueChanged += (_, _) =>
         {
@@ -237,9 +274,9 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.Controls.Add(Field("Follower logical processors", followerProcessors), 2, 1);
         controlGrid.Controls.Add(Field("Reserved logical processors", reservedProcessors), 3, 1);
         controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 4, 1);
-        controlGrid.Controls.Add(Field("Main reserved logical processors", mainReservedProcessors), 0, 2);
-        controlGrid.Controls.Add(Field("Client", roleClientInput), 1, 2);
-        controlGrid.Controls.Add(Field("Selected client role", roleInput), 2, 2);
+        controlGrid.Controls.Add(Field("Client", roleClientInput), 0, 2);
+        controlGrid.Controls.Add(Field("Selected client role", roleInput), 1, 2);
+        controlGrid.Controls.Add(Field("Main selection order (1 wins)", mainPriority), 2, 2);
         controlGrid.Controls.Add(mainClientsLabel, 0, 3);
         controlGrid.SetColumnSpan(mainClientsLabel, 2);
 
@@ -249,7 +286,7 @@ internal sealed class OptimizerMonitorForm : Form
         {
             optimizer.ApplyNow();
             RefreshView();
-            ShowFeedback("CPU optimization applied.");
+            ShowFeedback(optimizer.Settings.CpuPreviewOnly ? "CPU allocation preview refreshed; no affinities were changed." : "CPU optimization applied.");
         };
         saveButton.Text = "Save";
         saveButton.Tag = "Secondary";
@@ -275,6 +312,17 @@ internal sealed class OptimizerMonitorForm : Form
             RefreshView();
             ShowFeedback("Client optimization restored.");
         };
+        rescueButton.Text = "Rescue selected";
+        rescueButton.Tag = "Secondary";
+        rescueButton.Click += (_, _) =>
+        {
+            var processId = SelectedProcessId();
+            if (!processId.HasValue) return;
+            optimizer.RescueClient(processId.Value);
+            optimizer.ApplyNow();
+            RefreshView();
+            ShowFeedback("Selected client received a 30-second rescue allocation.");
+        };
         var buttonRow = ButtonRow();
         controlGrid.Controls.Add(buttonRow, 2, 3);
         controlGrid.SetColumnSpan(buttonRow, 3);
@@ -292,8 +340,10 @@ internal sealed class OptimizerMonitorForm : Form
         };
         optimizerEnabled.Margin = new Padding(0, 3, 22, 0);
         trimEnabled.Margin = new Padding(0, 3, 22, 0);
+        cpuOperationMode.Margin = new Padding(0, 2, 22, 0);
         panel.Controls.Add(optimizerEnabled);
         panel.Controls.Add(trimEnabled);
+        panel.Controls.Add(cpuOperationMode);
         return panel;
     }
 
@@ -306,9 +356,9 @@ internal sealed class OptimizerMonitorForm : Form
     private FlowLayoutPanel ButtonRow()
     {
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Color.Transparent };
-        foreach (var button in new[] { applyButton, trimButton, saveButton, restoreButton })
+        foreach (var button in new[] { applyButton, rescueButton, trimButton, saveButton, restoreButton })
         {
-            button.Width = 130;
+            button.Width = 116;
             button.Height = 36;
             button.Margin = new Padding(0, 10, 10, 0);
             button.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
@@ -340,13 +390,48 @@ internal sealed class OptimizerMonitorForm : Form
 
     private void OptimizerUpdated(object? sender, EventArgs e)
     {
-        if (IsDisposed || !IsHandleCreated) return;
-        BeginInvoke(RefreshView);
+        QueueRefresh();
+    }
+
+    private void QueueRefresh(bool force = false)
+    {
+        if (closing || IsDisposed || Disposing || !IsHandleCreated || refreshQueued) return;
+        if (!force && (moveOrResizeActive || WindowState == FormWindowState.Minimized || IsEditorActive())) return;
+
+        var now = DateTime.UtcNow;
+        if (!force && now - lastPeriodicRefreshUtc < TimeSpan.FromMilliseconds(1500)) return;
+
+        refreshQueued = true;
+        try
+        {
+            BeginInvoke((Action)(() =>
+            {
+                refreshQueued = false;
+                if (closing || IsDisposed || Disposing || grid.IsDisposed || grid.Disposing ||
+                    moveOrResizeActive || (!force && IsEditorActive())) return;
+                lastPeriodicRefreshUtc = DateTime.UtcNow;
+                RefreshView();
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            refreshQueued = false;
+        }
+    }
+
+    private bool IsEditorActive()
+    {
+        return assignmentMode.DroppedDown ||
+               mainProcessors.DroppedDown ||
+               followerProcessors.DroppedDown ||
+               roleClientInput.DroppedDown ||
+               roleInput.DroppedDown ||
+               cpuOperationMode.DroppedDown;
     }
 
     private void RefreshView()
     {
-        if (IsDisposed) return;
+        if (closing || IsDisposed || Disposing || grid.IsDisposed || grid.Disposing || grid.Columns.Count == 0) return;
         refreshing = true;
         try
         {
@@ -354,6 +439,10 @@ internal sealed class OptimizerMonitorForm : Form
             settings.Normalize();
             optimizerEnabled.Checked = settings.OptimizerEnabled && settings.CpuAffinityOptimizationEnabled;
             trimEnabled.Checked = settings.WorkingSetTrimEnabled;
+            SetSelectedItemIfIdle(cpuOperationMode, settings.CpuPreviewOnly
+                ? "Planning only — no CPU changes"
+                : "Live optimization — apply CPU affinity");
+            applyButton.Text = settings.CpuPreviewOnly ? "Preview CPU Plan" : "Optimize CPU Now";
             SetSelectedItemIfIdle(assignmentMode, settings.CpuAssignmentMode);
             SetSelectedItemIfIdle(mainProcessors, settings.MainLogicalProcessors);
             SetSelectedItemIfIdle(followerProcessors, settings.FollowerLogicalProcessors);
@@ -371,9 +460,10 @@ internal sealed class OptimizerMonitorForm : Form
             var systemGpuText = system.GpuPercent.HasValue ? $"GPU {system.GpuPercent.Value:0.0}%" : "GPU N/A";
             var systemRamPercent = system.TotalMemoryBytes <= 0 ? 0 : system.UsedMemoryBytes / (double)system.TotalMemoryBytes * 100;
             summaryLabel.Text =
+                (settings.CpuPreviewOnly ? "PLANNING ONLY — CPU affinity is not being changed." + Environment.NewLine : "") +
                 $"Clients: {snapshots.Count} | CPU {clientCpu:0.0}% | {clientGpuText} | RAM {FormatMb(clientRam)}" +
                 Environment.NewLine +
-                $"System: {ProcessorAffinity.FormatLogicalProcessorCapacity(Environment.ProcessorCount)} | CPU {system.CpuPercent:0.0}% | {systemGpuText} | RAM {FormatMb(system.UsedMemoryBytes)} / {FormatMb(system.TotalMemoryBytes)} ({systemRamPercent:0}%)";
+                $"System: {ProcessorAffinity.FormatLogicalProcessorCapacity(Environment.ProcessorCount)} | CPU {system.CpuPercent:0.0}% | {systemGpuText} | RAM {FormatMb(system.UsedMemoryBytes)} / {FormatMb(system.TotalMemoryBytes)} ({systemRamPercent:0}%) | Pressure {(system.MemoryPressureActive ? "ACTIVE" : "healthy")}";
             gpuStatusLabel.Text = optimizer.GpuStatusText;
         }
         finally
@@ -384,6 +474,7 @@ internal sealed class OptimizerMonitorForm : Form
 
     private void UpdateGrid(IReadOnlyList<OptimizerClientSnapshot> snapshots)
     {
+        if (closing || grid.IsDisposed || grid.Disposing || grid.Columns.Count == 0) return;
         var selectedProcessId = SelectedProcessId();
         var selectedColumnName = grid.CurrentCell is null ? "" : grid.Columns[grid.CurrentCell.ColumnIndex].Name;
         var firstDisplayedRow = FirstDisplayedRowIndex();
@@ -431,8 +522,9 @@ internal sealed class OptimizerMonitorForm : Form
         SetCell(row, "Ram", $"{snapshot.WorkingSetBytes / 1024d / 1024d:0} MB");
         SetCell(row, "Private", $"{snapshot.PrivateBytes / 1024d / 1024d:0} MB");
         SetCell(row, "Threads", snapshot.ThreadCount);
-        SetCell(row, "Role", snapshot.IsMain ? "Main" : "Follower");
+        SetCell(row, "Role", snapshot.IsMain ? "Active main" : snapshot.IsMainCandidate ? "Follower (main candidate)" : snapshot.IsRescued ? "Rescue" : "Follower");
         SetCell(row, "Affinity", snapshot.AffinityMask.HasValue ? ProcessorAffinity.FormatMask(snapshot.AffinityMask.Value) : "N/A");
+        SetCell(row, "Planned", snapshot.PlannedAffinityMask.HasValue ? ProcessorAffinity.FormatMask(snapshot.PlannedAffinityMask.Value) : "N/A");
         SetCell(row, "Trim", snapshot.LastTrimUtc.HasValue ? snapshot.LastTrimUtc.Value.ToLocalTime().ToString("HH:mm:ss") : "-");
     }
 
@@ -516,13 +608,29 @@ internal sealed class OptimizerMonitorForm : Form
     private void UpdateRoleControls(IReadOnlyList<OptimizerClientSnapshot> snapshots)
     {
         var selectedProcessId = roleClientInput.SelectedItem is RoleClientItem current ? current.ProcessId : (int?)null;
-        if (!roleClientInput.Focused && !roleClientInput.DroppedDown)
+        var desiredItems = snapshots
+            .Select(snapshot => new RoleClientItem(snapshot.ProcessId, snapshot.ClientName, snapshot.IsMainCandidate, snapshot.IsMain))
+            .ToList();
+        var contentsChanged = roleClientInput.Items.Count != desiredItems.Count;
+        if (!contentsChanged)
+        {
+            for (var index = 0; index < desiredItems.Count; index++)
+            {
+                if (roleClientInput.Items[index] is not RoleClientItem existing || existing != desiredItems[index])
+                {
+                    contentsChanged = true;
+                    break;
+                }
+            }
+        }
+
+        if (contentsChanged && !roleClientInput.Focused && !roleClientInput.DroppedDown)
         {
             roleClientInput.BeginUpdate();
             try
             {
                 roleClientInput.Items.Clear();
-                foreach (var item in snapshots.Select(snapshot => new RoleClientItem(snapshot.ProcessId, snapshot.ClientName, snapshot.IsMain)))
+                foreach (var item in desiredItems)
                 {
                     roleClientInput.Items.Add(item);
                 }
@@ -552,21 +660,18 @@ internal sealed class OptimizerMonitorForm : Form
             return;
         }
 
-        var target = item.IsMain ? "Main" : "Follower";
+        var target = item.IsMainCandidate ? "Main" : "Follower";
         if (!Equals(roleInput.SelectedItem, target)) roleInput.SelectedItem = target;
-        var reservedLogicalProcessors = optimizer.Settings.GetMainReservedLogicalProcessors(item.ClientName);
-        SetStepperValueIfIdle(mainReservedProcessors, reservedLogicalProcessors);
-        mainReservedProcessors.Enabled = item.IsMain;
+        SetStepperValueIfIdle(mainPriority, Math.Max(1, optimizer.Settings.GetMainPriority(item.ClientName)));
+        mainPriority.Enabled = item.IsMainCandidate;
     }
 
     private void UpdateMainClientsLabel(IReadOnlyList<OptimizerClientSnapshot> snapshots)
     {
-        var mainNames = snapshots.Where(snapshot => snapshot.IsMain).Select(snapshot =>
+        var mainNames = snapshots.Where(snapshot => snapshot.IsMainCandidate).Select(snapshot =>
         {
-            var reservedLogicalProcessors = optimizer.Settings.GetMainReservedLogicalProcessors(snapshot.ClientName);
-            return reservedLogicalProcessors <= 0
-                ? snapshot.ClientName
-                : $"{snapshot.ClientName} ({reservedLogicalProcessors})";
+            var role = snapshot.IsMain ? "active" : "currently follower";
+            return $"{optimizer.Settings.GetMainPriority(snapshot.ClientName)}. {snapshot.ClientName} ({role})";
         }).ToList();
 
         mainClientsLabel.Text = mainNames.Count == 0
@@ -659,7 +764,7 @@ internal sealed class OptimizerMonitorForm : Form
         }
     }
 
-    private sealed record RoleClientItem(int ProcessId, string ClientName, bool IsMain)
+    private sealed record RoleClientItem(int ProcessId, string ClientName, bool IsMainCandidate, bool IsMain)
     {
         public override string ToString()
         {

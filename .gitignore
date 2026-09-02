@@ -2,6 +2,8 @@ bin/
 obj/
 publish/
 release/
+test-build/
+test-profile/
 settings.json
 accountList.json
 band.json

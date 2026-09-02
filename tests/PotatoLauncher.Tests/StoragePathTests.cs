@@ -23,4 +23,20 @@ public class StoragePathTests
         Assert.Equal(Path.Combine(root, "band.json"), MainForm.BandExportPath());
         Assert.Equal(Path.Combine(root, "Account Icons"), MainForm.AccountIconsFolder());
     }
+
+    [Fact]
+    public void PersistentDataRoot_CanBeIsolatedForTestBuilds()
+    {
+        var isolatedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "potato-launcher-test-profile"));
+        try
+        {
+            RuntimeOptions.Configure(["--data-dir", isolatedRoot]);
+            Assert.Equal(isolatedRoot, MainForm.PersistentDataRoot());
+            Assert.Equal(Path.Combine(isolatedRoot, "optimizer.json"), MainForm.OptimizerSettingsPath());
+        }
+        finally
+        {
+            RuntimeOptions.Configure([]);
+        }
+    }
 }

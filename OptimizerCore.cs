@@ -11,7 +11,47 @@ internal enum CpuAssignmentMode
 {
     SplitLanes,
     AllAvailableCores,
-    OnePhysicalCorePerClient
+    OnePhysicalCorePerClient,
+    AdaptiveSharedPools
+}
+
+internal sealed class MainClientRule
+{
+    public string ClientName { get; set; } = "";
+    public int Priority { get; set; }
+}
+
+internal sealed record MainClientIdentity(int ProcessId, string ClientName, DateTime StartTime);
+internal sealed record MainClientSelection(HashSet<int> ActiveMainClientIds, HashSet<int> CandidateClientIds);
+
+internal static class MainClientSelector
+{
+    public static MainClientSelection Select(IReadOnlyList<MainClientIdentity> clients, OptimizerSettings settings)
+    {
+        var candidates = clients
+            .Where(client => settings.IsMainCandidate(client.ClientName))
+            .OrderBy(client => settings.GetMainPriority(client.ClientName))
+            .ThenBy(client => client.StartTime)
+            .ThenBy(client => client.ProcessId)
+            .ToList();
+        var candidateIds = candidates.Select(client => client.ProcessId).ToHashSet();
+        var activeId = candidates.FirstOrDefault()?.ProcessId;
+        if (!activeId.HasValue && clients.Count > 0)
+        {
+            activeId = clients.OrderBy(client => client.StartTime).ThenBy(client => client.ProcessId).First().ProcessId;
+        }
+        return new MainClientSelection(activeId.HasValue ? [activeId.Value] : [], candidateIds);
+    }
+}
+
+internal static class MemoryPressurePolicy
+{
+    public static bool Evaluate(bool currentlyActive, double usedPercent, double availableMemoryMb, OptimizerSettings settings)
+    {
+        return currentlyActive
+            ? usedPercent > settings.MemoryPressureStopPercent || availableMemoryMb < settings.CriticalAvailableMemoryMB * 1.5
+            : usedPercent >= settings.MemoryPressureStartPercent || availableMemoryMb <= settings.CriticalAvailableMemoryMB;
+    }
 }
 
 internal sealed class OptimizerSettings
@@ -29,6 +69,7 @@ internal sealed class OptimizerSettings
     public bool OptimizerEnabled { get; set; }
     public bool CpuAffinityOptimizationEnabled { get; set; }
     public bool WorkingSetTrimEnabled { get; set; } = true;
+    public bool CpuPreviewOnly { get; set; }
     public int MainLogicalProcessors { get; set; } = 6;
     public int FollowerLogicalProcessors { get; set; } = 4;
     public int SystemReservedLogicalProcessors { get; set; } = 4;
@@ -39,14 +80,10 @@ internal sealed class OptimizerSettings
     public CpuAssignmentMode CpuAssignmentMode { get; set; } = CpuAssignmentMode.SplitLanes;
     public List<int> ManualMainClientIds { get; set; } = [];
     public Dictionary<string, int> MainReservedLogicalProcessorsByName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-
-    [JsonIgnore]
-    public string[] DefaultMainClientTitlePatterns { get; } =
-    [
-        "Artemis Potato*",
-        "Garrison Mangler*",
-        "Kazuko Aura*"
-    ];
+    public List<MainClientRule> MainClientRules { get; set; } = [];
+    public int MemoryPressureStartPercent { get; set; } = 85;
+    public int MemoryPressureStopPercent { get; set; } = 75;
+    public int CriticalAvailableMemoryMB { get; set; } = 4096;
 
     public static OptimizerSettings Load()
     {
@@ -117,6 +154,50 @@ internal sealed class OptimizerSettings
         MainReservedLogicalProcessorsByName[key] = normalizedValue;
     }
 
+    public bool IsMainCandidate(string clientName)
+    {
+        var key = NormalizeClientName(clientName);
+        return MainClientRules.Any(rule => string.Equals(NormalizeClientName(rule.ClientName), key, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public int GetMainPriority(string clientName)
+    {
+        var key = NormalizeClientName(clientName);
+        return MainClientRules.FirstOrDefault(rule => string.Equals(NormalizeClientName(rule.ClientName), key, StringComparison.OrdinalIgnoreCase))?.Priority ?? 0;
+    }
+
+    public void SetMainCandidate(string clientName, bool isMain)
+    {
+        var key = NormalizeClientName(clientName);
+        if (string.IsNullOrWhiteSpace(key)) return;
+        MainClientRules.RemoveAll(rule => string.Equals(NormalizeClientName(rule.ClientName), key, StringComparison.OrdinalIgnoreCase));
+        if (isMain)
+        {
+            MainClientRules.Add(new MainClientRule
+            {
+                ClientName = key,
+                Priority = MainClientRules.Count == 0 ? 1 : MainClientRules.Max(rule => rule.Priority) + 1
+            });
+        }
+        Normalize();
+    }
+
+    public void SetMainPriority(string clientName, int priority)
+    {
+        var key = NormalizeClientName(clientName);
+        var rule = MainClientRules.FirstOrDefault(candidate => string.Equals(NormalizeClientName(candidate.ClientName), key, StringComparison.OrdinalIgnoreCase));
+        if (rule is null) return;
+        var ordered = MainClientRules.OrderBy(candidate => candidate.Priority).ToList();
+        ordered.Remove(rule);
+        ordered.Insert(Math.Clamp(priority - 1, 0, ordered.Count), rule);
+        MainClientRules = ordered.Select((candidate, index) => new MainClientRule
+        {
+            ClientName = NormalizeClientName(candidate.ClientName),
+            Priority = index + 1
+        }).ToList();
+        Normalize();
+    }
+
     public void Normalize()
     {
         Normalize(Environment.ProcessorCount);
@@ -133,6 +214,9 @@ internal sealed class OptimizerSettings
         TrimIntervalSeconds = Math.Clamp(TrimIntervalSeconds, 1, 300);
         TrimCooldownSeconds = Math.Clamp(TrimCooldownSeconds, 1, 3600);
         CpuLaneIntervalSeconds = Math.Clamp(CpuLaneIntervalSeconds, 1, 300);
+        MemoryPressureStartPercent = Math.Clamp(MemoryPressureStartPercent, 50, 99);
+        MemoryPressureStopPercent = Math.Clamp(MemoryPressureStopPercent, 25, MemoryPressureStartPercent - 1);
+        CriticalAvailableMemoryMB = Math.Clamp(CriticalAvailableMemoryMB, 512, 32768);
 
         ManualMainClientIds = (ManualMainClientIds ?? []).Where(id => id > 0).Distinct().ToList();
         var normalizedMainReservations = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -147,6 +231,15 @@ internal sealed class OptimizerSettings
         }
 
         MainReservedLogicalProcessorsByName = normalizedMainReservations;
+
+        MainClientRules = (MainClientRules ?? [])
+            .Where(rule => rule is not null && !string.IsNullOrWhiteSpace(NormalizeClientName(rule.ClientName)))
+            .GroupBy(rule => NormalizeClientName(rule.ClientName), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(rule => Math.Max(1, rule.Priority)).First())
+            .OrderBy(rule => Math.Max(1, rule.Priority))
+            .ThenBy(rule => NormalizeClientName(rule.ClientName), StringComparer.OrdinalIgnoreCase)
+            .Select((rule, index) => new MainClientRule { ClientName = NormalizeClientName(rule.ClientName), Priority = index + 1 })
+            .ToList();
     }
 
     internal static IReadOnlyList<int> GetAllowedLogicalProcessorCounts(int logicalProcessorCount)
@@ -168,6 +261,7 @@ internal sealed record OptimizerClientSnapshot(
     string ClientName,
     string WindowTitle,
     bool IsMain,
+    bool IsMainCandidate,
     double CpuPercent,
     double? GpuPercent,
     long WorkingSetBytes,
@@ -175,13 +269,22 @@ internal sealed record OptimizerClientSnapshot(
     int ThreadCount,
     int HandleCount,
     long? AffinityMask,
+    long? PlannedAffinityMask,
+    bool IsRescued,
     DateTime? LastTrimUtc);
 
 internal sealed record SystemMetricsSnapshot(
     double CpuPercent,
     double? GpuPercent,
     long UsedMemoryBytes,
-    long TotalMemoryBytes);
+    long TotalMemoryBytes,
+    long AvailableMemoryBytes,
+    bool MemoryPressureActive);
+
+internal sealed class OptimizerAlertEventArgs(string message) : EventArgs
+{
+    public string Message { get; } = message;
+}
 
 internal sealed class IntegratedOptimizerService : IDisposable
 {
@@ -189,14 +292,21 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly System.Windows.Forms.Timer timer = new();
     private readonly Dictionary<int, ProcessCpuSample> cpuSamples = [];
     private readonly Dictionary<int, DateTime> lastTrimByClientId = [];
+    private readonly Dictionary<int, long> plannedAffinitiesByClientId = [];
+    private readonly Dictionary<int, DateTime> unresponsiveSinceByClientId = [];
+    private readonly Dictionary<int, DateTime> rescueUntilByClientId = [];
+    private readonly HashSet<int> unresponsiveNotificationsSent = [];
     private readonly GpuUsageSampler gpuSampler = new();
     private readonly SystemUsageSampler systemSampler = new();
     private DateTime lastCpuLaneUtc = DateTime.MinValue;
     private DateTime lastTrimSweepUtc = DateTime.MinValue;
     private bool appliedClientScheduling;
+    private bool memoryPressureActive;
+    private string lastAllocationSignature = "";
 
     public OptimizerSettings Settings { get; }
     public event EventHandler? Updated;
+    public event EventHandler<OptimizerAlertEventArgs>? Alert;
 
     public IntegratedOptimizerService(OptimizerSettings settings)
     {
@@ -211,9 +321,10 @@ internal sealed class IntegratedOptimizerService : IDisposable
         var clients = GetFfxivClients();
         try
         {
-            var mainClientIds = GetMainClientIds(clients);
+            var mainSelection = GetMainClientSelection(clients);
+            RefreshPlannedAssignments(clients, mainSelection.ActiveMainClientIds);
             var gpuUsage = gpuSampler.GetUsageByProcessId(clients.Select(client => client.Id));
-            return clients.Select(client => CreateSnapshot(client, mainClientIds, gpuUsage)).ToList();
+            return clients.Select(client => CreateSnapshot(client, mainSelection, gpuUsage)).ToList();
         }
         finally
         {
@@ -239,7 +350,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         var clients = GetFfxivClients();
         try
         {
-            TrimWorkingSets(clients, force: true);
+            TrimWorkingSets(clients, GetMainClientSelection(clients).ActiveMainClientIds, force: true);
         }
         finally
         {
@@ -281,11 +392,24 @@ internal sealed class IntegratedOptimizerService : IDisposable
         if (!enabled) RestoreClients();
     }
 
-    public void SetMainClient(int processId, bool isMain)
+    public void SetMainClient(int processId, string clientName, bool isMain)
     {
         Settings.ManualMainClientIds.RemoveAll(id => id == processId);
-        if (isMain) Settings.ManualMainClientIds.Add(processId);
+        Settings.SetMainCandidate(clientName, isMain);
         Settings.Save();
+    }
+
+    public void SetMainPriority(string clientName, int priority)
+    {
+        Settings.SetMainPriority(clientName, priority);
+        Settings.Save();
+    }
+
+    public void RescueClient(int processId)
+    {
+        rescueUntilByClientId[processId] = DateTime.UtcNow.AddSeconds(30);
+        lastCpuLaneUtc = DateTime.MinValue;
+        LogDecision($"Manual rescue started for PID {processId}.");
     }
 
     public void SaveSettings()
@@ -299,7 +423,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
 
     public SystemMetricsSnapshot GetSystemMetrics()
     {
-        return systemSampler.GetSnapshot(gpuSampler.GetTotalUsage());
+        var snapshot = systemSampler.GetSnapshot(gpuSampler.GetTotalUsage());
+        return snapshot with { MemoryPressureActive = memoryPressureActive };
     }
 
     private void Tick()
@@ -308,6 +433,10 @@ internal sealed class IntegratedOptimizerService : IDisposable
         try
         {
             RemoveDeadClientSelections(clients);
+            MigrateLegacyMainSelections(clients);
+            var mainSelection = GetMainClientSelection(clients);
+            UpdateRescueState(clients, mainSelection.ActiveMainClientIds);
+            UpdateMemoryPressure();
             if (Settings.OptimizerEnabled)
             {
                 ApplyCpuLanes(clients);
@@ -315,7 +444,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
 
             if (Settings.WorkingSetTrimEnabled)
             {
-                TrimWorkingSets(clients);
+                TrimWorkingSets(clients, mainSelection.ActiveMainClientIds);
             }
 
             Updated?.Invoke(this, EventArgs.Empty);
@@ -338,21 +467,12 @@ internal sealed class IntegratedOptimizerService : IDisposable
             .ToList();
     }
 
-    private HashSet<int> GetMainClientIds(IReadOnlyList<Process> clients)
+    private MainClientSelection GetMainClientSelection(IReadOnlyList<Process> clients)
     {
-        var liveClientIds = clients.Select(client => client.Id).ToHashSet();
-        var mainIds = Settings.ManualMainClientIds.Where(liveClientIds.Contains).ToHashSet();
-        foreach (var client in clients)
-        {
-            if (mainIds.Contains(client.Id)) continue;
-            if (Settings.DefaultMainClientTitlePatterns.Any(pattern => WildcardMatcher.IsMatch(SafeMainWindowTitle(client), pattern)))
-            {
-                mainIds.Add(client.Id);
-            }
-        }
-
-        if (mainIds.Count == 0 && clients.Count > 0) mainIds.Add(clients[0].Id);
-        return mainIds;
+        return MainClientSelector.Select(clients.Select(client => new MainClientIdentity(
+            client.Id,
+            ExtractCharacterName(SafeMainWindowTitle(client)),
+            SafeStartTime(client))).ToList(), Settings);
     }
 
     private void ApplyCpuLanes(IReadOnlyList<Process> clients, bool force = false)
@@ -362,21 +482,44 @@ internal sealed class IntegratedOptimizerService : IDisposable
         if (!force && (DateTime.UtcNow - lastCpuLaneUtc).TotalSeconds < Settings.CpuLaneIntervalSeconds) return;
 
         lastCpuLaneUtc = DateTime.UtcNow;
-        var mainClientIds = GetMainClientIds(clients);
+        var mainClientIds = GetMainClientSelection(clients).ActiveMainClientIds;
         var allocator = new CpuAffinityAllocator(Settings);
-        foreach (var assignment in allocator.CreateAssignments(clients, mainClientIds))
+        var assignments = allocator.CreateAssignments(clients, mainClientIds);
+        var followerPoolMask = assignments
+            .Where(assignment => !mainClientIds.Contains(assignment.Process.Id))
+            .Aggregate(0L, (mask, assignment) => mask | assignment.AffinityMask);
+        foreach (var assignment in assignments)
         {
-            var clientName = ExtractCharacterName(SafeMainWindowTitle(assignment.Process));
-            ProcessScheduling.TryApplyAffinity(assignment.Process, assignment.AffinityMask);
+            var plannedMask = rescueUntilByClientId.ContainsKey(assignment.Process.Id) && followerPoolMask != 0
+                && !mainClientIds.Contains(assignment.Process.Id)
+                ? followerPoolMask
+                : assignment.AffinityMask;
+            plannedAffinitiesByClientId[assignment.Process.Id] = plannedMask;
+            if (!Settings.CpuPreviewOnly)
+            {
+                ProcessScheduling.TryApplyAffinity(assignment.Process, plannedMask);
+            }
         }
 
-        ResetLauncherScheduling();
-        appliedClientScheduling = true;
+        var signature = $"mode={Settings.CpuAssignmentMode};preview={Settings.CpuPreviewOnly};main={string.Join(',', mainClientIds.Order())};" +
+                        string.Join(';', plannedAffinitiesByClientId.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key}=0x{entry.Value:X}"));
+        if (!string.Equals(signature, lastAllocationSignature, StringComparison.Ordinal))
+        {
+            lastAllocationSignature = signature;
+            LogDecision($"Allocation {signature}");
+        }
+
+        if (!Settings.CpuPreviewOnly)
+        {
+            ResetLauncherScheduling();
+            appliedClientScheduling = true;
+        }
     }
 
-    private void TrimWorkingSets(IReadOnlyList<Process> clients, bool force = false)
+    private void TrimWorkingSets(IReadOnlyList<Process> clients, IReadOnlySet<int> mainClientIds, bool force = false)
     {
         if (!Settings.WorkingSetTrimEnabled && !force) return;
+        if (!force && !memoryPressureActive) return;
         if (!force && (DateTime.UtcNow - lastTrimSweepUtc).TotalSeconds < Settings.TrimIntervalSeconds) return;
 
         lastTrimSweepUtc = DateTime.UtcNow;
@@ -387,7 +530,11 @@ internal sealed class IntegratedOptimizerService : IDisposable
             lastTrimByClientId.Remove(staleId);
         }
 
-        foreach (var client in clients)
+        var eligibleClients = clients
+            .Where(client => !mainClientIds.Contains(client.Id) && !rescueUntilByClientId.ContainsKey(client.Id))
+            .OrderByDescending(SafeWorkingSet64)
+            .ToList();
+        foreach (var client in eligibleClients)
         {
             if (!force && SafeWorkingSet64(client) / 1024 / 1024 < Settings.TrimTriggerMBPerClient) continue;
             if (!force &&
@@ -400,11 +547,12 @@ internal sealed class IntegratedOptimizerService : IDisposable
             if (NativeMethods.TryEmptyWorkingSet(client.Handle))
             {
                 lastTrimByClientId[client.Id] = now;
+                if (!force) break;
             }
         }
     }
 
-    private OptimizerClientSnapshot CreateSnapshot(Process client, IReadOnlySet<int> mainClientIds, IReadOnlyDictionary<int, double> gpuUsage)
+    private OptimizerClientSnapshot CreateSnapshot(Process client, MainClientSelection mainSelection, IReadOnlyDictionary<int, double> gpuUsage)
     {
         var title = SafeMainWindowTitle(client);
         var cpuPercent = GetCpuPercent(client);
@@ -413,7 +561,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
             client.Id,
             ExtractCharacterName(title),
             title,
-            mainClientIds.Contains(client.Id),
+            mainSelection.ActiveMainClientIds.Contains(client.Id),
+            mainSelection.CandidateClientIds.Contains(client.Id),
             cpuPercent,
             gpuUsage.ContainsKey(client.Id) ? gpuPercent : null,
             SafeWorkingSet64(client),
@@ -421,7 +570,103 @@ internal sealed class IntegratedOptimizerService : IDisposable
             SafeThreadCount(client),
             SafeHandleCount(client),
             SafeAffinityMask(client),
+            plannedAffinitiesByClientId.GetValueOrDefault(client.Id) is var plannedMask && plannedMask != 0 ? plannedMask : null,
+            rescueUntilByClientId.ContainsKey(client.Id),
             lastTrimByClientId.TryGetValue(client.Id, out var lastTrimUtc) ? lastTrimUtc : null);
+    }
+
+    private void RefreshPlannedAssignments(IReadOnlyList<Process> clients, IReadOnlySet<int> mainClientIds)
+    {
+        var assignments = new CpuAffinityAllocator(Settings).CreateAssignments(clients, mainClientIds);
+        var followerPoolMask = assignments.Where(assignment => !mainClientIds.Contains(assignment.Process.Id))
+            .Aggregate(0L, (mask, assignment) => mask | assignment.AffinityMask);
+        foreach (var assignment in assignments)
+        {
+            plannedAffinitiesByClientId[assignment.Process.Id] = rescueUntilByClientId.ContainsKey(assignment.Process.Id) && followerPoolMask != 0
+                && !mainClientIds.Contains(assignment.Process.Id)
+                ? followerPoolMask
+                : assignment.AffinityMask;
+        }
+    }
+
+    private void MigrateLegacyMainSelections(IReadOnlyList<Process> clients)
+    {
+        if (Settings.ManualMainClientIds.Count == 0) return;
+        var liveById = clients.ToDictionary(client => client.Id);
+        foreach (var processId in Settings.ManualMainClientIds.ToList())
+        {
+            if (!liveById.TryGetValue(processId, out var client)) continue;
+            Settings.SetMainCandidate(ExtractCharacterName(SafeMainWindowTitle(client)), true);
+        }
+        Settings.ManualMainClientIds.Clear();
+        Settings.Save();
+    }
+
+    private void UpdateRescueState(IReadOnlyList<Process> clients, IReadOnlySet<int> mainClientIds)
+    {
+        var now = DateTime.UtcNow;
+        var liveIds = clients.Select(client => client.Id).ToHashSet();
+        foreach (var staleId in rescueUntilByClientId.Keys.Where(id => !liveIds.Contains(id) || rescueUntilByClientId[id] <= now).ToList()) rescueUntilByClientId.Remove(staleId);
+        foreach (var staleId in unresponsiveSinceByClientId.Keys.Where(id => !liveIds.Contains(id)).ToList()) unresponsiveSinceByClientId.Remove(staleId);
+        foreach (var mainId in mainClientIds)
+        {
+            rescueUntilByClientId.Remove(mainId);
+            unresponsiveSinceByClientId.Remove(mainId);
+            unresponsiveNotificationsSent.Remove(mainId);
+        }
+        foreach (var client in clients.Where(client => !mainClientIds.Contains(client.Id)))
+        {
+            if (SafeResponding(client))
+            {
+                unresponsiveSinceByClientId.Remove(client.Id);
+                unresponsiveNotificationsSent.Remove(client.Id);
+                continue;
+            }
+            if (!unresponsiveSinceByClientId.TryGetValue(client.Id, out var since))
+            {
+                unresponsiveSinceByClientId[client.Id] = now;
+                continue;
+            }
+            if ((now - since).TotalSeconds >= 15 && !rescueUntilByClientId.ContainsKey(client.Id))
+            {
+                rescueUntilByClientId[client.Id] = now.AddSeconds(30);
+                lastCpuLaneUtc = DateTime.MinValue;
+                LogDecision($"Automatic rescue started for {ExtractCharacterName(SafeMainWindowTitle(client))} (PID {client.Id}).");
+            }
+            if ((now - since).TotalSeconds >= 60 && unresponsiveNotificationsSent.Add(client.Id))
+            {
+                var message = $"{ExtractCharacterName(SafeMainWindowTitle(client))} remains unresponsive after CPU rescue.";
+                LogDecision(message);
+                Alert?.Invoke(this, new OptimizerAlertEventArgs(message));
+            }
+        }
+    }
+
+    private void UpdateMemoryPressure()
+    {
+        var memory = NativeMethods.GetMemoryStatus();
+        if (memory.TotalPhysical == 0) return;
+        var usedPercent = (memory.TotalPhysical - memory.AvailablePhysical) * 100d / memory.TotalPhysical;
+        var availableMb = memory.AvailablePhysical / 1024d / 1024d;
+        var wasActive = memoryPressureActive;
+        memoryPressureActive = MemoryPressurePolicy.Evaluate(memoryPressureActive, usedPercent, availableMb, Settings);
+        if (wasActive != memoryPressureActive)
+        {
+            LogDecision($"Memory pressure {(memoryPressureActive ? "entered" : "cleared")}: used={usedPercent:0.0}%, available={availableMb:0} MB.");
+        }
+    }
+
+    private static void LogDecision(string message)
+    {
+        try
+        {
+            var path = Path.Combine(MainForm.PersistentDataRoot(), "optimizer-decisions.log");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.AppendAllText(path, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}");
+        }
+        catch
+        {
+        }
     }
 
     private double GetCpuPercent(Process process)
@@ -456,6 +701,10 @@ internal sealed class IntegratedOptimizerService : IDisposable
         foreach (var staleId in cpuSamples.Keys.Where(id => !liveIds.Contains(id)).ToList())
         {
             cpuSamples.Remove(staleId);
+        }
+        foreach (var staleId in plannedAffinitiesByClientId.Keys.Where(id => !liveIds.Contains(id)).ToList())
+        {
+            plannedAffinitiesByClientId.Remove(staleId);
         }
 
         if (before != Settings.ManualMainClientIds.Count) Settings.Save();
@@ -547,6 +796,20 @@ internal sealed class IntegratedOptimizerService : IDisposable
         try { return process.HasExited ? null : process.ProcessorAffinity.ToInt64(); } catch { return null; }
     }
 
+    private static bool SafeResponding(Process process)
+    {
+        try
+        {
+            if (process.HasExited) return true;
+            var window = process.MainWindowHandle;
+            return window == IntPtr.Zero || !NativeMethods.IsWindowHung(window);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
     private sealed record ProcessCpuSample(DateTime SampledUtc, TimeSpan TotalProcessorTime);
 }
 
@@ -575,7 +838,9 @@ internal sealed class SystemUsageSampler : IDisposable
             GetCpuPercent(),
             gpuPercent,
             Math.Max(0, (long)(memory.TotalPhysical - memory.AvailablePhysical)),
-            Math.Max(0, (long)memory.TotalPhysical));
+            Math.Max(0, (long)memory.TotalPhysical),
+            Math.Max(0, (long)memory.AvailablePhysical),
+            false);
     }
 
     private double GetCpuPercent()
@@ -597,6 +862,7 @@ internal sealed class SystemUsageSampler : IDisposable
 }
 
 internal sealed record CpuAffinityAssignment(Process Process, long AffinityMask);
+internal sealed record ProcessorCacheDomain(long Mask, long CacheSizeBytes, int Level);
 
 internal sealed class CpuAffinityAllocator
 {
@@ -620,6 +886,21 @@ internal sealed class CpuAffinityAllocator
         }
 
         var physicalCoreMasks = ProcessorTopology.GetPhysicalCoreMasks(logicalProcessorCount);
+        if (settings.CpuAssignmentMode == CpuAssignmentMode.AdaptiveSharedPools)
+        {
+            var orderedClients = clients.OrderBy(SafeStartTime).ThenBy(client => client.Id).ToList();
+            var requestedByMainId = orderedClients
+                .Where(client => mainClientIds.Contains(client.Id))
+                .ToDictionary(client => client.Id, client => GetMainLogicalProcessorReservation(client, settings.MainLogicalProcessors));
+            var masks = CreateAdaptiveMasks(
+                orderedClients.Select(client => client.Id).ToList(),
+                mainClientIds,
+                requestedByMainId,
+                physicalCoreMasks,
+                ProcessorTopology.GetLastLevelCacheDomains(logicalProcessorCount),
+                settings.SystemReservedLogicalProcessors);
+            return orderedClients.Select(client => new CpuAffinityAssignment(client, masks[client.Id])).ToList();
+        }
         if (settings.CpuAssignmentMode == CpuAssignmentMode.OnePhysicalCorePerClient)
         {
             return CreateOnePhysicalCorePerClientAssignments(clients, mainClientIds, physicalCoreMasks);
@@ -651,6 +932,68 @@ internal sealed class CpuAffinityAllocator
         }
 
         return assignments;
+    }
+
+    internal static IReadOnlyDictionary<int, long> CreateAdaptiveMasks(
+        IReadOnlyList<int> clientIds,
+        IReadOnlySet<int> mainClientIds,
+        IReadOnlyDictionary<int, int> requestedLogicalProcessorsByMainId,
+        IReadOnlyList<long> physicalCoreMasks,
+        IReadOnlyList<ProcessorCacheDomain> cacheDomains,
+        int systemReservedLogicalProcessors)
+    {
+        if (clientIds.Count == 0) return new Dictionary<int, long>();
+        var usableCores = GetUsablePhysicalCoreMasks(physicalCoreMasks, systemReservedLogicalProcessors).ToList();
+        if (usableCores.Count == 0) usableCores.Add(1L);
+        var domainGroups = CreateDomainGroups(usableCores, cacheDomains);
+        var masks = new Dictionary<int, long>();
+
+        foreach (var mainId in clientIds.Where(mainClientIds.Contains))
+        {
+            var requested = Math.Max(1, requestedLogicalProcessorsByMainId.GetValueOrDefault(mainId, 1));
+            var requiredCores = Math.Max(1, GetRequiredPhysicalCoreCount(usableCores, requested));
+            var selectedGroup = domainGroups.FirstOrDefault(group => group.Cores.Count >= requiredCores)
+                ?? domainGroups.OrderByDescending(group => group.Cores.Count).First();
+            var selectedCores = selectedGroup.Cores.Take(Math.Min(requiredCores, selectedGroup.Cores.Count)).ToList();
+            if (selectedCores.Count == 0) selectedCores.Add(usableCores[0]);
+            masks[mainId] = selectedCores.Aggregate(0L, (mask, core) => mask | core);
+            foreach (var core in selectedCores)
+            {
+                foreach (var group in domainGroups) group.Cores.Remove(core);
+            }
+        }
+
+        var followerGroups = domainGroups.Where(group => group.Cores.Count > 0).ToList();
+        var weightedPools = followerGroups
+            .SelectMany(group => Enumerable.Repeat(group.Cores.Aggregate(0L, (mask, core) => mask | core), group.Cores.Count))
+            .ToList();
+        if (weightedPools.Count == 0)
+        {
+            var fallback = usableCores.Aggregate(0L, (mask, core) => mask | core);
+            weightedPools.Add(fallback == 0 ? 1L : fallback);
+        }
+
+        var followerIndex = 0;
+        foreach (var followerId in clientIds.Where(id => !mainClientIds.Contains(id)))
+        {
+            masks[followerId] = weightedPools[followerIndex++ % weightedPools.Count];
+        }
+        return masks;
+    }
+
+    private static List<CacheDomainCoreGroup> CreateDomainGroups(IReadOnlyList<long> cores, IReadOnlyList<ProcessorCacheDomain> cacheDomains)
+    {
+        var groups = cacheDomains
+            .OrderByDescending(domain => domain.CacheSizeBytes)
+            .ThenBy(domain => ProcessorTopology.GetLowestSetBitIndexForOrdering(domain.Mask))
+            .Select(domain => new CacheDomainCoreGroup(domain, cores.Where(core => (core & domain.Mask) == core).ToList()))
+            .Where(group => group.Cores.Count > 0)
+            .ToList();
+        var assigned = groups.SelectMany(group => group.Cores).ToHashSet();
+        var unmatched = cores.Where(core => !assigned.Contains(core)).ToList();
+        if (unmatched.Count > 0) groups.Add(new CacheDomainCoreGroup(new ProcessorCacheDomain(unmatched.Aggregate(0L, (mask, core) => mask | core), 0, 0), unmatched));
+        if (groups.Count == 0) groups.Add(new CacheDomainCoreGroup(new ProcessorCacheDomain(cores.Aggregate(0L, (mask, core) => mask | core), 0, 0), cores.ToList()));
+        return groups;
     }
 
     private IReadOnlyList<CpuAffinityAssignment> CreateOnePhysicalCorePerClientAssignments(IReadOnlyList<Process> clients, IReadOnlySet<int> mainClientIds, IReadOnlyList<long> physicalCoreMasks)
@@ -821,11 +1164,13 @@ internal sealed class CpuAffinityAllocator
     }
 
     private sealed record CpuLane(long Mask, int PhysicalCoreCount);
+    private sealed record CacheDomainCoreGroup(ProcessorCacheDomain Domain, List<long> Cores);
 }
 
 internal static class ProcessorTopology
 {
     private const int RelationProcessorCore = 0;
+    private const int RelationCache = 2;
 
     public static IReadOnlyList<long> GetPhysicalCoreMasks(int logicalProcessorCount)
     {
@@ -844,6 +1189,44 @@ internal static class ProcessorTopology
         }
 
         return masks.Count == 0 ? [1L] : masks;
+    }
+
+    public static IReadOnlyList<ProcessorCacheDomain> GetLastLevelCacheDomains(int logicalProcessorCount)
+    {
+        var byteLength = 0;
+        _ = GetLogicalProcessorInformation(IntPtr.Zero, ref byteLength);
+        if (byteLength <= 0) return [];
+        var buffer = Marshal.AllocHGlobal(byteLength);
+        try
+        {
+            if (!GetLogicalProcessorInformation(buffer, ref byteLength)) return [];
+            var entrySize = Marshal.SizeOf<LogicalProcessorInformation>();
+            var entryCount = byteLength / entrySize;
+            var unionOffset = IntPtr.Size == 8 ? 16 : 8;
+            var domains = new List<ProcessorCacheDomain>();
+            for (var index = 0; index < entryCount; index++)
+            {
+                var pointer = IntPtr.Add(buffer, index * entrySize);
+                if (Marshal.ReadInt32(pointer, IntPtr.Size) != RelationCache) continue;
+                var level = Marshal.ReadByte(pointer, unionOffset);
+                var cacheSize = unchecked((uint)Marshal.ReadInt32(pointer, unionOffset + 4));
+                var mask = unchecked((long)(IntPtr.Size == 8 ? Marshal.ReadInt64(pointer) : Marshal.ReadInt32(pointer)));
+                mask &= ProcessorAffinity.CreateMask(0, logicalProcessorCount, logicalProcessorCount);
+                if (mask != 0 && cacheSize > 0) domains.Add(new ProcessorCacheDomain(mask, cacheSize, level));
+            }
+            if (domains.Count == 0) return [];
+            var highestLevel = domains.Max(domain => domain.Level);
+            return domains.Where(domain => domain.Level == highestLevel)
+                .GroupBy(domain => domain.Mask)
+                .Select(group => group.OrderByDescending(domain => domain.CacheSizeBytes).First())
+                .OrderByDescending(domain => domain.CacheSizeBytes)
+                .ThenBy(domain => GetLowestSetBitIndex(domain.Mask))
+                .ToList();
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
     }
 
     private static IReadOnlyList<long> TryGetWindowsPhysicalCoreMasks(int logicalProcessorCount)
@@ -887,6 +1270,8 @@ internal static class ProcessorTopology
 
         return int.MaxValue;
     }
+
+    internal static int GetLowestSetBitIndexForOrdering(long mask) => GetLowestSetBitIndex(mask);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetLogicalProcessorInformation(IntPtr buffer, ref int returnedLength);
@@ -984,6 +1369,10 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsHungAppWindow(IntPtr windowHandle);
+
     public static bool TryEmptyWorkingSet(IntPtr processHandle)
     {
         try { return EmptyWorkingSet(processHandle); } catch { return false; }
@@ -996,6 +1385,11 @@ internal static class NativeMethods
         return GlobalMemoryStatusEx(ref status)
             ? new MemoryStatus(status.TotalPhysical, status.AvailablePhysical)
             : new MemoryStatus(0, 0);
+    }
+
+    public static bool IsWindowHung(IntPtr windowHandle)
+    {
+        try { return windowHandle != IntPtr.Zero && IsHungAppWindow(windowHandle); } catch { return false; }
     }
 
     public readonly record struct MemoryStatus(ulong TotalPhysical, ulong AvailablePhysical);

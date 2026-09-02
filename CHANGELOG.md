@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.92 - 2026-09-02
+
+- Added Adaptive Shared Pools, which keeps one selected main client on a cache-local CPU allocation while sharing the remaining processor pools among followers.
+- Added PC-local main-candidate ordering so the lowest selection number becomes the active main and other configured candidates operate as followers on that machine.
+- Added explicit Live optimization and Planning only modes, planned-affinity reporting, and an optimizer decision log.
+- Added pressure-aware follower memory trimming with hysteresis, cooldowns, active-main protection, and one-client-at-a-time automatic trims.
+- Added automatic and manual follower rescue allocations for clients that stop responding during zoning or heavy loading.
+- Improved Optimizer window responsiveness with non-blocking hung-window detection, coalesced monitor refreshes, and redraw suppression during interaction.
+- Fixed a queued-refresh race that could display a DataGridView exception when the Optimizer window was closed.
+- Added isolated test-profile support so experimental optimizer configurations can be tested without modifying normal launcher settings.
+
 ## 1.0.91 - 2026-08-29
 
 - Replaced the optimizer's fixed 12/8 logical-processor limits with choices discovered from the current PC, including full 32-thread support for processors such as the Ryzen 9 9950X3D.
