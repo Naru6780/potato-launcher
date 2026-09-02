@@ -31,6 +31,7 @@ public class SettingsMigrationTests
         Assert.True(document.RootElement.GetProperty("DesktopPetEnabled").GetBoolean());
         Assert.Equal(ArtemisPetScale.DefaultPercent, document.RootElement.GetProperty("DesktopPetSizePercent").GetInt32());
         Assert.False(document.RootElement.GetProperty("WaitForClientInitializationBeforeNextLaunch").GetBoolean());
+        Assert.False(document.RootElement.GetProperty("AutoCloseLaunchHelpers").GetBoolean());
         Assert.False(document.RootElement.TryGetProperty("SharedAccountOrder", out _));
         Assert.False(document.RootElement.TryGetProperty("InstancedAccountOrder", out _));
         Assert.False(document.RootElement.TryGetProperty("LastConnectedUtc", out _));
@@ -60,6 +61,24 @@ public class SettingsMigrationTests
         Assert.Equal(["alpha", "beta"], state.SharedAccountOrder);
         Assert.Equal(["bat-one", "bat-two"], state.InstancedAccountOrder);
         Assert.DoesNotContain("", state.LastConnectedUtc.Keys);
+        Assert.Equal(AccountSortModes.Custom, state.SharedSortMode);
+        Assert.Equal(AccountSortModes.Custom, state.InstancedSortMode);
+    }
+
+    [Fact]
+    public void CleanAccountListState_NormalizesPersistedSortModes()
+    {
+        var state = new AccountListState
+        {
+            SharedSortMode = "selectedband",
+            InstancedSortMode = "unknown"
+        };
+
+        var changed = SettingsMigration.CleanAccountListState(state);
+
+        Assert.True(changed);
+        Assert.Equal(AccountSortModes.SelectedBand, state.SharedSortMode);
+        Assert.Equal(AccountSortModes.Custom, state.InstancedSortMode);
     }
 
     [Fact]

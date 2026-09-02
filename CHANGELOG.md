@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.94 - 2026-09-02
+
+- Added an optional post-initialization cleanup for the XIVLauncher, Dalamud injector, and Dalamud crash-handler processes created for each client launch.
+- Restricted helper cleanup to validated process IDs owned by that specific launch so other concurrently launching clients and the game process are not stopped.
+- Made account sort choices persistent per launch mode, added a visible Custom order choice, and kept Selected band sorting active as bands change.
+
 ## 1.0.93 - 2026-09-02
 
 - Clarified that the follower logical-processor count applies only to Split Lanes mode.

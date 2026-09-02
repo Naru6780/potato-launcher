@@ -110,6 +110,7 @@ internal sealed class AppSettings
     public string Theme { get; set; } = "Pink";
     public int LaunchCooldownSeconds { get; set; } = 0;
     public bool WaitForClientInitializationBeforeNextLaunch { get; set; }
+    public bool AutoCloseLaunchHelpers { get; set; }
     public string AccountDisplayMode { get; set; } = "Text";
     public int AccountPanelWidth { get; set; }
     public bool RandomizeThemeAtLaunch { get; set; }
@@ -129,6 +130,87 @@ internal sealed class AccountListState
     public List<string> SharedAccountOrder { get; set; } = [];
     public List<string> InstancedAccountOrder { get; set; } = [];
     public Dictionary<string, DateTime> LastConnectedUtc { get; set; } = [];
+    public string SharedSortMode { get; set; } = AccountSortModes.Custom;
+    public string InstancedSortMode { get; set; } = AccountSortModes.Custom;
+}
+
+internal static class AccountSortModes
+{
+    public const string Custom = "Custom";
+    public const string Alphabetical = "Alphabetical";
+    public const string LastConnected = "LastConnected";
+    public const string SelectedBand = "SelectedBand";
+
+    public static string Normalize(string? value)
+    {
+        if (string.Equals(value, Alphabetical, StringComparison.OrdinalIgnoreCase)) return Alphabetical;
+        if (string.Equals(value, LastConnected, StringComparison.OrdinalIgnoreCase)) return LastConnected;
+        if (string.Equals(value, SelectedBand, StringComparison.OrdinalIgnoreCase)) return SelectedBand;
+        return Custom;
+    }
+}
+
+internal static class AccountSortPolicy
+{
+    public static IReadOnlyList<Account> Order(
+        IReadOnlyList<Account> source,
+        string sortMode,
+        IReadOnlyList<string> customOrder,
+        IReadOnlyDictionary<string, DateTime> lastConnectedUtc,
+        IReadOnlyList<string>? selectedBandFiles,
+        Func<Account, string> accountKey,
+        Func<Account, string> displayName)
+    {
+        var accounts = source.Select((account, index) => new IndexedAccount(account, index)).ToList();
+        return AccountSortModes.Normalize(sortMode) switch
+        {
+            AccountSortModes.Alphabetical => accounts
+                .OrderBy(pair => displayName(pair.Account), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(pair => pair.Account.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => pair.Account)
+                .ToList(),
+            AccountSortModes.LastConnected => accounts
+                .OrderByDescending(pair => lastConnectedUtc.TryGetValue(accountKey(pair.Account), out var connectedAt) ? connectedAt : DateTime.MinValue)
+                .ThenBy(pair => displayName(pair.Account), StringComparer.OrdinalIgnoreCase)
+                .Select(pair => pair.Account)
+                .ToList(),
+            AccountSortModes.SelectedBand => OrderBySelectedBand(accounts, selectedBandFiles),
+            _ => OrderByCustomOrder(accounts, customOrder, accountKey)
+        };
+    }
+
+    private static IReadOnlyList<Account> OrderBySelectedBand(
+        IReadOnlyList<IndexedAccount> accounts,
+        IReadOnlyList<string>? selectedBandFiles)
+    {
+        var bandOrder = (selectedBandFiles ?? [])
+            .Select((file, index) => new { file, index })
+            .GroupBy(pair => pair.file, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.OrdinalIgnoreCase);
+        return accounts
+            .OrderBy(pair => bandOrder.ContainsKey(pair.Account.BatchFile) ? 0 : 1)
+            .ThenBy(pair => bandOrder.TryGetValue(pair.Account.BatchFile, out var bandIndex) ? bandIndex : pair.Index)
+            .Select(pair => pair.Account)
+            .ToList();
+    }
+
+    private static IReadOnlyList<Account> OrderByCustomOrder(
+        IReadOnlyList<IndexedAccount> accounts,
+        IReadOnlyList<string> customOrder,
+        Func<Account, string> accountKey)
+    {
+        var orderIndex = customOrder
+            .Select((key, index) => new { key, index })
+            .GroupBy(pair => pair.key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.OrdinalIgnoreCase);
+        return accounts
+            .OrderBy(pair => orderIndex.TryGetValue(accountKey(pair.Account), out var savedIndex) ? savedIndex : int.MaxValue)
+            .ThenBy(pair => pair.Index)
+            .Select(pair => pair.Account)
+            .ToList();
+    }
+
+    private sealed record IndexedAccount(Account Account, int Index);
 }
 
 internal static class AppText
@@ -184,7 +266,7 @@ internal static class AppText
         Pair two Potato Launcher PCs on the same private network, choose one local band and one remote band, and save them as a launch plan. Launch both queues from the main PC with a synchronized countdown and combined progress. Account credentials always stay on their own PC.
 
         Launching
-        OTP-enabled accounts launch with autologin disabled so you can finish login manually. The launch cooldown setting adds a delay between band launches.
+        OTP-enabled accounts launch with autologin disabled so you can finish login manually. The launch cooldown setting adds a delay between band launches. The optional helper cleanup setting closes only the XIVLauncher and Dalamud helper processes detected for that launch after its game client is initialized; closing DalamudCrashHandler disables its crash-reporting protection for that client.
 
         Display and themes
         Switch the account list between Text and Roster display in Settings. Themes can change colors and backgrounds, and can be randomized each time the app starts.
@@ -468,6 +550,18 @@ internal static class SettingsMigration
         var changed = false;
         changed |= CleanOrder(state.SharedAccountOrder);
         changed |= CleanOrder(state.InstancedAccountOrder);
+        var sharedSortMode = AccountSortModes.Normalize(state.SharedSortMode);
+        var instancedSortMode = AccountSortModes.Normalize(state.InstancedSortMode);
+        if (!string.Equals(state.SharedSortMode, sharedSortMode, StringComparison.Ordinal))
+        {
+            state.SharedSortMode = sharedSortMode;
+            changed = true;
+        }
+        if (!string.Equals(state.InstancedSortMode, instancedSortMode, StringComparison.Ordinal))
+        {
+            state.InstancedSortMode = instancedSortMode;
+            changed = true;
+        }
         foreach (var key in state.LastConnectedUtc.Keys.Where(string.IsNullOrWhiteSpace).ToList())
         {
             state.LastConnectedUtc.Remove(key);
@@ -633,7 +727,7 @@ internal readonly record struct LauncherWindow(int ProcessId, IntPtr Handle);
 internal readonly record struct GameClientWindow(int ProcessId, IntPtr Handle, string Title);
 internal readonly record struct LaunchCommand(string FileName, string Arguments, string WorkingDirectory);
 internal readonly record struct BatchLaunchInfo(string AccountKey, string RoamingPath);
-internal readonly record struct StartedGameClient(Account Account, int ProcessId);
+internal readonly record struct StartedGameClient(Account Account, int ProcessId, LaunchHelperCleanupScope? LaunchHelperScope);
 internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
 internal sealed record NewsEntry(string Title, string Url, DateTimeOffset Date, string Tag);
 internal sealed record NewsBandrollSlide(Image Image, string Url, string Title);
@@ -761,6 +855,7 @@ internal sealed class MainForm : Form
     private Label launchCooldownLabel = null!;
     private NumericUpDown launchCooldownInput = null!;
     private CheckBox waitForClientInitializationInput = null!;
+    private CheckBox autoCloseLaunchHelpersInput = null!;
     private CheckBox randomizeThemeInput = null!;
     private CheckBox notificationsEnabledInput = null!;
     private CheckBox desktopPetEnabledInput = null!;
@@ -823,6 +918,7 @@ internal sealed class MainForm : Form
     private bool themeHasVideo;
     private bool themeHasImage;
     private bool settingsDrawerOpen;
+    private bool populatingLists;
     private readonly List<NewsBanner> newsBanners = [];
     private readonly List<NewsEntry> newsEntries = [];
     private int selectedNewsBannerIndex;
@@ -1234,7 +1330,14 @@ internal sealed class MainForm : Form
         bandCard.Controls.Add(Header("Band Manager", 18, 12, 180, 32));
         var initialBandMembers = BandMemberListMetrics.Calculate(bandCard.Width);
         bandList = new ListBox { Bounds = new Rectangle(BandMemberListMetrics.LeftPadding, 58, initialBandMembers.BandListWidth, 306) };
-        bandList.SelectedIndexChanged += (_, _) => LoadSelectedBand();
+        bandList.SelectedIndexChanged += (_, _) =>
+        {
+            LoadSelectedBand();
+            if (!populatingLists && CurrentAccountSortMode() == AccountSortModes.SelectedBand)
+            {
+                PopulateAccountItems();
+            }
+        };
         bandList.MouseDown += (_, e) =>
         {
             if (e.Button != MouseButtons.Right) return;
@@ -1464,42 +1567,56 @@ internal sealed class MainForm : Form
         importBandsButton.Click += (_, _) => ImportBands();
         settingsDrawer.Controls.AddRange([exportAccountsButton, importAccountsButton, exportBandsButton, importBandsButton]);
 
-        themeLabel = Label("Theme", 24, 580, 120, 24);
-        themeInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 608, 260, 29) };
+        themeLabel = Label("Theme", 24, 576, 120, 24);
+        themeInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(24, 604, 260, 29) };
         themeInput.Items.AddRange(Palettes.Keys.ToArray());
         themeInput.SelectedItem = Palettes.ContainsKey(NormalizeThemeName(settings.Theme)) ? NormalizeThemeName(settings.Theme) : "Pink";
         themeInput.SelectedIndexChanged += (_, _) => { SaveSettingsFromInputs(showFeedback: true); ApplyTheme(settings.Theme); };
         settingsDrawer.Controls.AddRange([themeLabel, themeInput]);
 
-        launchCooldownLabel = Label("Launch cooldown: seconds between clients", 24, 488, 300, 24);
+        launchCooldownLabel = Label("Launch cooldown: seconds between clients", 24, 432, 300, 24);
         settingsDrawer.Controls.Add(launchCooldownLabel);
         launchCooldownInput = new NumericUpDown
         {
             Minimum = 0,
             Maximum = 300,
             Value = Math.Clamp(settings.LaunchCooldownSeconds, 0, 300),
-            Bounds = new Rectangle(24, 522, 96, 29)
+            Bounds = new Rectangle(24, 460, 96, 29)
         };
         launchCooldownInput.ValueChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(launchCooldownInput);
 
-        waitForClientInitializationInput = new CheckBox { Text = "Wait until client is initialized before launching next", Checked = settings.WaitForClientInitializationBeforeNextLaunch, Bounds = new Rectangle(24, 560, 332, 28), BackColor = Color.Transparent };
+        waitForClientInitializationInput = new CheckBox { Text = "Wait until client is initialized before launching next", Checked = settings.WaitForClientInitializationBeforeNextLaunch, Bounds = new Rectangle(24, 500, 332, 28), BackColor = Color.Transparent };
         waitForClientInitializationInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(waitForClientInitializationInput);
 
-        randomizeThemeInput = new CheckBox { Text = "Randomize theme at launch", Checked = settings.RandomizeThemeAtLaunch, Bounds = new Rectangle(24, 594, 250, 28), BackColor = Color.Transparent };
+        autoCloseLaunchHelpersInput = new CheckBox
+        {
+            Text = "Close launch helpers after client initializes",
+            Checked = settings.AutoCloseLaunchHelpers,
+            Bounds = new Rectangle(24, 532, 332, 28),
+            BackColor = Color.Transparent
+        };
+        autoCloseLaunchHelpersInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
+        settingsDrawer.Controls.Add(autoCloseLaunchHelpersInput);
+        appToolTip?.Attach(
+            autoCloseLaunchHelpersInput,
+            "Close launch helpers",
+            "Stops only helper processes detected for that client launch. This also removes Dalamud crash-handler protection for the running client.");
+
+        randomizeThemeInput = new CheckBox { Text = "Randomize theme at launch", Checked = settings.RandomizeThemeAtLaunch, Bounds = new Rectangle(24, 646, 250, 28), BackColor = Color.Transparent };
         randomizeThemeInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(randomizeThemeInput);
 
-        notificationsEnabledInput = new CheckBox { Text = "Enable notifications", Checked = settings.NotificationsEnabled, Bounds = new Rectangle(24, 628, 250, 28), BackColor = Color.Transparent };
+        notificationsEnabledInput = new CheckBox { Text = "Enable notifications", Checked = settings.NotificationsEnabled, Bounds = new Rectangle(24, 680, 250, 28), BackColor = Color.Transparent };
         notificationsEnabledInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(notificationsEnabledInput);
 
-        desktopPetEnabledInput = new CheckBox { Text = "Show Artemis desktop pet when minimized", Checked = settings.DesktopPetEnabled, Bounds = new Rectangle(24, 662, 332, 28), BackColor = Color.Transparent };
+        desktopPetEnabledInput = new CheckBox { Text = "Show Artemis desktop pet when minimized", Checked = settings.DesktopPetEnabled, Bounds = new Rectangle(24, 714, 332, 28), BackColor = Color.Transparent };
         desktopPetEnabledInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(desktopPetEnabledInput);
 
-        updateButton = Button("Check for updates", 24, 700, 180, 34, "Secondary");
+        updateButton = Button("Check for updates", 24, 752, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
         UpdateLaunchModeUi();
@@ -1532,10 +1649,11 @@ internal sealed class MainForm : Form
             SetY(launchCooldownLabel, 488);
             SetY(launchCooldownInput, 522);
             SetY(waitForClientInitializationInput, 560);
-            SetY(randomizeThemeInput, 594);
-            SetY(notificationsEnabledInput, 628);
-            SetY(desktopPetEnabledInput, 662);
-            SetY(updateButton, 700);
+            SetY(autoCloseLaunchHelpersInput, 594);
+            SetY(randomizeThemeInput, 628);
+            SetY(notificationsEnabledInput, 662);
+            SetY(desktopPetEnabledInput, 696);
+            SetY(updateButton, 734);
         }
         else
         {
@@ -1550,10 +1668,11 @@ internal sealed class MainForm : Form
             SetY(launchCooldownLabel, 488);
             SetY(launchCooldownInput, 522);
             SetY(waitForClientInitializationInput, 560);
-            SetY(randomizeThemeInput, 594);
-            SetY(notificationsEnabledInput, 628);
-            SetY(desktopPetEnabledInput, 662);
-            SetY(updateButton, 700);
+            SetY(autoCloseLaunchHelpersInput, 594);
+            SetY(randomizeThemeInput, 628);
+            SetY(notificationsEnabledInput, 662);
+            SetY(desktopPetEnabledInput, 696);
+            SetY(updateButton, 734);
         }
     }
 
@@ -1977,22 +2096,21 @@ internal sealed class MainForm : Form
         bandCard.SuspendLayout();
         accountList.BeginUpdate();
         bandList.BeginUpdate();
+        populatingLists = true;
         try
         {
-            accountList.Items.Clear();
-            var orderedAccountList = OrderedAccounts().ToList();
-            foreach (var account in orderedAccountList)
-            {
-                accountList.Items.Add(account);
-            }
-            accountRosterGrid.SetItems(orderedAccountList.Select(CreateRosterItem));
+            var selectedBandId = (bandList.SelectedItem as BandConfig)?.Id;
             bandList.Items.Clear();
             foreach (var band in CurrentBands())
             {
                 NormalizeBand(band);
                 bandList.Items.Add(band);
             }
-            bandList.SelectedIndex = bandList.Items.Count > 0 ? 0 : -1;
+            var selectedBandIndex = string.IsNullOrWhiteSpace(selectedBandId)
+                ? -1
+                : bandList.Items.OfType<BandConfig>().ToList().FindIndex(band => band.Id.Equals(selectedBandId, StringComparison.OrdinalIgnoreCase));
+            bandList.SelectedIndex = selectedBandIndex >= 0 ? selectedBandIndex : bandList.Items.Count > 0 ? 0 : -1;
+            PopulateAccountItems();
             if (bandList.SelectedItem is not BandConfig)
             {
                 PopulateMemberList(null);
@@ -2002,6 +2120,7 @@ internal sealed class MainForm : Form
         }
         finally
         {
+            populatingLists = false;
             bandList.EndUpdate();
             accountList.EndUpdate();
             bandCard.ResumeLayout(false);
@@ -2011,25 +2130,51 @@ internal sealed class MainForm : Form
 
     private IEnumerable<Account> OrderedAccounts()
     {
-        var accountList = IsSharedLaunchMode()
+        var baseAccounts = IsSharedLaunchMode()
             ? accounts.ToList()
             : accounts.OrderBy(account => account.SortOrder).ThenBy(account => account.Name).ToList();
-        var savedOrder = CurrentAccountOrder();
-        if (savedOrder.Count == 0) return accountList;
-
-        var orderIndex = savedOrder
-            .Select((key, index) => new { key, index })
-            .GroupBy(pair => pair.key, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.OrdinalIgnoreCase);
-        return accountList
-            .Select((account, index) => new { account, index })
-            .OrderBy(pair => orderIndex.TryGetValue(AccountIconKey(pair.account), out var savedIndex) ? savedIndex : int.MaxValue)
-            .ThenBy(pair => pair.index)
-            .Select(pair => pair.account)
-            .ToList();
+        var selectedBandFiles = (bandList?.SelectedItem as BandConfig)?.BatchFiles;
+        return AccountSortPolicy.Order(
+            baseAccounts,
+            CurrentAccountSortMode(),
+            CurrentAccountOrder(),
+            accountState.LastConnectedUtc,
+            selectedBandFiles,
+            AccountIconKey,
+            AccountDisplayName);
     }
 
     private List<string> CurrentAccountOrder() => IsSharedLaunchMode() ? accountState.SharedAccountOrder : accountState.InstancedAccountOrder;
+
+    private string CurrentAccountSortMode()
+    {
+        return AccountSortModes.Normalize(IsSharedLaunchMode() ? accountState.SharedSortMode : accountState.InstancedSortMode);
+    }
+
+    private void SetCurrentAccountSortMode(string sortMode)
+    {
+        sortMode = AccountSortModes.Normalize(sortMode);
+        if (IsSharedLaunchMode()) accountState.SharedSortMode = sortMode;
+        else accountState.InstancedSortMode = sortMode;
+    }
+
+    private void PopulateAccountItems()
+    {
+        var selectedAccount = IsAccountIconMode() ? accountRosterGrid.SelectedAccount : accountList.SelectedItem as Account;
+        var orderedAccountList = OrderedAccounts().ToList();
+        accountList.BeginUpdate();
+        try
+        {
+            accountList.Items.Clear();
+            foreach (var account in orderedAccountList) accountList.Items.Add(account);
+            accountRosterGrid.SetItems(orderedAccountList.Select(CreateRosterItem));
+            if (selectedAccount is not null) SelectAccount(selectedAccount);
+        }
+        finally
+        {
+            accountList.EndUpdate();
+        }
+    }
 
     private void SaveCurrentAccountOrder(IEnumerable<Account> orderedAccounts)
     {
@@ -2056,6 +2201,7 @@ internal sealed class MainForm : Form
         targetIndex = Math.Clamp(targetIndex, 0, ordered.Count);
         if (targetIndex > currentIndex) targetIndex--;
         ordered.Insert(targetIndex, moved);
+        SetCurrentAccountSortMode(AccountSortModes.Custom);
         SaveCurrentAccountOrder(ordered);
         PopulateLists();
         SelectAccount(moved);
@@ -2063,23 +2209,19 @@ internal sealed class MainForm : Form
 
     private void SortAccountsByName()
     {
-        var ordered = OrderedAccounts()
-            .OrderBy(AccountDisplayName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(account => GetUserNameFromAccountKey(account.AccountKey), StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        SaveCurrentAccountOrder(ordered);
-        PopulateLists();
+        SetCurrentAccountSortMode(AccountSortModes.Alphabetical);
+        SaveAccountListState(accountState);
+        PopulateAccountItems();
+        PopulateMemberList(bandList.SelectedItem as BandConfig);
         status.Text = "Sorted accounts alphabetically.";
     }
 
     private void SortAccountsByLastConnected()
     {
-        var ordered = OrderedAccounts()
-            .OrderByDescending(account => accountState.LastConnectedUtc.TryGetValue(AccountIconKey(account), out var connectedAt) ? connectedAt : DateTime.MinValue)
-            .ThenBy(AccountDisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        SaveCurrentAccountOrder(ordered);
-        PopulateLists();
+        SetCurrentAccountSortMode(AccountSortModes.LastConnected);
+        SaveAccountListState(accountState);
+        PopulateAccountItems();
+        PopulateMemberList(bandList.SelectedItem as BandConfig);
         status.Text = "Sorted accounts by last connected.";
     }
 
@@ -2092,18 +2234,10 @@ internal sealed class MainForm : Form
         }
 
         NormalizeBand(band);
-        var bandOrder = band.BatchFiles
-            .Select((file, index) => new { file, index })
-            .GroupBy(pair => pair.file, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().index, StringComparer.OrdinalIgnoreCase);
-        var ordered = OrderedAccounts()
-            .Select((account, index) => new { account, index })
-            .OrderBy(pair => bandOrder.TryGetValue(pair.account.BatchFile, out var bandIndex) ? 0 : 1)
-            .ThenBy(pair => bandOrder.TryGetValue(pair.account.BatchFile, out var bandIndex) ? bandIndex : pair.index)
-            .Select(pair => pair.account)
-            .ToList();
-        SaveCurrentAccountOrder(ordered);
-        PopulateLists();
+        SetCurrentAccountSortMode(AccountSortModes.SelectedBand);
+        SaveAccountListState(accountState);
+        PopulateAccountItems();
+        PopulateMemberList(band);
         status.Text = $"Sorted accounts by {band.Name}.";
     }
 
@@ -2317,9 +2451,24 @@ internal sealed class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
 
         var sortMenu = new ToolStripMenuItem("Sort accounts");
-        sortMenu.DropDownItems.Add("Alphabetically", null, (_, _) => SortAccountsByName());
-        sortMenu.DropDownItems.Add("By last connected", null, (_, _) => SortAccountsByLastConnected());
-        sortMenu.DropDownItems.Add("By selected band", null, (_, _) => SortAccountsBySelectedBand());
+        var activeSortMode = CurrentAccountSortMode();
+        var customSort = new ToolStripMenuItem("Custom order") { Checked = activeSortMode == AccountSortModes.Custom };
+        customSort.Click += (_, _) =>
+        {
+            var visibleOrder = OrderedAccounts().ToList();
+            SetCurrentAccountSortMode(AccountSortModes.Custom);
+            SaveCurrentAccountOrder(visibleOrder);
+            PopulateAccountItems();
+            PopulateMemberList(bandList.SelectedItem as BandConfig);
+            status.Text = "Using custom account order.";
+        };
+        var alphabeticalSort = new ToolStripMenuItem("Alphabetically") { Checked = activeSortMode == AccountSortModes.Alphabetical };
+        alphabeticalSort.Click += (_, _) => SortAccountsByName();
+        var lastConnectedSort = new ToolStripMenuItem("By last connected") { Checked = activeSortMode == AccountSortModes.LastConnected };
+        lastConnectedSort.Click += (_, _) => SortAccountsByLastConnected();
+        var selectedBandSort = new ToolStripMenuItem("By selected band") { Checked = activeSortMode == AccountSortModes.SelectedBand };
+        selectedBandSort.Click += (_, _) => SortAccountsBySelectedBand();
+        sortMenu.DropDownItems.AddRange([customSort, alphabeticalSort, lastConnectedSort, selectedBandSort]);
         menu.Items.Add(sortMenu);
 
         var delete = new ToolStripMenuItem("Delete account");
@@ -3529,8 +3678,7 @@ internal sealed class MainForm : Form
                 loadingTitle.Text = $"Loading {band.Name}";
                 UpdateLoadingOverlay($"{band.Name}: launching {account.Name} ({index + 1}/{bandAccounts.Count}).");
                 Report("Launching", $"Launching {AccountDisplayName(account)} ({index + 1}/{bandAccounts.Count}).");
-                var client = await StartAccountAndWaitForClientAsync(account, cancellation.Token);
-                var startedClient = new StartedGameClient(account, client.ProcessId);
+                var startedClient = await StartAccountAndWaitForClientAsync(account, cancellation.Token);
                 UpdateLoadingQueueItem(index, account, "Loading");
                 accountStatuses[index] = accountStatuses[index] with { Status = "Loading" };
                 Report("Launching", $"{AccountDisplayName(account)} is loading.");
@@ -3624,7 +3772,7 @@ internal sealed class MainForm : Form
         try
         {
             var client = await StartAccountAndWaitForClientAsync(account, token);
-            await WaitForGameClientCharacterTitleAsync(new StartedGameClient(account, client.ProcessId), token);
+            await WaitForGameClientCharacterTitleAsync(client, token);
             RememberAccountConnected(account);
             if (!quiet)
             {
@@ -3644,12 +3792,18 @@ internal sealed class MainForm : Form
     {
         accountState.LastConnectedUtc[AccountIconKey(account)] = DateTime.UtcNow;
         SaveAccountListState(accountState);
+        if (CurrentAccountSortMode() == AccountSortModes.LastConnected)
+        {
+            PopulateAccountItems();
+            PopulateMemberList(bandList.SelectedItem as BandConfig);
+        }
     }
 
-    private async Task<GameClientWindow> StartAccountAndWaitForClientAsync(Account account, CancellationToken token)
+    private async Task<StartedGameClient> StartAccountAndWaitForClientAsync(Account account, CancellationToken token)
     {
         SaveSettingsFromInputs();
         var launcherProcessesBefore = GetLauncherProcessIds();
+        var helperProcessesBefore = settings.AutoCloseLaunchHelpers ? LaunchHelperCleanup.CaptureProcessIds() : [];
         var gameClientsBefore = GetGameClientProcessIds();
         var command = IsSharedLaunchMode()
             ? BuildSharedLaunchCommand(account)
@@ -3664,6 +3818,7 @@ internal sealed class MainForm : Form
             WindowStyle = ProcessWindowStyle.Hidden
         };
         using var launcherProcess = Process.Start(startInfo);
+        var launcherProcessId = launcherProcess?.Id;
         SetStatus(IsSharedLaunchMode()
             ? $"Started {account.Name} through Shared."
             : $"Started {account.Name} from BAT command.");
@@ -3675,7 +3830,10 @@ internal sealed class MainForm : Form
         await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, account.Name, token);
         var client = await WaitForFreshGameClientAsync(gameClientsBefore, account.Name, token);
         runningClientProcessIds[AccountIconKey(account)] = client.ProcessId;
-        return client;
+        var cleanupScope = settings.AutoCloseLaunchHelpers
+            ? new LaunchHelperCleanupScope(helperProcessesBefore, launcherProcessId)
+            : null;
+        return new StartedGameClient(account, client.ProcessId, cleanupScope);
     }
 
     private async Task WaitForLaunchCooldownAsync(string bandName, CancellationToken token)
@@ -4012,6 +4170,7 @@ internal sealed class MainForm : Form
                     accountStatus?.Invoke("Initialized");
                     UpdateLoadingOverlay(readyMessage);
                     RememberAccountCharacterTitle(startedClient.Account, title);
+                    await CloseLaunchHelpersAsync(startedClient);
                     return;
                 }
             }
@@ -4031,6 +4190,23 @@ internal sealed class MainForm : Form
         }
 
         throw new TimeoutException($"Timed out waiting for {startedClient.Account.Name}'s FFXIV window title to switch to Character@World.");
+    }
+
+    private async Task CloseLaunchHelpersAsync(StartedGameClient startedClient)
+    {
+        if (!settings.AutoCloseLaunchHelpers || startedClient.LaunchHelperScope is null) return;
+        var targets = LaunchHelperCleanup.CaptureOwnedProcesses(startedClient.LaunchHelperScope, startedClient.ProcessId);
+        if (targets.Count == 0) return;
+        var result = await LaunchHelperCleanup.StopProcessesAsync(targets);
+        if (result.Failures.Count > 0)
+        {
+            SetStatus($"{startedClient.Account.Name} initialized; some launch helpers could not be closed.", force: true);
+            return;
+        }
+        if (result.StoppedCount > 0)
+        {
+            SetStatus($"{startedClient.Account.Name} initialized; closed {result.StoppedCount} launch helper{(result.StoppedCount == 1 ? "" : "s")}.", force: true);
+        }
     }
 
     private static HashSet<int> GetGameClientProcessIds()
@@ -5050,6 +5226,7 @@ internal sealed class MainForm : Form
         settings.Theme = themeInput?.SelectedItem?.ToString() ?? settings.Theme;
         settings.LaunchCooldownSeconds = (int)(launchCooldownInput?.Value ?? settings.LaunchCooldownSeconds);
         settings.WaitForClientInitializationBeforeNextLaunch = waitForClientInitializationInput?.Checked ?? settings.WaitForClientInitializationBeforeNextLaunch;
+        settings.AutoCloseLaunchHelpers = autoCloseLaunchHelpersInput?.Checked ?? settings.AutoCloseLaunchHelpers;
         settings.AccountDisplayMode = NormalizeAccountDisplayMode(accountDisplayInput?.SelectedItem?.ToString() ?? settings.AccountDisplayMode);
         settings.RandomizeThemeAtLaunch = randomizeThemeInput?.Checked ?? settings.RandomizeThemeAtLaunch;
         settings.NotificationsEnabled = notificationsEnabledInput?.Checked ?? settings.NotificationsEnabled;
