@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.95 - 2026-09-03
+
+- Restored the Auto RAM Optimization mode selector with pressure-aware and threshold-based trimming options.
+- Added automatic threshold trimming using the configured per-client working-set trigger while preserving main-client protection.
+
 ## 1.0.94 - 2026-09-02
 
 - Added an optional post-initialization cleanup for the XIVLauncher, Dalamud injector, and Dalamud crash-handler processes created for each client launch.

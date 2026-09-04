@@ -12,6 +12,8 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly Label gpuStatusLabel = new();
     private readonly CheckBox optimizerEnabled = new();
     private readonly CheckBox trimEnabled = new();
+    private readonly ToolTip toolTip = new();
+    private readonly ComboBox trimMode = new();
     private readonly ComboBox cpuOperationMode = new();
     private readonly ComboBox assignmentMode = new();
     private readonly ComboBox mainProcessors = new();
@@ -144,15 +146,30 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.SetCpuOptimizationEnabled(optimizerEnabled.Checked);
             RefreshView();
         };
-        trimEnabled.Text = "Pressure-aware RAM";
+        trimEnabled.Text = "Auto RAM Optimization";
         trimEnabled.Dock = DockStyle.None;
         trimEnabled.Width = 230;
         trimEnabled.Height = 26;
+        toolTip.SetToolTip(trimEnabled, "Automatically trim follower working sets when memory pressure is detected.");
         trimEnabled.CheckedChanged += (_, _) =>
         {
             if (refreshing) return;
             optimizer.Settings.WorkingSetTrimEnabled = trimEnabled.Checked;
             optimizer.SaveSettings();
+        };
+        trimMode.DropDownStyle = ComboBoxStyle.DropDownList;
+        trimMode.Items.AddRange(["Pressure-aware", "Auto trim at threshold"]);
+        trimMode.Width = 190;
+        trimMode.Height = 28;
+        toolTip.SetToolTip(trimMode, "Pressure-aware trims only during system memory pressure. Auto trim at threshold trims followers above the configured Trim trigger MB value.");
+        trimMode.SelectedIndexChanged += (_, _) =>
+        {
+            if (refreshing) return;
+            optimizer.Settings.MemoryTrimMode = trimMode.SelectedIndex == 1
+                ? MemoryTrimMode.Threshold
+                : MemoryTrimMode.PressureAware;
+            optimizer.SaveSettings();
+            RefreshView();
         };
         cpuOperationMode.DropDownStyle = ComboBoxStyle.DropDownList;
         cpuOperationMode.Items.AddRange(["Live optimization — apply CPU affinity", "Planning only — no CPU changes"]);
@@ -342,9 +359,11 @@ internal sealed class OptimizerMonitorForm : Form
         };
         optimizerEnabled.Margin = new Padding(0, 3, 22, 0);
         trimEnabled.Margin = new Padding(0, 3, 22, 0);
+        trimMode.Margin = new Padding(0, 2, 22, 0);
         cpuOperationMode.Margin = new Padding(0, 2, 22, 0);
         panel.Controls.Add(optimizerEnabled);
         panel.Controls.Add(trimEnabled);
+        panel.Controls.Add(trimMode);
         panel.Controls.Add(cpuOperationMode);
         return panel;
     }
@@ -428,7 +447,8 @@ internal sealed class OptimizerMonitorForm : Form
                followerProcessors.DroppedDown ||
                roleClientInput.DroppedDown ||
                roleInput.DroppedDown ||
-               cpuOperationMode.DroppedDown;
+               cpuOperationMode.DroppedDown ||
+               trimMode.DroppedDown;
     }
 
     private void RefreshView()
@@ -441,6 +461,9 @@ internal sealed class OptimizerMonitorForm : Form
             settings.Normalize();
             optimizerEnabled.Checked = settings.OptimizerEnabled && settings.CpuAffinityOptimizationEnabled;
             trimEnabled.Checked = settings.WorkingSetTrimEnabled;
+            SetSelectedItemIfIdle(trimMode, settings.MemoryTrimMode == MemoryTrimMode.Threshold
+                ? "Auto trim at threshold"
+                : "Pressure-aware");
             SetSelectedItemIfIdle(cpuOperationMode, settings.CpuPreviewOnly
                 ? "Planning only — no CPU changes"
                 : "Live optimization — apply CPU affinity");

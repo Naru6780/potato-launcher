@@ -11,6 +11,12 @@ public class OptimizerCoreTests
     }
 
     [Fact]
+    public void OptimizerSettings_DefaultsToPressureAwareMemoryTrimming()
+    {
+        Assert.Equal(MemoryTrimMode.PressureAware, new OptimizerSettings().MemoryTrimMode);
+    }
+
+    [Fact]
     public void ProcessorAffinity_CreateMask_ClampsToLogicalProcessorCount()
     {
         var mask = ProcessorAffinity.CreateMask(1, 8, 4);

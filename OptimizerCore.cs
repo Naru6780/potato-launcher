@@ -15,6 +15,12 @@ internal enum CpuAssignmentMode
     AdaptiveSharedPools
 }
 
+internal enum MemoryTrimMode
+{
+    PressureAware,
+    Threshold
+}
+
 internal sealed class MainClientRule
 {
     public string ClientName { get; set; } = "";
@@ -69,6 +75,7 @@ internal sealed class OptimizerSettings
     public bool OptimizerEnabled { get; set; }
     public bool CpuAffinityOptimizationEnabled { get; set; }
     public bool WorkingSetTrimEnabled { get; set; } = true;
+    public MemoryTrimMode MemoryTrimMode { get; set; } = MemoryTrimMode.PressureAware;
     public bool CpuPreviewOnly { get; set; }
     public int MainLogicalProcessors { get; set; } = 6;
     public int FollowerLogicalProcessors { get; set; } = 4;
@@ -207,6 +214,7 @@ internal sealed class OptimizerSettings
     {
         var supportedLogicalProcessorCount = ProcessorAffinity.GetSupportedLogicalProcessorCount(logicalProcessorCount);
         if (!Enum.IsDefined(CpuAssignmentMode)) CpuAssignmentMode = CpuAssignmentMode.SplitLanes;
+        if (!Enum.IsDefined(MemoryTrimMode)) MemoryTrimMode = MemoryTrimMode.PressureAware;
         MainLogicalProcessors = Math.Clamp(MainLogicalProcessors, 1, supportedLogicalProcessorCount);
         FollowerLogicalProcessors = Math.Clamp(FollowerLogicalProcessors, 1, supportedLogicalProcessorCount);
         SystemReservedLogicalProcessors = Math.Clamp(SystemReservedLogicalProcessors, 0, Math.Max(0, supportedLogicalProcessorCount - 1));
@@ -519,7 +527,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private void TrimWorkingSets(IReadOnlyList<Process> clients, IReadOnlySet<int> mainClientIds, bool force = false)
     {
         if (!Settings.WorkingSetTrimEnabled && !force) return;
-        if (!force && !memoryPressureActive) return;
+        if (!force && Settings.MemoryTrimMode == MemoryTrimMode.PressureAware && !memoryPressureActive) return;
         if (!force && (DateTime.UtcNow - lastTrimSweepUtc).TotalSeconds < Settings.TrimIntervalSeconds) return;
 
         lastTrimSweepUtc = DateTime.UtcNow;
