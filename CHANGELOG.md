@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.96 - 2026-09-06
+
+- Fixed RAM optimization crashing when Windows denies access to an FFXIV client process.
+- Reduced the process permissions requested during working-set trimming and made inaccessible or exited clients safe to skip.
+
 ## 1.0.95 - 2026-09-03
 
 - Restored the Auto RAM Optimization mode selector with pressure-aware and threshold-based trimming options.

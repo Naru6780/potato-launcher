@@ -552,7 +552,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
                 continue;
             }
 
-            if (NativeMethods.TryEmptyWorkingSet(client.Handle))
+            if (NativeMethods.TryEmptyWorkingSet(client.Id))
             {
                 lastTrimByClientId[client.Id] = now;
                 if (!force) break;
@@ -1371,8 +1371,18 @@ internal static class ProcessorAffinity
 
 internal static class NativeMethods
 {
+    private const uint ProcessSetQuota = 0x0100;
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+
     [DllImport("psapi.dll", SetLastError = true)]
     private static extern bool EmptyWorkingSet(IntPtr hProcess);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx buffer);
@@ -1381,9 +1391,24 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsHungAppWindow(IntPtr windowHandle);
 
-    public static bool TryEmptyWorkingSet(IntPtr processHandle)
+    public static bool TryEmptyWorkingSet(int processId)
     {
-        try { return EmptyWorkingSet(processHandle); } catch { return false; }
+        if (processId <= 0) return false;
+
+        IntPtr processHandle = IntPtr.Zero;
+        try
+        {
+            processHandle = OpenProcess(ProcessSetQuota | ProcessQueryLimitedInformation, false, processId);
+            return processHandle != IntPtr.Zero && EmptyWorkingSet(processHandle);
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (processHandle != IntPtr.Zero) CloseHandle(processHandle);
+        }
     }
 
     public static MemoryStatus GetMemoryStatus()

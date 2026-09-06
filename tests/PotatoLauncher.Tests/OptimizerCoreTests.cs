@@ -4,6 +4,14 @@ namespace PotatoLauncher.Tests;
 
 public class OptimizerCoreTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void TryEmptyWorkingSet_InvalidProcessId_ReturnsFalse(int processId)
+    {
+        Assert.False(NativeMethods.TryEmptyWorkingSet(processId));
+    }
+
     [Fact]
     public void OptimizerSettings_DefaultsToLiveCpuOptimization()
     {
