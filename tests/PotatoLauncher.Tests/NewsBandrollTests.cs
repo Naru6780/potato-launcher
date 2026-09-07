@@ -41,6 +41,8 @@ public class NewsBandrollTests
     [InlineData(304, 52, 600, 180)]
     [InlineData(304, 52, 1000, 80)]
     [InlineData(304, 52, 160, 160)]
+    [InlineData(440, 104, 600, 180)]
+    [InlineData(440, 67, 600, 180)]
     public void ActualControlPaintPreservesAllFourImageCornersAndClick(int width, int height, int imageWidth, int imageHeight)
     {
         Exception? failure = null;

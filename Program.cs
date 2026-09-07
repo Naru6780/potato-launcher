@@ -325,6 +325,12 @@ internal readonly record struct LauncherLayoutMetrics(int Margin, int Top, int G
 {
     private const int MaximumContentWidth = 1600;
 
+    public LauncherLayoutMetrics ReserveHeader(int headerBottom, int clientHeight)
+    {
+        var top = Math.Max(Top, headerBottom + 12);
+        return this with { Top = top, ContentHeight = Math.Clamp(clientHeight - top - 50, 390, 920) };
+    }
+
     public static LauncherLayoutMetrics Calculate(int clientWidth, int clientHeight, int requestedAccountWidth)
     {
         var safeClientWidth = Math.Max(860, clientWidth);
@@ -1384,7 +1390,7 @@ internal sealed class MainForm : Form
         tab.Controls.Add(bandCard);
     }
 
-    private void ApplyTopNavigationLayout(LauncherLayoutMetrics layout)
+    private int ApplyTopNavigationLayout(LauncherLayoutMetrics layout)
     {
         var scale = Math.Clamp(ClientSize.Width / 1100F, 1F, 1.16F);
         var buttonHeight = Math.Clamp((int)MathF.Round(34 * scale), 34, 40);
@@ -1415,7 +1421,9 @@ internal sealed class MainForm : Form
             var bandroll = TopNavigationBandrollMetrics.Calculate(ClientSize.Width, ClientSize.Height, x, buttonHeight, y, layout.Margin);
             newsBandroll.SetLayoutBounds(bandroll.Bounds);
             newsBandroll.Visible = bandroll.Visible && newsBandroll.HasSlides;
+            return bandroll.Visible ? bandroll.Bounds.Bottom : 0;
         }
+        return 0;
     }
 
     private void ApplyBandActionButtonLayout(BandActionButtonMetrics layout)
@@ -1439,7 +1447,7 @@ internal sealed class MainForm : Form
         background.SuspendLayout();
         accountCard.SuspendLayout();
         bandCard.SuspendLayout();
-        ApplyTopNavigationLayout(layout);
+        layout = layout.ReserveHeader(ApplyTopNavigationLayout(layout), ClientSize.Height);
         accountCard.SetBounds(layout.Margin, layout.Top, layout.AccountWidth, layout.ContentHeight);
         bandCard.SetBounds(layout.Margin + layout.AccountWidth + layout.Gap, layout.Top, layout.BandWidth, layout.ContentHeight);
         accountList.Bounds = new Rectangle(18, 58, accountCard.Width - 36, accountCard.Height - 82);
@@ -7277,20 +7285,20 @@ internal readonly record struct TopNavigationBandrollMetrics(Rectangle Bounds, b
     {
         var mascotReserve = Math.Clamp(clientWidth / 11, 84, 120);
         var right = clientWidth - Math.Max(24, margin) - mascotReserve;
-        var available = right - leftEdge;
-        if (available <= 0) return new TopNavigationBandrollMetrics(Rectangle.Empty, false);
-
-        var normalHeight = Math.Clamp((int)MathF.Round(buttonHeight * 1.55F), 52, 64);
-        var compactHeight = Math.Clamp(buttonHeight, 32, 40);
-        var maxWidth = Math.Max(420, clientWidth / 2);
-        var width = available >= 260
-            ? Math.Clamp(available - 12, 260, maxWidth)
-            : Math.Clamp(available - 4, 72, Math.Max(72, available));
-        var height = available >= 180 ? normalHeight : compactHeight;
-        if (width < 72) return new TopNavigationBandrollMetrics(Rectangle.Empty, false);
+        var inlineWidth = right - leftEdge;
+        // A narrow sliver beside the buttons made complete images unreadable. Give
+        // compact windows a second header row instead of shrinking the painting.
+        var inline = inlineWidth >= 320;
+        var top = inline ? 12 : topY + buttonHeight + 8;
+        var left = inline ? leftEdge : Math.Max(24, margin);
+        var width = Math.Min(440, right - left - 12);
+        // Preserve space for usable account lists and the status pill on short windows.
+        var maxBottom = clientHeight - 390 - 50 - 12;
+        var height = Math.Min(104, maxBottom - top);
+        if (width < 160 || height < 24) return new TopNavigationBandrollMetrics(Rectangle.Empty, false);
 
         return new TopNavigationBandrollMetrics(
-            new Rectangle(right - width, Math.Max(12, topY + (buttonHeight - height) / 2), width, height),
+            new Rectangle(right - width, top, width, height),
             true);
     }
 }

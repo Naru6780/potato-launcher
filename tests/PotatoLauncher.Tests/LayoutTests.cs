@@ -224,4 +224,44 @@ public class LayoutTests
         Assert.True(bandroll.Bounds.Right <= clientWidth - 24);
         Assert.True(bandroll.Bounds.Width >= 72);
     }
+
+    [Theory]
+    [InlineData(844, 581, false)]
+    [InlineData(860, 620, false)]
+    [InlineData(990, 700, false)]
+    [InlineData(1280, 720, true)]
+    [InlineData(1920, 1080, true)]
+    public void EnlargedNewsFrameReservesSpaceWithoutOverlappingNavigationOrCards(int width, int height, bool expectedInline)
+    {
+        var launcher = LauncherLayoutMetrics.Calculate(width, height, 0);
+        var scale = Math.Clamp(width / 1100F, 1F, 1.16F);
+        var buttonHeight = Math.Clamp((int)MathF.Round(34 * scale), 34, 40);
+        var gap = Math.Clamp((int)MathF.Round(12 * scale), 12, 16);
+        var topY = Math.Clamp(height / 32, 20, 28);
+        var leftEdge = Math.Max(24, launcher.Margin) + buttonHeight + gap * 6 +
+            new[] { 102, 104, 110, 68, 96 }.Sum(baseWidth => Math.Clamp((int)MathF.Round(baseWidth * scale), baseWidth, baseWidth + 26));
+        var banner = TopNavigationBandrollMetrics.Calculate(width, height, leftEdge, buttonHeight, topY, launcher.Margin);
+        Assert.True(banner.Visible);
+        if (expectedInline) Assert.True(banner.Bounds.Left >= leftEdge);
+        else Assert.True(banner.Bounds.Top >= topY + buttonHeight + 8);
+        Assert.True(banner.Bounds.Width >= 320);
+        Assert.True(banner.Bounds.Height >= 64);
+        var expanded = launcher.ReserveHeader(banner.Bounds.Bottom, height);
+        Assert.True(expanded.Top >= banner.Bounds.Bottom + 12);
+        Assert.True(expanded.ContentHeight >= 390);
+        var status = StatusPillLayoutMetrics.Calculate(width, height, expanded);
+        Assert.True(status.Bounds.Top >= expanded.Top + expanded.ContentHeight + 10);
+        Assert.True(banner.Bounds.Right <= width - Math.Max(24, launcher.Margin) - Math.Clamp(width / 11, 84, 120));
+        var image = NewsBandrollControl.FitImageRectangle(new Size(600, 180),
+            new Rectangle(6, 5, banner.Bounds.Width - 12, banner.Bounds.Height - 10));
+        Assert.True(image.Width >= 180 && image.Height >= 54);
+    }
+
+    [Fact]
+    public void NewsFrameHidesWhenThereIsNoUsableHeaderSpace()
+    {
+        var banner = TopNavigationBandrollMetrics.Calculate(300, 300, 620, 34, 20, 24);
+        Assert.False(banner.Visible);
+        Assert.Equal(Rectangle.Empty, banner.Bounds);
+    }
 }

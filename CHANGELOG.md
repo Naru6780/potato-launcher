@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.100 - 2026-09-07
+
+- Enlarged framed news images, using a dedicated row below the navigation buttons on compact windows instead of squeezing them into a tiny thumbnail.
+- Keep larger windows' banners beside the buttons, and reserve header space so the painting does not overlap accounts, band controls, or the status bar.
+
 ## 1.0.99 - 2026-09-07
 
 - Replaced the news bandroll's pill-shaped background with an image-sized rectangular picture frame and decorative brass corner brackets.
