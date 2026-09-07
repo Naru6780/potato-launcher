@@ -1413,7 +1413,7 @@ internal sealed class MainForm : Form
         if (newsBandroll is not null)
         {
             var bandroll = TopNavigationBandrollMetrics.Calculate(ClientSize.Width, ClientSize.Height, x, buttonHeight, y, layout.Margin);
-            newsBandroll.Bounds = bandroll.Bounds;
+            newsBandroll.SetLayoutBounds(bandroll.Bounds);
             newsBandroll.Visible = bandroll.Visible && newsBandroll.HasSlides;
         }
     }
@@ -7306,6 +7306,7 @@ internal sealed class NewsBandrollControl : Control
     private DateTime nextRollUtc = DateTime.UtcNow.AddSeconds(4);
     private const int AnimationMilliseconds = 620;
     private static readonly TimeSpan DisplayInterval = TimeSpan.FromSeconds(5);
+    private Rectangle layoutBounds;
 
     public event EventHandler<string>? ItemClicked;
     public ThemePalette Palette { get; set; } = new(Color.White, Color.White, Color.White, Color.LightGray, Color.Black, Color.Gray, Color.HotPink, Color.CornflowerBlue, Color.IndianRed, Color.White);
@@ -7316,6 +7317,7 @@ internal sealed class NewsBandrollControl : Control
         DoubleBuffered = true;
         Cursor = Cursors.Hand;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
+        BackColor = Color.Transparent;
         rollTimer.Interval = 30;
         rollTimer.Tick += (_, _) => UpdateRollAnimation();
         rollTimer.Start();
@@ -7335,7 +7337,30 @@ internal sealed class NewsBandrollControl : Control
         animating = false;
         nextRollUtc = DateTime.UtcNow.AddSeconds(4);
         Visible = HasSlides;
+        ApplyImageLayout();
         Invalidate();
+    }
+
+    public void SetLayoutBounds(Rectangle bounds)
+    {
+        layoutBounds = bounds;
+        ApplyImageLayout();
+    }
+
+    private void ApplyImageLayout()
+    {
+        if (layoutBounds.IsEmpty) return;
+        if (!HasSlides)
+        {
+            Bounds = layoutBounds;
+            return;
+        }
+        var image = FitImageRectangle(slides[currentIndex].Image.Size,
+            new Rectangle(0, 0, Math.Max(0, layoutBounds.Width - 12), Math.Max(0, layoutBounds.Height - 10)));
+        var width = Math.Min(layoutBounds.Width, (int)Math.Ceiling(image.Width) + 12);
+        var height = Math.Min(layoutBounds.Height, (int)Math.Ceiling(image.Height) + 10);
+        Bounds = new Rectangle(layoutBounds.X + (layoutBounds.Width - width) / 2,
+            layoutBounds.Y + (layoutBounds.Height - height) / 2, width, height);
     }
 
     private void UpdateRollAnimation()
@@ -7359,6 +7384,7 @@ internal sealed class NewsBandrollControl : Control
             currentIndex = nextIndex;
             animating = false;
             nextRollUtc = now + DisplayInterval;
+            ApplyImageLayout();
         }
 
         if (Visible) Invalidate();
@@ -7370,24 +7396,9 @@ internal sealed class NewsBandrollControl : Control
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
 
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var bandPath = RoundedRectangle(new Rectangle(0, 0, Width - 1, Height - 1), Height / 2);
-        using var bandBrush = new SolidBrush(Color.FromArgb(210, Palette.Card));
-        using var borderPen = new Pen(Color.FromArgb(190, Palette.Border), 1);
-        e.Graphics.FillPath(bandBrush, bandPath);
-        e.Graphics.DrawPath(borderPen, bandPath);
-
-        var imageBounds = new Rectangle(6, 5, Math.Max(1, Width - 12), Math.Max(1, Height - 10));
-        using var clipPath = RoundedRectangle(imageBounds, Math.Max(8, imageBounds.Height / 2));
-        using var clipRegion = new Region(clipPath);
-        var oldClip = e.Graphics.Clip;
-        e.Graphics.Clip = clipRegion;
-
-        if (slides.Count == 0)
-        {
-            using var emptyBrush = new SolidBrush(Color.FromArgb(120, Palette.ListBack));
-            e.Graphics.FillRectangle(emptyBrush, imageBounds);
-        }
-        else if (!animating)
+        var imageBounds = new Rectangle(6, 5, Math.Max(0, Width - 12), Math.Max(0, Height - 10));
+        if (slides.Count == 0) return;
+        if (!animating)
         {
             DrawSlide(e.Graphics, slides[currentIndex], imageBounds, 0);
         }
@@ -7398,10 +7409,6 @@ internal sealed class NewsBandrollControl : Control
             DrawSlide(e.Graphics, slides[currentIndex], imageBounds, (int)MathF.Round(-progress * imageBounds.Width));
             DrawSlide(e.Graphics, slides[nextIndex], imageBounds, (int)MathF.Round((1F - progress) * imageBounds.Width));
         }
-
-        e.Graphics.Clip = oldClip;
-        clipRegion.Dispose();
-        oldClip.Dispose();
     }
 
     protected override void OnClick(EventArgs e)
@@ -7412,16 +7419,43 @@ internal sealed class NewsBandrollControl : Control
         ItemClicked?.Invoke(this, slide.Url);
     }
 
-    private static void DrawSlide(Graphics graphics, NewsBandrollSlide slide, Rectangle bounds, int xOffset)
+    private void DrawSlide(Graphics graphics, NewsBandrollSlide slide, Rectangle bounds, int xOffset)
     {
         var target = FitImageRectangle(slide.Image.Size, bounds);
         if (target.IsEmpty) return;
         target.Offset(xOffset, 0);
+        var artwork = Rectangle.Round(target);
+        var frame = Rectangle.Inflate(artwork, 3, 3);
+        using var frameBrush = new LinearGradientBrush(frame, Palette.Primary, Palette.Secondary, LinearGradientMode.Vertical);
+        using var outline = new Pen(Color.FromArgb(210, Palette.Border), 1);
+        using var innerOutline = new Pen(Color.FromArgb(180, Palette.Text), 1);
+        graphics.FillRectangle(frameBrush, frame);
+        graphics.DrawRectangle(outline, frame);
+        graphics.DrawRectangle(innerOutline, Rectangle.Inflate(artwork, 1, 1));
         graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
         graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         using var attributes = new System.Drawing.Imaging.ImageAttributes();
         attributes.SetWrapMode(WrapMode.TileFlipXY);
-        graphics.DrawImage(slide.Image, Rectangle.Round(target), 0, 0, slide.Image.Width, slide.Image.Height, GraphicsUnit.Pixel, attributes);
+        graphics.DrawImage(slide.Image, artwork, 0, 0, slide.Image.Width, slide.Image.Height, GraphicsUnit.Pixel, attributes);
+        DrawFrameCorners(graphics, frame);
+    }
+
+    private static void DrawFrameCorners(Graphics graphics, Rectangle frame)
+    {
+        // Small brass corner brackets stay entirely outside the artwork.
+        using var shadow = new Pen(Color.FromArgb(150, 60, 37, 20), 3);
+        using var gold = new Pen(Color.FromArgb(245, 225, 170), 1.4F);
+        var length = Math.Min(9F, Math.Min(frame.Width, frame.Height) / 3F);
+        foreach (var (x, y, dx, dy) in new[]
+        {
+            (frame.Left, frame.Top, 1, 1), (frame.Right, frame.Top, -1, 1),
+            (frame.Left, frame.Bottom, 1, -1), (frame.Right, frame.Bottom, -1, -1)
+        })
+        {
+            PointF[] bracket = [new(x, y + dy * length), new(x, y), new(x + dx * length, y)];
+            graphics.DrawLines(shadow, bracket);
+            graphics.DrawLines(gold, bracket);
+        }
     }
 
     private static float EaseOutCubic(float progress)
@@ -7437,34 +7471,11 @@ internal sealed class NewsBandrollControl : Control
             return RectangleF.Empty;
         }
 
-        // Keep the whole image inside the capsule's straight-sided interior so the
-        // rounded clip cannot remove corner text/artwork, even for extra-wide banners.
-        var endCapInset = Math.Min(bounds.Width, bounds.Height) / 2F;
-        var availableWidth = bounds.Width - 2F * endCapInset;
-        if (availableWidth <= 0) return RectangleF.Empty;
-        var scale = Math.Min(availableWidth / imageSize.Width, bounds.Height / (float)imageSize.Height);
+        var scale = Math.Min(bounds.Width / (float)imageSize.Width, bounds.Height / (float)imageSize.Height);
         var width = imageSize.Width * scale;
         var height = imageSize.Height * scale;
         return new RectangleF(bounds.X + (bounds.Width - width) / 2F,
             bounds.Y + (bounds.Height - height) / 2F, width, height);
-    }
-
-    private static GraphicsPath RoundedRectangle(Rectangle bounds, int radius)
-    {
-        var path = new GraphicsPath();
-        if (bounds.Width <= 0 || bounds.Height <= 0) return path;
-        radius = Math.Min(radius, Math.Max(1, Math.Min(bounds.Width, bounds.Height) / 2));
-        var diameter = radius * 2;
-        var rect = new Rectangle(bounds.Left, bounds.Top, diameter, diameter);
-        path.AddArc(rect, 180, 90);
-        rect.X = bounds.Right - diameter;
-        path.AddArc(rect, 270, 90);
-        rect.Y = bounds.Bottom - diameter;
-        path.AddArc(rect, 0, 90);
-        rect.X = bounds.Left;
-        path.AddArc(rect, 90, 90);
-        path.CloseFigure();
-        return path;
     }
 
     protected override void Dispose(bool disposing)

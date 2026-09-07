@@ -12,14 +12,13 @@ public class NewsBandrollTests
     [InlineData(160, 160, 304, 52)]
     [InlineData(120, 600, 304, 52)]
     [InlineData(2000, 80, 304, 52)]
-    public void FitKeepsFullImageProportionalCenteredAndClearOfRoundedEnds(int imageWidth, int imageHeight, int width, int height)
+    public void FitKeepsFullImageProportionalAndCentered(int imageWidth, int imageHeight, int width, int height)
     {
         var bounds = new Rectangle(6, 5, width - 12, height - 10);
         var target = NewsBandrollControl.FitImageRectangle(new Size(imageWidth, imageHeight), bounds);
-        var inset = Math.Min(bounds.Width, bounds.Height) / 2F;
         Assert.True(target.Width > 0 && target.Height > 0);
-        Assert.InRange(target.Left, bounds.Left + inset - 0.001F, bounds.Right - inset);
-        Assert.InRange(target.Right, bounds.Left + inset, bounds.Right - inset + 0.001F);
+        Assert.InRange(target.Left, bounds.Left - 0.001F, bounds.Right);
+        Assert.InRange(target.Right, bounds.Left, bounds.Right + 0.001F);
         Assert.InRange(target.Top, bounds.Top - 0.001F, bounds.Bottom);
         Assert.InRange(target.Bottom, bounds.Top, bounds.Bottom + 0.001F);
         Assert.Equal(imageWidth / (float)imageHeight, target.Width / target.Height, 3);
@@ -49,7 +48,8 @@ public class NewsBandrollTests
         {
             try
             {
-                using var control = new NewsBandrollControl { Size = new Size(width, height) };
+                using var control = new NewsBandrollControl { BackColor = Color.DarkMagenta };
+                control.SetLayoutBounds(new Rectangle(30, 20, width, height));
                 var fixture = new Bitmap(imageWidth, imageHeight);
                 using (var graphics = Graphics.FromImage(fixture))
                 {
@@ -62,9 +62,12 @@ public class NewsBandrollTests
                     graphics.DrawString("FULL NEWS IMAGE", font, Brushes.Black, imageWidth / 5, imageHeight / 3);
                 }
                 control.SetSlides([new NewsBandrollSlide(fixture, "https://example.com/news", "Fixture")]);
-                using var rendered = new Bitmap(width, height);
+                using var rendered = new Bitmap(control.Width, control.Height);
                 control.DrawToBitmap(rendered, control.ClientRectangle);
-                var target = Rectangle.Round(NewsBandrollControl.FitImageRectangle(fixture.Size, new Rectangle(6, 5, width - 12, height - 10)));
+                var target = Rectangle.Round(NewsBandrollControl.FitImageRectangle(fixture.Size, new Rectangle(6, 5, control.Width - 12, control.Height - 10)));
+                Assert.InRange(control.Width - target.Width, 12, 13);
+                Assert.InRange(control.Height - target.Height, 10, 11);
+                Assert.Equal(Color.DarkMagenta.ToArgb(), rendered.GetPixel(0, control.Height / 2).ToArgb());
                 AssertPixel(rendered, target, 0.1F, 0.15F, Color.Red);
                 AssertPixel(rendered, target, 0.9F, 0.15F, Color.Lime);
                 AssertPixel(rendered, target, 0.1F, 0.85F, Color.Blue);
@@ -89,6 +92,53 @@ public class NewsBandrollTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(15)), "Bandroll rendering test timed out.");
+        Assert.Null(failure);
+    }
+
+    [Fact]
+    public void LayoutTracksImageShapeOnSlideChangeAndWindowResize()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var control = new NewsBandrollControl();
+                var slot = new Rectangle(600, 24, 304, 52);
+                control.SetLayoutBounds(slot);
+                control.SetSlides([
+                    new NewsBandrollSlide(new Bitmap(600, 180), "https://example.com/wide", "Wide"),
+                    new NewsBandrollSlide(new Bitmap(160, 160), "https://example.com/square", "Square")]);
+                Assert.Equal(152, control.Width);
+                Assert.Equal(52, control.Height);
+                Assert.True(slot.Contains(control.Bounds));
+
+                var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+                typeof(NewsBandrollControl).GetField("animating", flags)!.SetValue(control, true);
+                typeof(NewsBandrollControl).GetField("animationStartUtc", flags)!.SetValue(control, DateTime.UtcNow.AddSeconds(-2));
+                typeof(NewsBandrollControl).GetMethod("UpdateRollAnimation", flags)!.Invoke(control, null);
+                Assert.Equal(54, control.Width);
+                Assert.Equal(52, control.Height);
+                Assert.True(slot.Contains(control.Bounds));
+                string? url = null;
+                control.ItemClicked += (_, clickedUrl) => url = clickedUrl;
+                typeof(NewsBandrollControl).GetMethod("OnClick", flags)!.Invoke(control, [EventArgs.Empty]);
+                Assert.Equal("https://example.com/square", url);
+
+                var compactSlot = new Rectangle(600, 24, 72, 32);
+                control.SetLayoutBounds(compactSlot);
+                Assert.Equal(34, control.Width);
+                Assert.Equal(32, control.Height);
+                Assert.True(compactSlot.Contains(control.Bounds));
+                control.SetSlides([]);
+                Assert.False(control.HasSlides);
+                Assert.Equal(compactSlot, control.Bounds);
+            }
+            catch (Exception exception) { failure = exception; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(15)));
         Assert.Null(failure);
     }
 

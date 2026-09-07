@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.99 - 2026-09-07
+
+- Replaced the news bandroll's pill-shaped background with an image-sized rectangular picture frame and decorative brass corner brackets.
+- Resize the control to the displayed artwork as news slides and window dimensions change, keeping the entire image visible without wide empty margins.
+
 ## 1.0.98 - 2026-09-07
 
 - Fit complete official news images inside the news bandroll instead of cropping them to fill the strip.
