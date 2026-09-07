@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.98 - 2026-09-07
+
+- Fit complete official news images inside the news bandroll instead of cropping them to fill the strip.
+- Preserve image proportions, center unused space, and keep artwork clear of the rounded end caps. Removed the dark overlay from banner artwork for readability.
+
 ## 1.0.97 - 2026-09-07
 
 - Band launches now discover matching FFXIV clients already running on this PC, including clients started before Potato Launcher, and launch only missing members.

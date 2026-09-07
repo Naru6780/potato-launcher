@@ -7414,13 +7414,14 @@ internal sealed class NewsBandrollControl : Control
 
     private static void DrawSlide(Graphics graphics, NewsBandrollSlide slide, Rectangle bounds, int xOffset)
     {
-        var target = new Rectangle(bounds.X + xOffset, bounds.Y, bounds.Width, bounds.Height);
-        var source = CoverSourceRectangle(slide.Image.Size, bounds.Size);
+        var target = FitImageRectangle(slide.Image.Size, bounds);
+        if (target.IsEmpty) return;
+        target.Offset(xOffset, 0);
         graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
         graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        graphics.DrawImage(slide.Image, target, source, GraphicsUnit.Pixel);
-        using var edgeBrush = new LinearGradientBrush(target, Color.FromArgb(80, Color.Black), Color.Transparent, LinearGradientMode.Horizontal);
-        graphics.FillRectangle(edgeBrush, target);
+        using var attributes = new System.Drawing.Imaging.ImageAttributes();
+        attributes.SetWrapMode(WrapMode.TileFlipXY);
+        graphics.DrawImage(slide.Image, Rectangle.Round(target), 0, 0, slide.Image.Width, slide.Image.Height, GraphicsUnit.Pixel, attributes);
     }
 
     private static float EaseOutCubic(float progress)
@@ -7429,25 +7430,23 @@ internal sealed class NewsBandrollControl : Control
         return 1F - MathF.Pow(1F - progress, 3F);
     }
 
-    private static Rectangle CoverSourceRectangle(Size imageSize, Size targetSize)
+    internal static RectangleF FitImageRectangle(Size imageSize, Rectangle bounds)
     {
-        if (imageSize.Width <= 0 || imageSize.Height <= 0 || targetSize.Width <= 0 || targetSize.Height <= 0)
+        if (imageSize.Width <= 0 || imageSize.Height <= 0 || bounds.Width <= 0 || bounds.Height <= 0)
         {
-            return new Rectangle(Point.Empty, imageSize);
+            return RectangleF.Empty;
         }
 
-        var imageRatio = imageSize.Width / (float)imageSize.Height;
-        var targetRatio = targetSize.Width / (float)targetSize.Height;
-        if (imageRatio > targetRatio)
-        {
-            var sourceWidth = (int)MathF.Round(imageSize.Height * targetRatio);
-            var x = Math.Max(0, (imageSize.Width - sourceWidth) / 2);
-            return new Rectangle(x, 0, Math.Min(sourceWidth, imageSize.Width), imageSize.Height);
-        }
-
-        var sourceHeight = (int)MathF.Round(imageSize.Width / targetRatio);
-        var y = Math.Max(0, (imageSize.Height - sourceHeight) / 2);
-        return new Rectangle(0, y, imageSize.Width, Math.Min(sourceHeight, imageSize.Height));
+        // Keep the whole image inside the capsule's straight-sided interior so the
+        // rounded clip cannot remove corner text/artwork, even for extra-wide banners.
+        var endCapInset = Math.Min(bounds.Width, bounds.Height) / 2F;
+        var availableWidth = bounds.Width - 2F * endCapInset;
+        if (availableWidth <= 0) return RectangleF.Empty;
+        var scale = Math.Min(availableWidth / imageSize.Width, bounds.Height / (float)imageSize.Height);
+        var width = imageSize.Width * scale;
+        var height = imageSize.Height * scale;
+        return new RectangleF(bounds.X + (bounds.Width - width) / 2F,
+            bounds.Y + (bounds.Height - height) / 2F, width, height);
     }
 
     private static GraphicsPath RoundedRectangle(Rectangle bounds, int radius)
