@@ -260,7 +260,7 @@ internal static class AppText
         Link each account to a Lodestone character profile URL to show character names and portraits. Use the Lodestone search link in the profile prompt if you need to find the character page.
 
         Bands
-        Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence. Right-click a band to rename it or terminate the running clients for only that band.
+        Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence. Band launches skip matching FFXIV clients already running on this PC without changing your selections. Discovery uses Character@World window titles, or clients tracked during this launcher session. Unidentified clients with generic titles cannot be matched. Right-click a band to rename it or terminate the running clients for only that band.
 
         Multiband
         Pair two Potato Launcher PCs on the same private network, choose one local band and one remote band, and save them as a launch plan. Launch both queues from the main PC with a synchronized countdown and combined progress. Account credentials always stay on their own PC.
@@ -904,6 +904,7 @@ internal sealed class MainForm : Form
     private readonly List<int> mascotFrameDelays = [];
     private readonly Dictionary<int, Label> loadingQueueLabels = [];
     private readonly Dictionary<string, int> runningClientProcessIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly RunningClientAwareness runningClientAwareness = new(RunningClientAwareness.Capture);
     private readonly IntegratedOptimizerService optimizerService = new(OptimizerSettings.Load());
     private OptimizerMonitorForm? optimizerMonitor;
     private MultibandSettingsStore multibandSettingsStore = null!;
@@ -3600,8 +3601,11 @@ internal sealed class MainForm : Form
 
     private async Task LaunchSingleAccountAsync(Account account)
     {
-        queueCancel?.Cancel();
-        queueCancel?.Dispose();
+        if (queueCancel is not null)
+        {
+            SetStatus("This PC already has an active launch queue. Wait for it to finish or cancel it first.", force: true);
+            return;
+        }
         var cancellation = new CancellationTokenSource();
         queueCancel = cancellation;
         ShowLoadingOverlay($"Loading {account.Name}", "Preparing XIVLauncher handoff...");
@@ -3635,6 +3639,13 @@ internal sealed class MainForm : Form
 
     private async Task LaunchBandAsync(BandConfig band, DateTimeOffset startAtUtc, Action<MultibandLaunchProgress>? progress, CancellationToken externalToken)
     {
+        if (queueCancel is not null)
+        {
+            const string busyMessage = "This PC already has an active launch queue. Wait for it to finish or cancel it first.";
+            SetStatus(busyMessage, force: true);
+            progress?.Invoke(new MultibandLaunchProgress("Failed", busyMessage, []));
+            return;
+        }
         var bandAccounts = AccountsForBand(band);
         if (bandAccounts.Count == 0)
         {
@@ -3642,14 +3653,14 @@ internal sealed class MainForm : Form
             progress?.Invoke(new MultibandLaunchProgress("Failed", $"{band.Name} has no accounts selected.", []));
             return;
         }
-        queueCancel?.Cancel();
-        queueCancel?.Dispose();
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
         queueCancel = cancellation;
         launchBandButton.Enabled = false;
         ShowLoadingOverlay($"Loading {band.Name}", $"Queueing {bandAccounts.Count} account{(bandAccounts.Count == 1 ? "" : "s")}...");
         BeginLoadingQueue(bandAccounts);
         var readinessTasks = new List<Task>();
+        var launchedCount = 0;
+        var skippedCount = 0;
         var accountStatuses = bandAccounts.Select(account => new MultibandAccountStatus(AccountDisplayName(account), "Queued")).ToList();
         void Report(string state, string detail)
         {
@@ -3672,13 +3683,35 @@ internal sealed class MainForm : Form
 
             for (var index = 0; index < bandAccounts.Count; index++)
             {
+                cancellation.Token.ThrowIfCancellationRequested();
                 var account = bandAccounts[index];
-                accountStatuses[index] = accountStatuses[index] with { Status = "Launching" };
+                accountStatuses[index] = accountStatuses[index] with { Status = "Checking" };
                 SetRandomLoadingGif();
                 loadingTitle.Text = $"Loading {band.Name}";
-                UpdateLoadingOverlay($"{band.Name}: launching {account.Name} ({index + 1}/{bandAccounts.Count}).");
-                Report("Launching", $"Launching {AccountDisplayName(account)} ({index + 1}/{bandAccounts.Count}).");
-                var startedClient = await StartAccountAndWaitForClientAsync(account, cancellation.Token);
+                UpdateLoadingOverlay($"{band.Name}: checking {AccountDisplayName(account)} ({index + 1}/{bandAccounts.Count}).");
+                settings.AccountIcons.TryGetValue(AccountIconKey(account), out var profile);
+                var characterName = string.IsNullOrWhiteSpace(profile?.CharacterName) ? AccountDisplayName(account) : profile.CharacterName;
+                var result = await runningClientAwareness.LaunchIfNeededAsync(
+                    account, AccountIconKey(account), characterName, profile?.World ?? "",
+                    async (queuedAccount, token) =>
+                    {
+                        accountStatuses[index] = accountStatuses[index] with { Status = "Launching" };
+                        Report("Launching", $"Launching {AccountDisplayName(account)} ({index + 1}/{bandAccounts.Count}).");
+                        return await StartAccountAndWaitForClientAsync(queuedAccount, token);
+                    }, cancellation.Token);
+                if (result.ExistingClient is { } existingClient)
+                {
+                    skippedCount++;
+                    var skippedMessage = $"{AccountDisplayName(account)}: already running (PID {existingClient.ProcessId}); skipped.";
+                    accountStatuses[index] = accountStatuses[index] with { Status = "Already running" };
+                    UpdateLoadingQueueItem(index, account, "Already running");
+                    SetStatus(skippedMessage, force: true);
+                    UpdateLoadingOverlay(skippedMessage, force: true);
+                    Report("Launching", skippedMessage);
+                    continue;
+                }
+                var startedClient = result.StartedClient!.Value;
+                launchedCount++;
                 UpdateLoadingQueueItem(index, account, "Loading");
                 accountStatuses[index] = accountStatuses[index] with { Status = "Loading" };
                 Report("Launching", $"{AccountDisplayName(account)} is loading.");
@@ -3705,7 +3738,7 @@ internal sealed class MainForm : Form
                 }
             }
             await Task.WhenAll(readinessTasks);
-            var loadedMessage = $"All of {band.Name} is loaded.";
+            var loadedMessage = $"{band.Name}: {launchedCount} launched, {skippedCount} already running (skipped).";
             Report("Completed", loadedMessage);
             SetStatus(loadedMessage, force: true);
             UpdateLoadingOverlay(loadedMessage, force: true);
@@ -3720,6 +3753,8 @@ internal sealed class MainForm : Form
         {
             for (var index = 0; index < bandAccounts.Count; index++)
             {
+                if (accountStatuses[index].Status is "Already running" or "Initialized") continue;
+                accountStatuses[index] = accountStatuses[index] with { Status = "Cancelled" };
                 UpdateLoadingQueueItem(index, bandAccounts[index], "Cancelled");
             }
             SetStatus($"{band.Name} queue cancelled.", force: true);
@@ -3735,6 +3770,10 @@ internal sealed class MainForm : Form
         }
         finally
         {
+            // Stop outstanding readiness monitors before another queue can use the same UI.
+            cancellation.Cancel();
+            try { await Task.WhenAll(readinessTasks); }
+            catch (Exception) { } // The queue already reported its primary failure/cancellation.
             HideLoadingOverlay();
             ClearLoadingQueue();
             launchBandButton.Enabled = true;
@@ -3830,6 +3869,7 @@ internal sealed class MainForm : Form
         await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, account.Name, token);
         var client = await WaitForFreshGameClientAsync(gameClientsBefore, account.Name, token);
         runningClientProcessIds[AccountIconKey(account)] = client.ProcessId;
+        runningClientAwareness.Track(AccountIconKey(account), client.ProcessId);
         var cleanupScope = settings.AutoCloseLaunchHelpers
             ? new LaunchHelperCleanupScope(helperProcessesBefore, launcherProcessId)
             : null;
@@ -4495,6 +4535,7 @@ internal sealed class MainForm : Form
     {
         if (state.Equals("Queued", StringComparison.OrdinalIgnoreCase)) return "Queued";
         if (state.Equals("Initialized", StringComparison.OrdinalIgnoreCase)) return "Initialized";
+        if (state.Equals("Already running", StringComparison.OrdinalIgnoreCase)) return "Already running";
         if (state.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)) return "Cancelled";
         if (state.Equals("Failed", StringComparison.OrdinalIgnoreCase)) return "Failed";
         return "Loading";
@@ -4504,6 +4545,7 @@ internal sealed class MainForm : Form
     {
         var normalized = NormalizeLoadingQueueState(state);
         if (normalized.Equals("Initialized", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(98, 214, 135);
+        if (normalized.Equals("Already running", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(98, 214, 135);
         if (normalized.Equals("Loading", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(105, 172, 255);
         if (normalized.Equals("Cancelled", StringComparison.OrdinalIgnoreCase) || normalized.Equals("Failed", StringComparison.OrdinalIgnoreCase)) return palette.Danger;
         return IsLightColor(palette.Card) ? palette.Text : Color.White;

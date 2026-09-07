@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.97 - 2026-09-07
+
+- Band launches now discover matching FFXIV clients already running on this PC, including clients started before Potato Launcher, and launch only missing members.
+- Show already-running members as skipped in the local queue and Multiband progress without changing saved band membership or touching existing clients.
+- Recheck each member at launch time, validate tracked process start times, and prevent overlapping launch queues on the same launcher instance.
+- Stop with an explanation when matching character names have conflicting/ambiguous worlds instead of risking a duplicate launch.
+
 ## 1.0.96 - 2026-09-06
 
 - Fixed RAM optimization crashing when Windows denies access to an FFXIV client process.
