@@ -45,10 +45,10 @@ public sealed class StudioTests : IDisposable
     public void CustomizationRoundTripsAndSavesRecoverablePreviousProfile()
     {
         var path = Path.Combine(directory, "studio.json");
-        var profile = new StudioProfile { Name = "Control the band", TileSize = 144, Animate = false, Buttons = [new() { Label = "Group", IsGroup = true, Children = [new() { Label = "Wave", IconId = 56, Artwork = "C:\\Artwork\\wave.png", Background = "#102030", Foreground = "#EEDDCC", Steps = [new("/wave", 1234), new("/bow", 0)] }] }] };
+        var profile = new StudioProfile { Name = "Control the band", TileSize = 144, Buttons = [new() { Label = "Group", IsGroup = true, Children = [new() { Label = "Wave", IconId = 56, Artwork = "C:\\Artwork\\wave.png", Background = "#102030", Foreground = "#EEDDCC", Steps = [new("/wave", 1234), new("/bow", 0)] }] }] };
         StudioProfiles.Save(path, profile);
         var loaded = StudioProfiles.Load(path);
-        Assert.Equal(144, loaded.TileSize); Assert.False(loaded.Animate);
+        Assert.Equal(144, loaded.TileSize);
         Assert.Equal(profile.Buttons[0].Children[0].Steps, loaded.Buttons[0].Children[0].Steps);
         Assert.Equal("#102030", loaded.Buttons[0].Children[0].Background);
         Assert.Equal("C:\\Artwork\\wave.png", loaded.Buttons[0].Children[0].Artwork);
@@ -66,6 +66,48 @@ public sealed class StudioTests : IDisposable
         var copy = StudioProfiles.Duplicate(original);
         Assert.NotEqual(original.Id, copy.Id); Assert.NotEqual(original.Children[0].Id, copy.Children[0].Id);
         copy.Children[0].Label = "Changed"; Assert.NotEqual(copy.Children[0].Label, original.Children[0].Label);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void LegacyAnimationSettingIsIgnoredWithoutLosingButtonsOrTiming(bool oldAnimate)
+    {
+        var path = Path.Combine(directory, "legacy.json");
+        var original = new StudioProfile { TileSize = 120, Buttons = [new() { Label = "Saved action", Steps = [new("/wave", 1300), new("/bow", 50)] }] };
+        var json = System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(original))!;
+        json["Animate"] = oldAnimate;
+        File.WriteAllText(path, json.ToJsonString());
+        var loaded = StudioProfiles.Load(path);
+        Assert.Equal(120, loaded.TileSize);
+        Assert.Equal(original.Buttons[0].Id, loaded.Buttons[0].Id);
+        Assert.Equal(original.Buttons[0].Steps, loaded.Buttons[0].Steps);
+        StudioProfiles.Save(path, loaded);
+        Assert.DoesNotContain("\"Animate\"", File.ReadAllText(path));
+        Assert.Contains("\"Animate\"", File.ReadAllText(path + ".bak"));
+    }
+
+    [Fact]
+    public void StudioHasNoAnimationTimersAndButtonFeedbackIsImmediate()
+    {
+        RunStudioThread(form =>
+        {
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+            Assert.DoesNotContain(typeof(CommandStudioForm).GetFields(flags), field => field.FieldType == typeof(System.Windows.Forms.Timer));
+            Assert.DoesNotContain(typeof(StudioTile).GetFields(flags), field => field.FieldType == typeof(System.Windows.Forms.Timer));
+            var tiles = (System.Windows.Forms.FlowLayoutPanel)typeof(CommandStudioForm).GetField("tiles", flags)!.GetValue(form)!;
+            var tile = (StudioTile)tiles.Controls[0];
+            var before = tile.Bounds;
+            typeof(StudioTile).GetMethod("OnMouseEnter", flags)!.Invoke(tile, [EventArgs.Empty]);
+            Assert.Equal(true, typeof(StudioTile).GetField("hover", flags)!.GetValue(tile));
+            typeof(StudioTile).GetMethod("OnMouseDown", flags)!.Invoke(tile, [new System.Windows.Forms.MouseEventArgs(System.Windows.Forms.MouseButtons.Left, 1, 10, 10, 0)]);
+            Assert.Equal(true, typeof(StudioTile).GetField("pressed", flags)!.GetValue(tile));
+            Assert.Equal(before, tile.Bounds);
+            typeof(StudioTile).GetMethod("OnMouseCaptureChanged", flags)!.Invoke(tile, [EventArgs.Empty]);
+            Assert.Equal(false, typeof(StudioTile).GetField("pressed", flags)!.GetValue(tile));
+            typeof(StudioTile).GetMethod("OnMouseLeave", flags)!.Invoke(tile, [EventArgs.Empty]);
+            Assert.Equal(false, typeof(StudioTile).GetField("hover", flags)!.GetValue(tile));
+        });
     }
 
     [Fact]
@@ -229,6 +271,7 @@ public sealed class StudioTests : IDisposable
                 typeof(CommandStudioForm).GetMethod("Navigate", flags)!.Invoke(form, [fixture.Buttons[0].Id]);
                 Assert.Single(tiles.Controls.Cast<System.Windows.Forms.Control>());
                 Assert.Equal("Wave", tiles.Controls[0].Text);
+                Assert.Equal(new System.Windows.Forms.Padding(12), tiles.Padding);
                 Assert.Null(typeof(CommandStudioForm).GetField("sequence", flags)!.GetValue(form));
                 typeof(CommandStudioForm).GetMethod("Back", flags)!.Invoke(form, null);
                 Assert.Equal(2, tiles.Controls.Count);

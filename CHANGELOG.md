@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.103 - 2026-09-09
+
+- Removed Command Studio's group-transition and button-hover animation timers, pressed-button movement, and Animate setting. Navigation and visual feedback are immediate.
+- Existing profiles remain compatible, including profiles with Animate enabled. Button commands, configurable sequence delays, Stop behavior and the bridge are unchanged.
+
 ## 1.0.102 - 2026-09-09
 
 - Command Studio now opens in a clean button-only view, with full-width group navigation and no editor tree, property fields or customization toolbar.

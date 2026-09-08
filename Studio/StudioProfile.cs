@@ -26,7 +26,6 @@ internal sealed class StudioProfile
     public string Name { get; set; } = "Command Studio";
     public string ImportedFrom { get; set; } = "";
     public int TileSize { get; set; } = 96;
-    public bool Animate { get; set; } = true;
     public List<StudioButton> Buttons { get; set; } = [];
 }
 

@@ -23,7 +23,6 @@ internal sealed class CommandStudioForm : Form
     private readonly ComboBox parent = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly DataGridView steps = new() { Dock = DockStyle.Fill, AllowUserToAddRows = true, AllowUserToDeleteRows = true, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect };
     private readonly NumericUpDown tileSize = new() { Minimum = 64, Maximum = 160, Width = 58, Increment = 8 };
-    private readonly CheckBox animate = new() { Text = "Animate", AutoSize = true };
     private readonly Button stopButton;
     private readonly FlowLayoutPanel toolsBar;
     private readonly FlowLayoutPanel editTools;
@@ -36,8 +35,6 @@ internal sealed class CommandStudioForm : Form
     private readonly Dictionary<int, Bitmap> gameIcons = [];
     private readonly Dictionary<string, Bitmap?> artworkCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly CancellationTokenSource lifetime = new();
-    private readonly System.Windows.Forms.Timer transition = new() { Interval = 16 };
-    private DateTime transitionStart;
     private CancellationTokenSource? sequence;
     private string? groupId;
     private string? selectedId;
@@ -89,7 +86,6 @@ internal sealed class CommandStudioForm : Form
         editTools.Controls.Add(ActionButton("Import QoLBar…", Import));
         editTools.Controls.Add(new Label { Text = "Tile size", AutoSize = true, Margin = new Padding(8) });
         tileSize.Value = profile.TileSize; editTools.Controls.Add(tileSize);
-        animate.Checked = profile.Animate; editTools.Controls.Add(animate);
         editTools.Controls.Add(new Label { Text = "Editor mode · action clicks select, never execute", AutoSize = true, Margin = new Padding(8) });
         toolsBar.Controls.Add(editTools);
         root.Controls.Add(toolsBar, 0, 0);
@@ -154,17 +150,9 @@ internal sealed class CommandStudioForm : Form
         steps.CellBeginEdit += (_, _) => { if (!loading) editorDirty = true; };
         steps.RowsRemoved += (_, _) => { if (!loading) editorDirty = true; };
         tileSize.ValueChanged += (_, _) => { if (!loading) { if (ConfirmDiscard()) Change(() => profile.TileSize = (int)tileSize.Value); else { loading = true; tileSize.Value = profile.TileSize; loading = false; } } };
-        animate.CheckedChanged += (_, _) => { if (!loading) { if (ConfirmDiscard()) Change(() => profile.Animate = animate.Checked); else { loading = true; animate.Checked = profile.Animate; loading = false; } } };
         tree.BeforeSelect += (_, e) => { if (!loading && !ConfirmDiscard()) e.Cancel = true; };
         tree.AfterSelect += (_, e) => { if (!loading && e.Node?.Tag is StudioButton button) { selectedId = button.Id; LoadEditor(); } };
         tree.NodeMouseDoubleClick += (_, e) => { if (e.Node.Tag is StudioButton button && button.IsGroup) Navigate(button.Id); };
-        transition.Tick += (_, _) =>
-        {
-            var elapsed = (DateTime.UtcNow - transitionStart).TotalMilliseconds;
-            var offset = (int)(12 * Math.Pow(Math.Max(0, 1 - elapsed / 150), 3));
-            tiles.Padding = new Padding(12 + offset, 12, 12, 12);
-            if (elapsed >= 150) transition.Stop();
-        };
         FormClosing += (_, e) => { if (!ConfirmDiscard()) { e.Cancel = true; return; } sequence?.Cancel(); lifetime.Cancel(); };
         Shown += async (_, _) =>
         {
@@ -263,7 +251,7 @@ internal sealed class CommandStudioForm : Form
 
     private void RenderTiles()
     {
-        transition.Stop(); tiles.SuspendLayout();
+        tiles.SuspendLayout();
         foreach (Control tile in tiles.Controls.Cast<Control>().ToArray()) tile.Dispose();
         tiles.Controls.Clear();
         var current = Find(groupId);
@@ -272,7 +260,7 @@ internal sealed class CommandStudioForm : Form
         tips.SetToolTip(breadcrumb, current is null ? profile.Name : PathLabel(current));
         foreach (var button in current?.Children ?? profile.Buttons)
         {
-            var tile = new StudioTile(button, Artwork(button), profile.TileSize, profile.Animate);
+            var tile = new StudioTile(button, Artwork(button), profile.TileSize);
             var text = button.IsGroup ? "Open group" : string.Join(Environment.NewLine, StudioProfiles.StepsFor(button).Select(step => $"{step.Command}   [wait {step.DelayAfterMs} ms]"));
             tips.SetToolTip(tile, button.Label + Environment.NewLine + text + (button.ImportWarning.Length > 0 ? Environment.NewLine + button.ImportWarning : "") +
                 (editMode ? "\nClick to select for editing; actions will not execute." : "\nRight-click to enter editor mode."));
@@ -310,7 +298,6 @@ internal sealed class CommandStudioForm : Form
     private void Navigate(string? id)
     {
         groupId = id; RenderTiles();
-        if (profile.Animate && SystemInformation.IsMenuAnimationEnabled) { transitionStart = DateTime.UtcNow; transition.Start(); }
     }
     private void Back() { if (groupId is not null) Navigate(ParentId(groupId)); }
 
@@ -349,7 +336,7 @@ internal sealed class CommandStudioForm : Form
         var original = JsonSerializer.Serialize(profile);
         try { mutation(); StudioProfiles.Validate(profile); if (!TrySave()) { profile = JsonSerializer.Deserialize<StudioProfile>(original)!; return false; } }
         catch (Exception ex) { profile = JsonSerializer.Deserialize<StudioProfile>(original)!; MessageBox.Show(this, ex.Message, Text); return false; }
-        loading = true; tileSize.Value = profile.TileSize; animate.Checked = profile.Animate; loading = false;
+        loading = true; tileSize.Value = profile.TileSize; loading = false;
         RebuildTree(); RenderTiles(); LoadEditor();
         return true;
     }
@@ -549,7 +536,7 @@ internal sealed class CommandStudioForm : Form
     {
         if (disposing)
         {
-            lifetime.Cancel(); transition.Dispose(); tips.Dispose();
+            lifetime.Cancel(); tips.Dispose();
             foreach (var bitmap in gameIcons.Values) bitmap.Dispose();
             foreach (var bitmap in artworkCache.Values) bitmap?.Dispose();
         }
@@ -561,35 +548,32 @@ internal sealed class StudioTile : Button
 {
     private readonly StudioButton definition;
     private readonly Image? artwork;
-    private readonly bool animate;
-    private readonly System.Windows.Forms.Timer hoverTimer = new() { Interval = 16 };
-    private float glow;
     private bool hover;
     private bool pressed;
-    public StudioTile(StudioButton definition, Image? artwork, int size, bool animate)
+    public StudioTile(StudioButton definition, Image? artwork, int size)
     {
-        this.definition = definition; this.artwork = artwork; this.animate = animate;
+        this.definition = definition; this.artwork = artwork;
         Text = definition.Label; AccessibleName = definition.Label + (definition.IsGroup ? " group" : " action");
         Size = new Size(size + 16, size + 34); Margin = new Padding(5); Cursor = Cursors.Hand;
         DoubleBuffered = true; FlatStyle = FlatStyle.Flat;
-        hoverTimer.Tick += (_, _) => { glow = Math.Clamp(glow + (hover ? .16F : -.16F), 0, 1); Invalidate(); if (glow is 0 or 1) hoverTimer.Stop(); };
     }
-    protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hover = true; if (animate) hoverTimer.Start(); else { glow = 1; Invalidate(); } }
-    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hover = false; pressed = false; if (animate) hoverTimer.Start(); else { glow = 0; Invalidate(); } }
+    protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); hover = true; Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); hover = false; pressed = false; Invalidate(); }
     protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); pressed = e.Button == MouseButtons.Left; Invalidate(); }
     protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); pressed = false; Invalidate(); }
+    protected override void OnMouseCaptureChanged(EventArgs e) { base.OnMouseCaptureChanged(e); pressed = false; Invalidate(); }
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(Parent?.BackColor ?? BackColor);
-        var rect = new Rectangle(2, pressed ? 4 : 2, Width - 5, Height - 6);
+        var rect = new Rectangle(2, 2, Width - 5, Height - 6);
         using var path = new GraphicsPath(); const int radius = 16;
         path.AddArc(rect.Left, rect.Top, radius, radius, 180, 90); path.AddArc(rect.Right - radius, rect.Top, radius, radius, 270, 90);
         path.AddArc(rect.Right - radius, rect.Bottom - radius, radius, radius, 0, 90); path.AddArc(rect.Left, rect.Bottom - radius, radius, radius, 90, 90); path.CloseFigure();
         var background = ColorTranslator.FromHtml(definition.Background);
-        using var fill = new LinearGradientBrush(rect, ControlPaint.Light(background, .15F + glow * .2F), background, 90F); g.FillPath(fill, path);
-        using var border = new Pen(Color.FromArgb(100 + (int)(glow * 155), 206, 170, 250), Focused ? 2 : 1 + glow); g.DrawPath(border, path);
-        var iconArea = new Rectangle(18, 12 + (pressed ? 2 : 0), Width - 36, Height - 54);
+        using var fill = new LinearGradientBrush(rect, pressed ? ControlPaint.Dark(background) : ControlPaint.Light(background, .15F), background, 90F); g.FillPath(fill, path);
+        using var border = new Pen(Color.FromArgb(hover || Focused ? 255 : 100, 206, 170, 250), hover || Focused ? 2 : 1); g.DrawPath(border, path);
+        var iconArea = new Rectangle(18, 12, Width - 36, Height - 54);
         if (artwork is not null)
         {
             var fitted = NewsBandrollControl.FitImageRectangle(artwork.Size, iconArea); g.DrawImage(artwork, fitted);
@@ -598,5 +582,4 @@ internal sealed class StudioTile : Button
         TextRenderer.DrawText(g, definition.Label, Font, new Rectangle(6, Height - 36, Width - 12, 30), ColorTranslator.FromHtml(definition.Foreground), TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
         if (definition.IsGroup) TextRenderer.DrawText(g, "›", Font, new Point(Width - 18, 8), Color.Gold);
     }
-    protected override void Dispose(bool disposing) { if (disposing) hoverTimer.Dispose(); base.Dispose(disposing); }
 }
