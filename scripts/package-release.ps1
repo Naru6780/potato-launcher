@@ -29,6 +29,8 @@ if (Test-Path -LiteralPath $publishPath) {
     Remove-Item -LiteralPath $publishPath -Recurse -Force
 }
 dotnet publish .\PotatoLauncher.csproj -c $Configuration -o $publishPath
+if ($LASTEXITCODE -ne 0) { throw 'Launcher publish failed.' }
+& (Join-Path $PSScriptRoot 'package-command-bridge.ps1') -Configuration $Configuration -Destination (Join-Path $publishPath 'Command Bridge')
 
 foreach ($fileName in $persistedFiles) {
     Remove-Item -LiteralPath (Join-Path $publishPath $fileName) -Force -ErrorAction SilentlyContinue

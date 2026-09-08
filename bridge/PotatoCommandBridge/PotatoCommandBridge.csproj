@@ -1,0 +1,17 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Author>Naru6780</Author>
+    <Name>Potato Command Bridge</Name>
+    <InternalName>PotatoCommandBridge</InternalName>
+    <Punchline>Receive Command Studio buttons in one explicitly selected client.</Punchline>
+    <Description>Experimental local-only Potato Launcher receiver. Arm with /potatobridge on in the intended client; off stops delivery. No network listener, automatic fan-out or saved arming. Commands execute as you, including any chat or MoP broadcasts they contain. Developer plugin; live-game verification required.</Description>
+    <RepoUrl>https://github.com/Naru6780/potato-launcher</RepoUrl>
+    <AcceptsFeedback>false</AcceptsFeedback>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Studio\BridgeProtocol.cs" Link="BridgeProtocol.cs" />
+    <Compile Include="..\..\Studio\BridgeGate.cs" Link="BridgeGate.cs" />
+  </ItemGroup>
+</Project>

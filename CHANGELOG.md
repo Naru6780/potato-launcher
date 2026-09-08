@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.101 - 2026-09-09
+
+- Added experimental Command Studio: an editable, animated tree of groups and action buttons, seeded from a local copy of Jobs (Multi) when available. Import other QoLBar bars without modifying their source.
+- Customize labels, parent groups, order, game/custom icons, colors and tile size; add, duplicate or delete buttons and groups. Store customization separately with a previous-version backup.
+- Run ordered slash-command steps with individually configurable waits and Stop. Select one origin client; no automatic fan-out, retry or resume after a disconnect.
+- Include the independent API-15 Potato Command Bridge developer plugin. It defaults OFF, requires explicit per-client arming, checks process/session identity and rejects duplicate requests. Existing MoP/QoLBar handlers remain responsible for their commands.
+- This is a proof of concept: automated transport, editor and timing checks pass, but live native game dispatch and band broadcasts require the documented manual test. QoLBar special macro/random/incremental modes are not reproduced.
+
 ## 1.0.100 - 2026-09-07
 
 - Enlarged framed news images, using a dedicated row below the navigation buttons on compact windows instead of squeezing them into a tiny thumbnail.

@@ -7,10 +7,10 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AssemblyName>Potato Launcher</AssemblyName>
     <RootNamespace>PotatoLauncher</RootNamespace>
-    <Version>1.0.100</Version>
-    <AssemblyVersion>1.0.100.0</AssemblyVersion>
-    <FileVersion>1.0.100.0</FileVersion>
-    <InformationalVersion>1.0.100</InformationalVersion>
+    <Version>1.0.101</Version>
+    <AssemblyVersion>1.0.101.0</AssemblyVersion>
+    <FileVersion>1.0.101.0</FileVersion>
+    <InformationalVersion>1.0.101</InformationalVersion>
     <ApplicationHighDpiMode>DpiUnawareGdiScaled</ApplicationHighDpiMode>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -23,6 +23,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="bridge\**\*.cs" />
     <EmbeddedResource Remove="tests\**\*" />
     <None Remove="tests\**\*" />
   </ItemGroup>

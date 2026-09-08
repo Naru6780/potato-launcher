@@ -871,6 +871,7 @@ internal sealed class MainForm : Form
     private Button whatsNewButton = null!;
     private Button optimizerButton = null!;
     private Button helpButton = null!;
+    private Studio.CommandStudioForm? commandStudio;
     private AppToolTip? appToolTip;
     private MascotOverlayForm? mascotOverlay;
     private ArtemisDesktopPetForm? artemisDesktopPet;
@@ -1335,6 +1336,16 @@ internal sealed class MainForm : Form
 
         bandCard = Card(392, 118, 560, 450);
         bandCard.Controls.Add(Header("Band Manager", 18, 12, 180, 32));
+        var studioButton = Button("Command Studio", bandCard.Width - 160, 12, 142, 32, "Secondary");
+        studioButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        studioButton.Click += (_, _) =>
+        {
+            if (commandStudio is null || commandStudio.IsDisposed)
+                commandStudio = new Studio.CommandStudioForm(PersistentDataRoot(), palette);
+            commandStudio.Show(this);
+            commandStudio.Activate();
+        };
+        bandCard.Controls.Add(studioButton);
         var initialBandMembers = BandMemberListMetrics.Calculate(bandCard.Width);
         bandList = new ListBox { Bounds = new Rectangle(BandMemberListMetrics.LeftPadding, 58, initialBandMembers.BandListWidth, 306) };
         bandList.SelectedIndexChanged += (_, _) =>
