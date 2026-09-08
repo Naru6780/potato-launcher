@@ -26,6 +26,11 @@ internal sealed class CommandStudioForm : Form
     private readonly CheckBox animate = new() { Text = "Animate", AutoSize = true };
     private readonly Button stopButton;
     private readonly FlowLayoutPanel toolsBar;
+    private readonly FlowLayoutPanel editTools;
+    private readonly TableLayoutPanel root;
+    private readonly TableLayoutPanel body;
+    private readonly Panel treePanel;
+    private readonly Button editModeButton;
     private readonly Panel editor;
     private readonly ToolTip tips = new();
     private readonly Dictionary<int, Bitmap> gameIcons = [];
@@ -43,6 +48,7 @@ internal sealed class CommandStudioForm : Form
     private bool refreshing;
     private bool editorDirty;
     private bool profileReadFailed;
+    private bool editMode;
 
     private sealed record Target(RunningGameClient Process, BridgeReply State)
     {
@@ -68,26 +74,30 @@ internal sealed class CommandStudioForm : Form
         catch (Exception ex) { profileReadFailed = File.Exists(profilePath); status.Text = "Profile not loaded: " + ex.Message; }
         selectedId = profile.Buttons.FirstOrDefault()?.Id;
 
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), RowCount = 3, ColumnCount = 1 };
+        root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), RowCount = 3, ColumnCount = 1 };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 80)); root.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         Controls.Add(root);
         toolsBar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = false };
-        toolsBar.Controls.Add(ActionButton("Import QoLBar…", Import));
         toolsBar.Controls.Add(ActionButton("Refresh clients", async () => await RefreshClients()));
         toolsBar.Controls.Add(targets);
         stopButton = ActionButton("Stop sequence", () => sequence?.Cancel());
         stopButton.Enabled = false; toolsBar.Controls.Add(stopButton);
-        toolsBar.SetFlowBreak(stopButton, true);
-        toolsBar.Controls.Add(new Label { Text = "Tile size", AutoSize = true, Margin = new Padding(8) });
-        tileSize.Value = profile.TileSize; toolsBar.Controls.Add(tileSize);
-        animate.Checked = profile.Animate; toolsBar.Controls.Add(animate);
-        toolsBar.Controls.Add(new Label { Text = "One origin client. MoP/chat commands may broadcast.", AutoSize = true, Margin = new Padding(8) });
+        editModeButton = ActionButton("Edit buttons", () => SetEditorMode(!editMode));
+        toolsBar.Controls.Add(editModeButton);
+        toolsBar.SetFlowBreak(editModeButton, true);
+        editTools = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        editTools.Controls.Add(ActionButton("Import QoLBar…", Import));
+        editTools.Controls.Add(new Label { Text = "Tile size", AutoSize = true, Margin = new Padding(8) });
+        tileSize.Value = profile.TileSize; editTools.Controls.Add(tileSize);
+        animate.Checked = profile.Animate; editTools.Controls.Add(animate);
+        editTools.Controls.Add(new Label { Text = "Editor mode · action clicks select, never execute", AutoSize = true, Margin = new Padding(8) });
+        toolsBar.Controls.Add(editTools);
         root.Controls.Add(toolsBar, 0, 0);
-        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
+        body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
         body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 205)); body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 350));
         root.Controls.Add(body, 0, 1);
 
-        var treePanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
+        treePanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
         var treeTools = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 122 };
         treeTools.Controls.Add(ActionButton("+ Action", () => Add(false)));
         treeTools.Controls.Add(ActionButton("+ Group", () => Add(true)));
@@ -131,7 +141,7 @@ internal sealed class CommandStudioForm : Form
         var stepTools = new FlowLayoutPanel { Dock = DockStyle.Fill };
         stepTools.Controls.Add(ActionButton("Step ↑", () => MoveStep(-1))); stepTools.Controls.Add(ActionButton("Step ↓", () => MoveStep(1)));
         stepTools.Controls.Add(ActionButton("Remove step", () => { if (steps.CurrentRow is { IsNewRow: false } row) steps.Rows.Remove(row); })); fields.Controls.Add(stepTools, 0, 10);
-        fields.Controls.Add(ActionButton("Apply & save button", ApplyEditor), 0, 11);
+        fields.Controls.Add(ActionButton("Apply & save button", () => ApplyEditor()), 0, 11);
         fields.Controls.Add(new Label { Text = "Group clicks only navigate. Changes stay local; QoLBar is never overwritten.", Dock = DockStyle.Fill }, 0, 12);
         editor.Controls.Add(fields); body.Controls.Add(editor, 2, 0);
         root.Controls.Add(status, 0, 2);
@@ -141,6 +151,7 @@ internal sealed class CommandStudioForm : Form
         parent.SelectedIndexChanged += (_, _) => { if (!loading) editorDirty = true; };
         iconId.ValueChanged += (_, _) => { if (!loading) editorDirty = true; };
         steps.CellValueChanged += (_, _) => { if (!loading) editorDirty = true; };
+        steps.CellBeginEdit += (_, _) => { if (!loading) editorDirty = true; };
         steps.RowsRemoved += (_, _) => { if (!loading) editorDirty = true; };
         tileSize.ValueChanged += (_, _) => { if (!loading) { if (ConfirmDiscard()) Change(() => profile.TileSize = (int)tileSize.Value); else { loading = true; tileSize.Value = profile.TileSize; loading = false; } } };
         animate.CheckedChanged += (_, _) => { if (!loading) { if (ConfirmDiscard()) Change(() => profile.Animate = animate.Checked); else { loading = true; animate.Checked = profile.Animate; loading = false; } } };
@@ -163,7 +174,60 @@ internal sealed class CommandStudioForm : Form
             else if (!File.Exists(profilePath)) TrySave();
             await RefreshClients();
         };
-        RebuildTree(); RenderTiles(); LoadEditor();
+        RebuildTree(); RenderTiles(); LoadEditor(); ApplyModeLayout();
+    }
+
+    // Editor state is intentionally session-only: opening the studio always shows the clean button surface.
+    internal bool SetEditorMode(bool enabled, Func<DialogResult>? chooseUnsaved = null)
+    {
+        if (enabled == editMode) return true;
+        if (sequence is not null) { status.Text = "Stop the active sequence before changing modes."; return false; }
+        steps.EndEdit();
+        if (!enabled && editorDirty)
+        {
+            var choice = chooseUnsaved?.Invoke() ?? MessageBox.Show(this,
+                "Save the pending button edits before returning to the button view?\nYes: save · No: discard · Cancel: keep editing",
+                Text, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (choice == DialogResult.Cancel || (choice == DialogResult.Yes && !ApplyEditor())) return false;
+            if (choice == DialogResult.No) LoadEditor();
+        }
+        editMode = enabled;
+        LoadEditor();
+        ApplyModeLayout();
+        RenderTiles();
+        status.Text = enabled ? "Editor mode: select a button to edit. Actions do not execute here."
+            : "Button view: choose an origin client, then run your actions. MoP/chat commands may broadcast.";
+        return true;
+    }
+
+    private void ApplyModeLayout()
+    {
+        root.SuspendLayout(); body.SuspendLayout();
+        treePanel.Visible = editMode; editor.Visible = editMode; editTools.Visible = editMode;
+        body.ColumnStyles[0].Width = editMode ? 205 : 0;
+        body.ColumnStyles[2].Width = editMode ? 350 : 0;
+        root.RowStyles[0].Height = editMode ? 86 : 50;
+        editModeButton.Text = editMode ? "Done editing" : "Edit buttons";
+        body.ResumeLayout(true); root.ResumeLayout(true);
+    }
+
+    private void SelectForEditing(StudioButton button)
+    {
+        if (sequence is not null || !ConfirmDiscard()) return;
+        if (!SetEditorMode(true)) return;
+        selectedId = button.Id; RebuildTree(); LoadEditor();
+    }
+
+    private async Task ActivateTile(StudioButton button)
+    {
+        if (editMode)
+        {
+            if (!ConfirmDiscard()) return;
+            selectedId = button.Id; RebuildTree(); LoadEditor();
+            if (button.IsGroup) Navigate(button.Id);
+        }
+        else if (button.IsGroup) Navigate(button.Id);
+        else await Execute(button);
     }
 
     private static Button ActionButton(string text, Action action)
@@ -210,9 +274,10 @@ internal sealed class CommandStudioForm : Form
         {
             var tile = new StudioTile(button, Artwork(button), profile.TileSize, profile.Animate);
             var text = button.IsGroup ? "Open group" : string.Join(Environment.NewLine, StudioProfiles.StepsFor(button).Select(step => $"{step.Command}   [wait {step.DelayAfterMs} ms]"));
-            tips.SetToolTip(tile, button.Label + Environment.NewLine + text + (button.ImportWarning.Length > 0 ? Environment.NewLine + button.ImportWarning : "") + "\nRight-click to edit.");
-            tile.Click += async (_, _) => { if (button.IsGroup) Navigate(button.Id); else await Execute(button); };
-            tile.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right && ConfirmDiscard()) { selectedId = button.Id; RebuildTree(); LoadEditor(); } };
+            tips.SetToolTip(tile, button.Label + Environment.NewLine + text + (button.ImportWarning.Length > 0 ? Environment.NewLine + button.ImportWarning : "") +
+                (editMode ? "\nClick to select for editing; actions will not execute." : "\nRight-click to enter editor mode."));
+            tile.Click += async (_, _) => await ActivateTile(button);
+            tile.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) SelectForEditing(button); };
             tiles.Controls.Add(tile);
         }
         tiles.ResumeLayout();
@@ -252,7 +317,7 @@ internal sealed class CommandStudioForm : Form
     private void LoadEditor()
     {
         loading = true;
-        var button = Find(selectedId); editor.Enabled = button is not null && sequence is null && !profileReadFailed;
+        var button = Find(selectedId); editor.Enabled = editMode && button is not null && sequence is null && !profileReadFailed;
         steps.Rows.Clear(); parent.Items.Clear(); parent.Items.Add(new ParentChoice(null, "Root"));
         if (button is not null)
         {
@@ -280,7 +345,7 @@ internal sealed class CommandStudioForm : Form
 
     private bool Change(Action mutation)
     {
-        if (sequence is not null || profileReadFailed) return false;
+        if (!editMode || sequence is not null || profileReadFailed) return false;
         var original = JsonSerializer.Serialize(profile);
         try { mutation(); StudioProfiles.Validate(profile); if (!TrySave()) { profile = JsonSerializer.Deserialize<StudioProfile>(original)!; return false; } }
         catch (Exception ex) { profile = JsonSerializer.Deserialize<StudioProfile>(original)!; MessageBox.Show(this, ex.Message, Text); return false; }
@@ -289,9 +354,9 @@ internal sealed class CommandStudioForm : Form
         return true;
     }
 
-    private void ApplyEditor()
+    private bool ApplyEditor()
     {
-        var button = Find(selectedId); if (button is null) return;
+        var button = Find(selectedId); if (!editMode || button is null) return false;
         try
         {
             steps.EndEdit();
@@ -305,8 +370,8 @@ internal sealed class CommandStudioForm : Form
             }
             if (!group.Checked) StudioSequence.Validate(values);
             if (!group.Checked && button.Children.Count > 0) throw new InvalidDataException("Move or delete this group's children before converting it to an action.");
-            if (group.Checked && values.Count > 0 && MessageBox.Show(this, "Groups only navigate. Remove these command steps when saving as a group?", Text, MessageBoxButtons.YesNo) != DialogResult.Yes) return;
-            if (button.ImportWarning.Length > 0 && MessageBox.Show(this, button.ImportWarning + "\nSave as this explicit action/group, without QoLBar special behavior?", Text, MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            if (group.Checked && values.Count > 0 && MessageBox.Show(this, "Groups only navigate. Remove these command steps when saving as a group?", Text, MessageBoxButtons.YesNo) != DialogResult.Yes) return false;
+            if (button.ImportWarning.Length > 0 && MessageBox.Show(this, button.ImportWarning + "\nSave as this explicit action/group, without QoLBar special behavior?", Text, MessageBoxButtons.YesNo) != DialogResult.Yes) return false;
             var newParent = (parent.SelectedItem as ParentChoice)?.Id;
             var oldParent = ParentId(button.Id);
             var newLabel = label.Text; var newGroup = group.Checked; var newIcon = (int)iconId.Value;
@@ -322,8 +387,9 @@ internal sealed class CommandStudioForm : Form
                 button.IconId = newIcon; button.Artwork = chosenArtwork; button.Background = chosenBackground; button.Foreground = chosenForeground; button.ImportWarning = "";
             });
             if (saved) status.Text = "Button saved locally. QoLBar source is unchanged.";
+            return saved;
         }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, Text); }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, Text); return false; }
     }
 
     private void Add(bool isGroup)
@@ -451,7 +517,7 @@ internal sealed class CommandStudioForm : Form
 
     private async Task Execute(StudioButton button)
     {
-        if (sequence is not null || button.IsGroup) return;
+        if (editMode || sequence is not null || button.IsGroup) return;
         if (editorDirty) { status.Text = "Apply or discard the editor changes before running a saved action."; return; }
         if (button.ImportWarning.Length > 0) { MessageBox.Show(this, button.ImportWarning, Text); return; }
         if (targets.SelectedItem is not Target target || !target.State.Armed) { status.Text = "Select one armed origin client first. Use /potatobridge on in-game, then Refresh clients."; return; }

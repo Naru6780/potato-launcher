@@ -220,6 +220,11 @@ public sealed class StudioTests : IDisposable
                 var flags = BindingFlags.Instance | BindingFlags.NonPublic;
                 var field = typeof(CommandStudioForm).GetField("tiles", flags)!;
                 var tiles = (System.Windows.Forms.FlowLayoutPanel)field.GetValue(form)!;
+                var editorPanel = (System.Windows.Forms.Panel)typeof(CommandStudioForm).GetField("editor", flags)!.GetValue(form)!;
+                var treePanel = (System.Windows.Forms.Panel)typeof(CommandStudioForm).GetField("treePanel", flags)!.GetValue(form)!;
+                var editTools = (System.Windows.Forms.FlowLayoutPanel)typeof(CommandStudioForm).GetField("editTools", flags)!.GetValue(form)!;
+                Assert.False(editorPanel.Visible); Assert.False(treePanel.Visible); Assert.False(editTools.Visible);
+                var cleanWidth = tiles.Width;
                 Assert.Equal(2, tiles.Controls.Count);
                 typeof(CommandStudioForm).GetMethod("Navigate", flags)!.Invoke(form, [fixture.Buttons[0].Id]);
                 Assert.Single(tiles.Controls.Cast<System.Windows.Forms.Control>());
@@ -227,6 +232,9 @@ public sealed class StudioTests : IDisposable
                 Assert.Null(typeof(CommandStudioForm).GetField("sequence", flags)!.GetValue(form));
                 typeof(CommandStudioForm).GetMethod("Back", flags)!.Invoke(form, null);
                 Assert.Equal(2, tiles.Controls.Count);
+                Assert.True(form.SetEditorMode(true));
+                Assert.True(editorPanel.Visible); Assert.True(treePanel.Visible); Assert.True(editTools.Visible);
+                Assert.True(tiles.Width < cleanWidth - 500);
                 var tree = (System.Windows.Forms.TreeView)typeof(CommandStudioForm).GetField("tree", flags)!.GetValue(form)!;
                 tree.SelectedNode = tree.Nodes[1];
                 var label = (System.Windows.Forms.TextBox)typeof(CommandStudioForm).GetField("label", flags)!.GetValue(form)!;
@@ -248,6 +256,17 @@ public sealed class StudioTests : IDisposable
                 Assert.NotEqual(bitmap.GetPixel(20, 150), bitmap.GetPixel(250, 150));
                 var preview = Environment.GetEnvironmentVariable("POTATO_STUDIO_TEST_PREVIEWS");
                 if (!string.IsNullOrWhiteSpace(preview)) { Directory.CreateDirectory(preview); bitmap.Save(Path.Combine(preview, $"studio-{width}x{height}.png"), ImageFormat.Png); }
+                var targets = (System.Windows.Forms.ComboBox)typeof(CommandStudioForm).GetField("targets", flags)!.GetValue(form)!;
+                targets.Items.Add("Fixture origin"); targets.SelectedIndex = 0;
+                typeof(CommandStudioForm).GetMethod("Navigate", flags)!.Invoke(form, [fixture.Buttons[0].Id]);
+                Assert.True(form.SetEditorMode(false));
+                Assert.False(editorPanel.Visible); Assert.False(treePanel.Visible); Assert.False(editTools.Visible);
+                Assert.Equal(cleanWidth, tiles.Width);
+                Assert.Equal("Fixture origin", targets.SelectedItem);
+                Assert.Equal(fixture.Buttons[0].Id, typeof(CommandStudioForm).GetField("groupId", flags)!.GetValue(form));
+                using var cleanBitmap = new Bitmap(width, height);
+                form.DrawToBitmap(cleanBitmap, new Rectangle(0, 0, width, height));
+                if (!string.IsNullOrWhiteSpace(preview)) cleanBitmap.Save(Path.Combine(preview, $"studio-clean-{width}x{height}.png"), ImageFormat.Png);
                 // Explicit local-only artwork/import inspection. Never used by CI, never contacts a game,
                 // never changes the input config, and no user config/artwork is committed or packaged.
                 var localSource = Environment.GetEnvironmentVariable("POTATO_STUDIO_TEST_QOLBAR");
@@ -268,5 +287,68 @@ public sealed class StudioTests : IDisposable
         });
         thread.SetApartmentState(ApartmentState.STA); thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(20)), "Studio UI rendering timed out."); Assert.Null(failure);
+    }
+
+    [Theory]
+    [InlineData(System.Windows.Forms.DialogResult.Yes, "Draft label", false)]
+    [InlineData(System.Windows.Forms.DialogResult.No, "Saved label", false)]
+    [InlineData(System.Windows.Forms.DialogResult.Cancel, "Saved label", true)]
+    public void LeavingEditorHandlesSaveDiscardAndCancel(System.Windows.Forms.DialogResult choice, string expectedSaved, bool remainsEditing)
+    {
+        RunStudioThread(form =>
+        {
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            Assert.True(form.SetEditorMode(true));
+            var label = (System.Windows.Forms.TextBox)typeof(CommandStudioForm).GetField("label", flags)!.GetValue(form)!;
+            label.Text = "Draft label";
+            Assert.Equal(!remainsEditing, form.SetEditorMode(false, () => choice));
+            Assert.Equal(remainsEditing, typeof(CommandStudioForm).GetField("editMode", flags)!.GetValue(form));
+            Assert.Equal(expectedSaved, StudioProfiles.Load(Path.Combine(directory, "Command Studio", "profile.json")).Buttons[0].Label);
+            if (remainsEditing) { Assert.Equal("Draft label", label.Text); form.SetEditorMode(false, () => System.Windows.Forms.DialogResult.No); }
+        });
+    }
+
+    [Fact]
+    public void EditorActionClicksOnlySelectAndSequencePreventsModeChange()
+    {
+        RunStudioThread(form =>
+        {
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var sequenceField = typeof(CommandStudioForm).GetField("sequence", flags)!;
+            var status = (System.Windows.Forms.Label)typeof(CommandStudioForm).GetField("status", flags)!.GetValue(form)!;
+            var tiles = (System.Windows.Forms.FlowLayoutPanel)typeof(CommandStudioForm).GetField("tiles", flags)!.GetValue(form)!;
+            using (var sequence = new CancellationTokenSource())
+            {
+                sequenceField.SetValue(form, sequence);
+                Assert.False(form.SetEditorMode(true));
+                Assert.Contains("Stop the active sequence", status.Text);
+                sequenceField.SetValue(form, null);
+            }
+            Assert.True(form.SetEditorMode(true));
+            status.Text = "No command submitted";
+            ((System.Windows.Forms.Button)tiles.Controls[0]).PerformClick();
+            Assert.Equal("No command submitted", status.Text);
+            Assert.Null(sequenceField.GetValue(form));
+            Assert.NotNull(typeof(CommandStudioForm).GetField("selectedId", flags)!.GetValue(form));
+            Assert.True(form.SetEditorMode(false));
+        });
+    }
+
+    private void RunStudioThread(Action<CommandStudioForm> check)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                StudioProfiles.Save(Path.Combine(directory, "Command Studio", "profile.json"), new StudioProfile { Buttons = [new() { Label = "Saved label", Command = "/wave" }] });
+                var palette = new ThemePalette(Color.Black, Color.Black, Color.DimGray, Color.Gray, Color.White, Color.Gray, Color.Purple, Color.Pink, Color.Red, Color.DimGray);
+                using var form = new CommandStudioForm(directory, palette, connectOnShow: false) { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new Point(-20000, -20000) };
+                form.Show(); check(form);
+            }
+            catch (Exception ex) { failure = ex; }
+        });
+        thread.SetApartmentState(ApartmentState.STA); thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(20)), "Studio mode test timed out."); Assert.Null(failure);
     }
 }

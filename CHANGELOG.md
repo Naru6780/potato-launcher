@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.102 - 2026-09-09
+
+- Command Studio now opens in a clean button-only view, with full-width group navigation and no editor tree, property fields or customization toolbar.
+- Use Edit buttons to enter editor mode and Done editing to return. Pending edits offer Save, Discard or Cancel; the selected origin client and current group are preserved.
+- Action tiles select buttons instead of executing commands while editing. Stop an active sequence before entering editor mode. The companion protocol and game dispatch are unchanged.
+
 ## 1.0.101 - 2026-09-09
 
 - Added experimental Command Studio: an editable, animated tree of groups and action buttons, seeded from a local copy of Jobs (Multi) when available. Import other QoLBar bars without modifying their source.
