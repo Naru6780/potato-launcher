@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.104 - 2026-09-16
+
+- Restore the pre-Studio v1.0.100 launcher feature set; remove Command Studio and its bundled Command Bridge. Existing launcher settings and saved Studio profiles are left untouched.
+- Retain build exclusions for legacy bridge output so existing checkouts build correctly after the rollback.
+
 ## 1.0.103 - 2026-09-09
 
 - Removed Command Studio's group-transition and button-hover animation timers, pressed-button movement, and Animate setting. Navigation and visual feedback are immediate.
