@@ -1,6 +1,7 @@
-# Plugin-free launch candidate 1.0.105
+# Plugin-free launch verification
 
-Status: published as the latest release; the third-client launch without MoP remains unverified live.
+Status: user confirmed eight clients launched without MoP and in-game detection worked.
+Version 1.0.106 addresses a final-client process handoff stall observed during that run.
 
 ## Scope
 
@@ -80,6 +81,11 @@ https://github.com/BardMusicPlayer/BardMusicPlayer/blob/master/BardMusicPlayer.S
   loading-transition sampling or the launch queue's end-to-end readiness gate.
 - Read-only mutex inspection succeeded on all eight processes and found zero exact
   count locks. Existing MoP may already have removed them. No handles were closed.
+- The user subsequently confirmed that all eight clients launched without MoP and
+  in-game detection worked. The eighth client was running but remained marked Queued;
+  its XIVLauncher helper stayed alive without a window. Version 1.0.106 detects the
+  new game process before waiting for that helper to exit and marks the row Launching
+  as soon as the launch starts. This correction requires a follow-up live run.
 
 ## Required manual release gates
 
@@ -88,8 +94,9 @@ https://github.com/BardMusicPlayer/BardMusicPlayer/blob/master/BardMusicPlayer.S
 3. Enter a login queue if available: it must not complete readiness.
 4. Enter world / teleport: sample transition flags and require Loading before InWorld.
 5. Verify labels on a Potato-started client before login, after login and after logout.
-6. With no plugin removing count locks, launch first, second and third distinct accounts
-   through the preview. Confirm the third succeeds and the first two remain healthy.
+6. With no plugin removing count locks, launch first, second and third distinct accounts.
+   The user reported all eight clients launched; verify the 1.0.106 final-row handoff
+   in a follow-up run.
 7. Repeat the same band: tracked clients should be skipped. Restart Potato with clients
    logged in and verify memory-based discovery skips them again.
 8. Check cancellation, wrong-character selection, stale metadata, access denial and
@@ -102,5 +109,5 @@ dotnet test tests/PotatoLauncher.Tests/PotatoLauncher.Tests.csproj -c Release --
 ```
 
 A memory-based readiness feature needs compatibility maintenance after game patches.
-Do not advertise this as patch-proof. The third-client launch without MoP still needs
-live verification; report this limitation when describing the release.
+Do not advertise this as patch-proof. Confirm the final-row handoff fix in a follow-up
+live run.

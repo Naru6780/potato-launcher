@@ -40,13 +40,13 @@ Matching members appear as **Already running** and are skipped. Saved band check
 
 Discovery cannot assign an externally launched pre-login client to an account, or reliably identify a process Windows prevents Potato Launcher from inspecting. Unknown clients are not arbitrarily assigned. Keep character/home-world metadata accurate. Conflicting worlds or multiple same-name matches without a configured world stop the queue. Discovery is PC-local, not account-online detection across computers. Use one launcher instance per PC and avoid external launches during its queue.
 
-### Plugin-free launch preview
+### Plugin-free launch
 
-Version 1.0.105-preview.1 releases only FFXIV's two exact instance-limit mutex handles before launching another client, using the same mechanism as MoP from outside the game. It does not terminate game processes, inject code, or write game memory. Access or identity-validation failures stop the launch.
+Version 1.0.106 releases only FFXIV's two exact instance-limit mutex handles before launching another client, using the same mechanism as MoP from outside the game. It does not terminate game processes, inject code, or write game memory. Access or identity-validation failures stop the launch.
 
 Potato maintains titles for clients it starts and confirms a loaded local player and territory through read-only game state, stable for three seconds. Character selection is still manual or handled by your chosen autologin plugin. The launch cooldown is separate from readiness. Unsupported game builds fail with a compatibility-update message instead of guessing; the current profile is pinned to game build `2026.09.15.0000.0000`.
 
-Version 1.0.105 is available through the stable updater. The no-MoP third-client launch and other live checks remain pending; see [verification notes](docs/PLUGIN_FREE_LAUNCH_VERIFICATION.md).
+Version 1.0.106 is available through the updater. The user confirmed an eight-client launch without MoP; see [verification notes](docs/PLUGIN_FREE_LAUNCH_VERIFICATION.md).
 
 ### Pairing PCs
 

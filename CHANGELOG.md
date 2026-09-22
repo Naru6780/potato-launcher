@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.106 - 2026-09-22
+
+- Follow a newly started FFXIV process immediately even when XIVLauncher stays open without a window. This prevents the final band member from remaining queued while its game client is already running.
+- Show **Launching** as soon as each account's launch begins, then **Loading** once its game process is found.
+- Accept a new game's main window regardless of its visibility or size; character readiness still requires the separate in-world check.
+- On a later band run, reclaim the window title of an already-running client only when its live character and home world match the selected account.
+- Display the release version without the leftover preview suffix.
+
 ## 1.0.105 - 2026-09-22
 
 - Remove the character-window-title requirement from launch readiness. A read-only external detector checks local-player identity, a loaded zone and transition flags, requiring three seconds of stable state. Unsupported game builds and failed reads never count as ready.

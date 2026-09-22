@@ -85,7 +85,7 @@ public class AppTextTests
 
     [Theory]
     [InlineData("Queued", "Queued")]
-    [InlineData("Launching", "Loading")]
+    [InlineData("Launching", "Launching")]
     [InlineData("Connecting", "Loading")]
     [InlineData("Initializing (2/3)", "Loading")]
     [InlineData("Initialized", "Initialized")]

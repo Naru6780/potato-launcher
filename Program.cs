@@ -764,12 +764,6 @@ internal sealed class MainForm : Form
     private static extern bool DeleteObject(IntPtr hObject);
 
     [DllImport("user32.dll")]
-    private static extern bool IsWindowVisible(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect lpRect);
-
-    [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("iphlpapi.dll", SetLastError = true)]
@@ -793,17 +787,6 @@ internal sealed class MainForm : Form
         public uint RemoteAddr;
         public uint RemotePort;
         public uint OwningPid;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private readonly struct NativeRect
-    {
-        public readonly int Left;
-        public readonly int Top;
-        public readonly int Right;
-        public readonly int Bottom;
-        public int Width => Right - Left;
-        public int Height => Bottom - Top;
     }
 
     internal static readonly Dictionary<string, ThemePalette> Palettes = new(StringComparer.OrdinalIgnoreCase)
@@ -3708,11 +3691,23 @@ internal sealed class MainForm : Form
                     async (queuedAccount, token) =>
                     {
                         accountStatuses[index] = accountStatuses[index] with { Status = "Launching" };
+                        UpdateLoadingQueueItem(index, account, "Launching");
                         Report("Launching", $"Launching {AccountDisplayName(account)} ({index + 1}/{bandAccounts.Count}).");
                         return await StartAccountAndWaitForClientAsync(queuedAccount, token);
                     }, cancellation.Token);
                 if (result.ExistingClient is { } existingClient)
                 {
+                    // A previous run may have launched this client before the handoff was
+                    // recorded. Reclaim its label only after validating the live identity.
+                    if (existingClient.StartTimeUtc is DateTime existingStart)
+                    {
+                        var live = await Task.Run(() => new ExternalGameState().Read(existingClient.ProcessId, existingStart), cancellation.Token);
+                        if (live.State == WorldReadiness.InWorld &&
+                            live.CharacterName.Equals(characterName, StringComparison.OrdinalIgnoreCase) &&
+                            GameWorldNames.All.TryGetValue(live.HomeWorld, out var liveWorld) &&
+                            (string.IsNullOrWhiteSpace(profile?.World) || liveWorld.Equals(profile.World.Trim(), StringComparison.OrdinalIgnoreCase)))
+                            clientLabels.Track(existingClient.ProcessId, existingStart, AccountDisplayName(account));
+                    }
                     skippedCount++;
                     var skippedMessage = $"{AccountDisplayName(account)}: already running (PID {existingClient.ProcessId}); skipped.";
                     accountStatuses[index] = accountStatuses[index] with { Status = "Already running" };
@@ -3889,7 +3884,7 @@ internal sealed class MainForm : Form
             : $"Started {account.Name}. Waiting for XIVLauncher to finish...";
         UpdateLoadingOverlay(waitMessage);
 
-        await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, account.Name, token);
+        await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, gameClientsBefore, account.Name, token);
         var client = await WaitForFreshGameClientAsync(gameClientsBefore, account.Name, token);
         using var gameProcess = Process.GetProcessById(client.ProcessId);
         var gameStart = gameProcess.StartTime.ToUniversalTime();
@@ -4106,7 +4101,8 @@ internal sealed class MainForm : Form
         return argument.Any(char.IsWhiteSpace) ? $"\"{argument.Replace("\"", "\\\"")}\"" : argument;
     }
 
-    private async Task WaitForLauncherHandoffAsync(Process? launcherProcess, HashSet<int> existingProcessIds, string accountName, CancellationToken token)
+    private async Task WaitForLauncherHandoffAsync(Process? launcherProcess, HashSet<int> existingProcessIds,
+        HashSet<int> existingGameProcessIds, string accountName, CancellationToken token)
     {
         var deadline = DateTime.UtcNow.AddMinutes(5);
         var sawLauncherWindow = false;
@@ -4114,6 +4110,9 @@ internal sealed class MainForm : Form
         while (DateTime.UtcNow < deadline)
         {
             token.ThrowIfCancellationRequested();
+
+            // XIVLauncher can remain alive without a window after spawning FFXIV.
+            if (GetGameClientProcessIds().Any(id => !existingGameProcessIds.Contains(id))) return;
 
             if (launcherProcess is not null)
             {
@@ -4145,7 +4144,7 @@ internal sealed class MainForm : Form
                 var message = $"Waiting for XIVLauncher to finish {accountName}...";
                 SetStatus(message);
                 UpdateLoadingOverlay(message);
-                await WaitForLauncherCloseAsync(window, token);
+                await WaitForLauncherCloseAsync(window, existingGameProcessIds, token);
                 return;
             }
 
@@ -4288,7 +4287,7 @@ internal sealed class MainForm : Form
                     process.Refresh();
                     var handle = process.MainWindowHandle;
                     var title = process.MainWindowTitle ?? "";
-                    if (handle == IntPtr.Zero || (IsWindowVisible(handle) && GetWindowRect(handle, out var rect) && rect.Width > 320 && rect.Height > 240))
+                    if (handle != IntPtr.Zero)
                     {
                         found.Add(new GameClientWindow(process.Id, handle, title));
                     }
@@ -4449,12 +4448,13 @@ internal sealed class MainForm : Form
         AppNotification.Show(this, "Potato Launcher", message);
     }
 
-    private async Task WaitForLauncherCloseAsync(LauncherWindow launcher, CancellationToken token)
+    private async Task WaitForLauncherCloseAsync(LauncherWindow launcher, HashSet<int> existingGameProcessIds, CancellationToken token)
     {
         var deadline = DateTime.UtcNow.AddMinutes(5);
         while (DateTime.UtcNow < deadline)
         {
             token.ThrowIfCancellationRequested();
+            if (GetGameClientProcessIds().Any(id => !existingGameProcessIds.Contains(id))) return;
             try
             {
                 using var process = Process.GetProcessById(launcher.ProcessId);
@@ -4547,6 +4547,7 @@ internal sealed class MainForm : Form
     internal static string NormalizeLoadingQueueState(string state)
     {
         if (state.Equals("Queued", StringComparison.OrdinalIgnoreCase)) return "Queued";
+        if (state.Equals("Launching", StringComparison.OrdinalIgnoreCase)) return "Launching";
         if (state.Equals("Initialized", StringComparison.OrdinalIgnoreCase)) return "Initialized";
         if (state.Equals("Already running", StringComparison.OrdinalIgnoreCase)) return "Already running";
         if (state.Equals("Cancelled", StringComparison.OrdinalIgnoreCase)) return "Cancelled";
@@ -4559,7 +4560,7 @@ internal sealed class MainForm : Form
         var normalized = NormalizeLoadingQueueState(state);
         if (normalized.Equals("Initialized", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(98, 214, 135);
         if (normalized.Equals("Already running", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(98, 214, 135);
-        if (normalized.Equals("Loading", StringComparison.OrdinalIgnoreCase)) return Color.FromArgb(105, 172, 255);
+        if (normalized is "Launching" or "Loading") return Color.FromArgb(105, 172, 255);
         if (normalized.Equals("Cancelled", StringComparison.OrdinalIgnoreCase) || normalized.Equals("Failed", StringComparison.OrdinalIgnoreCase)) return palette.Danger;
         return IsLightColor(palette.Card) ? palette.Text : Color.White;
     }
