@@ -1,6 +1,6 @@
 # Plugin-free launch candidate 1.0.105
 
-Status: public prerelease; the third-client launch without MoP remains unverified.
+Status: published as the latest release; the third-client launch without MoP remains unverified live.
 
 ## Scope
 
@@ -102,5 +102,5 @@ dotnet test tests/PotatoLauncher.Tests/PotatoLauncher.Tests.csproj -c Release --
 ```
 
 A memory-based readiness feature needs compatibility maintenance after game patches.
-Do not advertise this as patch-proof. Do not promote the prerelease to the stable
-update channel before the remaining manual release gates pass.
+Do not advertise this as patch-proof. The third-client launch without MoP still needs
+live verification; report this limitation when describing the release.

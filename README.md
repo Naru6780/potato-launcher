@@ -46,7 +46,7 @@ Version 1.0.105-preview.1 releases only FFXIV's two exact instance-limit mutex h
 
 Potato maintains titles for clients it starts and confirms a loaded local player and territory through read-only game state, stable for three seconds. Character selection is still manual or handled by your chosen autologin plugin. The launch cooldown is separate from readiness. Unsupported game builds fail with a compatibility-update message instead of guessing; the current profile is pinned to game build `2026.09.15.0000.0000`.
 
-This is a public prerelease, excluded from the stable updater. The no-MoP third-client launch and other live checks remain pending; see [verification notes](docs/PLUGIN_FREE_LAUNCH_VERIFICATION.md).
+Version 1.0.105 is available through the stable updater. The no-MoP third-client launch and other live checks remain pending; see [verification notes](docs/PLUGIN_FREE_LAUNCH_VERIFICATION.md).
 
 ### Pairing PCs
 

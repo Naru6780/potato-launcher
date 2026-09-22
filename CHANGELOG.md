@@ -1,12 +1,12 @@
 # Changelog
 
-## 1.0.105 - Public prerelease (2026-09-22)
+## 1.0.105 - 2026-09-22
 
 - Remove the character-window-title requirement from launch readiness. A read-only external detector checks local-player identity, a loaded zone and transition flags, requiring three seconds of stable state. Unsupported game builds and failed reads never count as ready.
 - Track launched clients by PID and start time. Maintain account labels while loading and real character/world titles once in-world, without MoP or Dalamud. Read game identity for discovery of already-running characters on the supported build.
 - Release only FFXIV's exact two instance-count mutexes in verified local game processes before another launch, without an in-game plugin. This does not bypass account authentication or implement character selection.
 - Preserve existing launch cooldowns and character-selection/autologin plugins. Do not launch another account after a background readiness check fails; reject ambiguous simultaneous new clients.
-- The read-only detector was observed across character selection and in-world on the supported game build. The third-client launch without MoP has not yet been validated, so this release is marked as a prerelease and is excluded from the stable update path.
+- The read-only detector was observed across character selection and in-world on the supported game build. The third-client launch without MoP has not yet been validated live; please report any errors with that path.
 
 ## 1.0.104 - 2026-09-16
 
