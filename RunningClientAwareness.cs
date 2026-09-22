@@ -43,6 +43,28 @@ internal sealed class RunningClientAwareness(Func<IReadOnlyList<RunningGameClien
         if (client?.StartTimeUtc is not null) tracked[accountKey] = client;
     }
 
+    public static IReadOnlyList<RunningGameClient> CaptureWithGameState()
+    {
+        var reader = new ExternalGameState();
+        return Capture().Select(client =>
+        {
+            if (client.StartTimeUtc is not DateTime start) return client;
+            var state = reader.Read(client.ProcessId, start);
+            if (state.State is WorldReadiness.InWorld or WorldReadiness.Loading &&
+                GameWorldNames.All.TryGetValue(state.HomeWorld, out var world))
+                return client with { Title = $"{state.CharacterName}@{world}" };
+            // On supported builds, an old/custom title must not masquerade as a logged-in character.
+            return state.State == WorldReadiness.NotInWorld ? client with { Title = "" } : client;
+        }).ToArray();
+    }
+
+    public bool IsTracked(string accountKey, int processId)
+    {
+        return tracked.TryGetValue(accountKey, out var previous) && previous.ProcessId == processId &&
+            previous.StartTimeUtc is not null && capture().Any(current => current.ProcessId == processId &&
+                current.StartTimeUtc == previous.StartTimeUtc);
+    }
+
     public async Task<BandClientLaunchResult> LaunchIfNeededAsync(
         Account account, string accountKey, string characterName, string world,
         Func<Account, CancellationToken, Task<StartedGameClient>> launch, CancellationToken token)

@@ -260,13 +260,13 @@ internal static class AppText
         Link each account to a Lodestone character profile URL to show character names and portraits. Use the Lodestone search link in the profile prompt if you need to find the character page.
 
         Bands
-        Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence. Band launches skip matching FFXIV clients already running on this PC without changing your selections. Discovery uses Character@World window titles, or clients tracked during this launcher session. Unidentified clients with generic titles cannot be matched. Right-click a band to rename it or terminate the running clients for only that band.
+        Bands are launch groups. Create a band, select the accounts that belong to it, then use Launch band to start them in sequence. Band launches skip matching FFXIV clients already running on this PC without changing your selections. Discovery reads character identity on supported game builds or tracks process IDs and start times during this launcher session. Legacy character titles remain a discovery fallback only. Externally launched clients at character selection cannot be assigned arbitrarily. Right-click a band to rename it or terminate the running clients for only that band.
 
         Multiband
         Pair two Potato Launcher PCs on the same private network, choose one local band and one remote band, and save them as a launch plan. Launch both queues from the main PC with a synchronized countdown and combined progress. Account credentials always stay on their own PC.
 
         Launching
-        OTP-enabled accounts launch with autologin disabled so you can finish login manually. The launch cooldown setting adds a delay between band launches. The optional helper cleanup setting closes only the XIVLauncher and Dalamud helper processes detected for that launch after its game client is initialized; closing DalamudCrashHandler disables its crash-reporting protection for that client.
+        OTP-enabled accounts launch with autologin disabled so you can finish login manually. Potato releases FFXIV's two instance-count mutexes before launching another client; MoP is not needed for this. Character selection remains manual or handled by your existing autologin plugin. In-world readiness uses read-only game state, never window titles or cooldowns. Game patches may require a compatibility update. The launch cooldown setting still adds a delay between band launches. The optional helper cleanup setting closes only the XIVLauncher and Dalamud helper processes detected for that launch after its game client is initialized; closing DalamudCrashHandler disables its crash-reporting protection for that client.
 
         Display and themes
         Switch the account list between Text and Roster display in Settings. Themes can change colors and backgrounds, and can be randomized each time the app starts.
@@ -733,7 +733,7 @@ internal readonly record struct LauncherWindow(int ProcessId, IntPtr Handle);
 internal readonly record struct GameClientWindow(int ProcessId, IntPtr Handle, string Title);
 internal readonly record struct LaunchCommand(string FileName, string Arguments, string WorkingDirectory);
 internal readonly record struct BatchLaunchInfo(string AccountKey, string RoamingPath);
-internal readonly record struct StartedGameClient(Account Account, int ProcessId, LaunchHelperCleanupScope? LaunchHelperScope);
+internal readonly record struct StartedGameClient(Account Account, int ProcessId, LaunchHelperCleanupScope? LaunchHelperScope, DateTime? StartTimeUtc = null);
 internal sealed record NewsBanner(string ImageUrl, string LinkUrl, string Title);
 internal sealed record NewsEntry(string Title, string Url, DateTimeOffset Date, string Tag);
 internal sealed record NewsBandrollSlide(Image Image, string Url, string Title);
@@ -910,7 +910,8 @@ internal sealed class MainForm : Form
     private readonly List<int> mascotFrameDelays = [];
     private readonly Dictionary<int, Label> loadingQueueLabels = [];
     private readonly Dictionary<string, int> runningClientProcessIds = new(StringComparer.OrdinalIgnoreCase);
-    private readonly RunningClientAwareness runningClientAwareness = new(RunningClientAwareness.Capture);
+    private readonly RunningClientAwareness runningClientAwareness = new(RunningClientAwareness.CaptureWithGameState);
+    private readonly ClientLabels clientLabels = new();
     private readonly IntegratedOptimizerService optimizerService = new(OptimizerSettings.Load());
     private OptimizerMonitorForm? optimizerMonitor;
     private MultibandSettingsStore multibandSettingsStore = null!;
@@ -1035,6 +1036,7 @@ internal sealed class MainForm : Form
         Activated += (_, _) => UpdateMascotOverlay();
         FormClosed += async (_, _) =>
         {
+            clientLabels.Dispose();
             multibandForm?.Close();
             if (multibandServer is not null) await multibandServer.DisposeAsync();
             optimizerMonitor?.Close();
@@ -1595,7 +1597,7 @@ internal sealed class MainForm : Form
         launchCooldownInput.ValueChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(launchCooldownInput);
 
-        waitForClientInitializationInput = new CheckBox { Text = "Wait until client is initialized before launching next", Checked = settings.WaitForClientInitializationBeforeNextLaunch, Bounds = new Rectangle(24, 500, 332, 28), BackColor = Color.Transparent };
+        waitForClientInitializationInput = new CheckBox { Text = "Wait for character in-world before launching next", Checked = settings.WaitForClientInitializationBeforeNextLaunch, Bounds = new Rectangle(24, 500, 332, 28), BackColor = Color.Transparent };
         waitForClientInitializationInput.CheckedChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
         settingsDrawer.Controls.Add(waitForClientInitializationInput);
 
@@ -3692,6 +3694,8 @@ internal sealed class MainForm : Form
             for (var index = 0; index < bandAccounts.Count; index++)
             {
                 cancellation.Token.ThrowIfCancellationRequested();
+                // Do not continue starting accounts after a background readiness check has failed.
+                foreach (var completed in readinessTasks.Where(task => task.IsCompleted)) await completed;
                 var account = bandAccounts[index];
                 accountStatuses[index] = accountStatuses[index] with { Status = "Checking" };
                 SetRandomLoadingGif();
@@ -3803,7 +3807,7 @@ internal sealed class MainForm : Form
     {
         UpdateLoadingQueueItem(queueIndex, client.Account, "Loading");
         progress?.Invoke("Loading");
-        await WaitForGameClientCharacterTitleAsync(client, token, status =>
+        await WaitForGameClientInWorldAsync(client, token, status =>
         {
             var normalizedStatus = status.Equals("Initialized", StringComparison.OrdinalIgnoreCase) ? "Initialized" : "Loading";
             UpdateLoadingQueueItem(queueIndex, client.Account, normalizedStatus);
@@ -3819,13 +3823,13 @@ internal sealed class MainForm : Form
         try
         {
             var client = await StartAccountAndWaitForClientAsync(account, token);
-            await WaitForGameClientCharacterTitleAsync(client, token);
+            await WaitForGameClientInWorldAsync(client, token);
             RememberAccountConnected(account);
             if (!quiet)
             {
-                SetStatus($"{account.Name} reached the character window title.");
+                SetStatus($"{account.Name} is in-world (read-only game-state check).");
             }
-            UpdateLoadingOverlay($"{account.Name} reached the character window title.");
+            UpdateLoadingOverlay($"{account.Name} is in-world (read-only game-state check).");
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -3849,6 +3853,17 @@ internal sealed class MainForm : Form
     private async Task<StartedGameClient> StartAccountAndWaitForClientAsync(Account account, CancellationToken token)
     {
         SaveSettingsFromInputs();
+        // Before asking XIVLauncher for another client, release only the two known FFXIV count locks.
+        // No new account is started if access/identity validation fails.
+        await Task.Run(() =>
+        {
+            foreach (var running in RunningClientAwareness.Capture())
+            {
+                token.ThrowIfCancellationRequested();
+                if (running.StartTimeUtc is DateTime start)
+                    GameClientLimit.InspectOrRelease(running.ProcessId, start, release: true);
+            }
+        }, token);
         var launcherProcessesBefore = GetLauncherProcessIds();
         var helperProcessesBefore = settings.AutoCloseLaunchHelpers ? LaunchHelperCleanup.CaptureProcessIds() : [];
         var gameClientsBefore = GetGameClientProcessIds();
@@ -3876,12 +3891,15 @@ internal sealed class MainForm : Form
 
         await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, account.Name, token);
         var client = await WaitForFreshGameClientAsync(gameClientsBefore, account.Name, token);
+        using var gameProcess = Process.GetProcessById(client.ProcessId);
+        var gameStart = gameProcess.StartTime.ToUniversalTime();
         runningClientProcessIds[AccountIconKey(account)] = client.ProcessId;
         runningClientAwareness.Track(AccountIconKey(account), client.ProcessId);
+        clientLabels.Track(client.ProcessId, gameStart, AccountDisplayName(account));
         var cleanupScope = settings.AutoCloseLaunchHelpers
             ? new LaunchHelperCleanupScope(helperProcessesBefore, launcherProcessId)
             : null;
-        return new StartedGameClient(account, client.ProcessId, cleanupScope);
+        return new StartedGameClient(account, client.ProcessId, cleanupScope, gameStart);
     }
 
     private async Task WaitForLaunchCooldownAsync(string bandName, CancellationToken token)
@@ -4171,73 +4189,52 @@ internal sealed class MainForm : Form
         throw new TimeoutException($"Timed out waiting for {accountName}'s FFXIV client to appear.");
     }
 
-    private async Task WaitForGameClientCharacterTitleAsync(StartedGameClient startedClient, CancellationToken token, Action<string>? accountStatus = null)
+    private async Task WaitForGameClientInWorldAsync(StartedGameClient startedClient, CancellationToken token, Action<string>? accountStatus = null)
     {
         var deadline = DateTime.UtcNow.AddMinutes(10);
-        var stableCharacterTitleHits = 0;
-        string? stableCharacterTitle = null;
-        var sawGameConnection = false;
-        var characterNameCandidates = AccountCharacterNameCandidates(startedClient.Account);
+        var gate = new WorldReadinessGate();
+        var reader = new ExternalGameState();
+        if (startedClient.StartTimeUtc is not DateTime startedAt)
+            throw new InvalidOperationException("Client start time is unavailable; refusing to guess its identity.");
         while (DateTime.UtcNow < deadline)
         {
             token.ThrowIfCancellationRequested();
-            var matchedClient = FindGameClientByAccountTitle(startedClient.Account, characterNameCandidates);
-            var client = matchedClient ?? GetGameClientByProcessId(startedClient.ProcessId);
-            if (client is null)
+            var state = await Task.Run(() => reader.Read(startedClient.ProcessId, startedAt), token);
+            token.ThrowIfCancellationRequested();
+            if (state.State == WorldReadiness.Unknown)
             {
-                var message = $"Waiting for {startedClient.Account.Name}'s game client...";
-                SetStatus(message);
-                accountStatus?.Invoke("Loading");
-                UpdateLoadingOverlay(message);
-                await Task.Delay(500, token);
-                continue;
+                gate.Observe(state, DateTime.UtcNow);
+                if (!state.Detail.Contains("during sampling", StringComparison.Ordinal) &&
+                    !state.Detail.Contains("identity cross-check", StringComparison.Ordinal))
+                    throw new InvalidOperationException($"Readiness unknown for {startedClient.Account.Name}: {state.Detail}");
             }
-
-            var processId = client.Value.ProcessId;
-            if (HasEstablishedTcpConnection(processId))
+            settings.AccountIcons.TryGetValue(AccountIconKey(startedClient.Account), out var expected);
+            if (!string.IsNullOrWhiteSpace(state.CharacterName) && !string.IsNullOrWhiteSpace(expected?.CharacterName) &&
+                !state.CharacterName.Equals(expected.CharacterName, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"A different character is logged into {startedClient.Account.Name}. Check character selection.");
+            if (GameWorldNames.All.TryGetValue(state.HomeWorld, out var actualWorld) &&
+                !string.IsNullOrWhiteSpace(expected?.World) &&
+                !actualWorld.Equals(expected.World.Trim(), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"The character's home world does not match {startedClient.Account.Name}'s saved profile. Check the account's character/world.");
+            if (gate.Observe(state, DateTime.UtcNow))
             {
-                sawGameConnection = true;
+                runningClientProcessIds[AccountIconKey(startedClient.Account)] = startedClient.ProcessId;
+                if (GameWorldNames.All.TryGetValue(state.HomeWorld, out var world))
+                    RememberAccountCharacterTitle(startedClient.Account, $"{state.CharacterName}@{world}");
+                var readyMessage = $"{state.CharacterName} is in-world (loaded territory confirmed).";
+                SetStatus(readyMessage, force: true);
+                accountStatus?.Invoke("Initialized");
+                UpdateLoadingOverlay(readyMessage);
+                await CloseLaunchHelpersAsync(startedClient);
+                return;
             }
-
-            var title = client.Value.Title.Trim();
-            if (IsMatchingCharacterTitle(title, characterNameCandidates))
-            {
-                runningClientProcessIds[AccountIconKey(startedClient.Account)] = processId;
-                stableCharacterTitleHits = title.Equals(stableCharacterTitle, StringComparison.Ordinal)
-                    ? stableCharacterTitleHits + 1
-                    : 1;
-                stableCharacterTitle = title;
-                var message = $"Detected {title} ({stableCharacterTitleHits}/3).";
-                SetStatus(message);
-                accountStatus?.Invoke("Loading");
-                UpdateLoadingOverlay(message);
-                if (stableCharacterTitleHits >= 3)
-                {
-                    var readyMessage = $"{title} is ready.";
-                    SetStatus(readyMessage, force: true);
-                    accountStatus?.Invoke("Initialized");
-                    UpdateLoadingOverlay(readyMessage);
-                    RememberAccountCharacterTitle(startedClient.Account, title);
-                    await CloseLaunchHelpersAsync(startedClient);
-                    return;
-                }
-            }
-            else
-            {
-                stableCharacterTitleHits = 0;
-                stableCharacterTitle = null;
-                var message = sawGameConnection
-                    ? $"Waiting {startedClient.Account.Name} to connect..."
-                    : $"Waiting for {startedClient.Account.Name}'s data center connection...";
-                SetStatus(message);
-                accountStatus?.Invoke("Loading");
-                UpdateLoadingOverlay(message);
-            }
-
+            var message = $"{startedClient.Account.Name}: {state.Detail} Character selection is manual or handled by your existing autologin plugin.";
+            SetStatus(message);
+            accountStatus?.Invoke("Loading");
+            UpdateLoadingOverlay(message);
             await Task.Delay(700, token);
         }
-
-        throw new TimeoutException($"Timed out waiting for {startedClient.Account.Name}'s FFXIV window title to switch to Character@World.");
+        throw new TimeoutException($"Timed out waiting for {startedClient.Account.Name} to enter a loaded territory. No window title or timer was used as proof of login.");
     }
 
     private async Task CloseLaunchHelpersAsync(StartedGameClient startedClient)
@@ -4280,6 +4277,7 @@ internal sealed class MainForm : Form
 
     private static GameClientWindow? GetFreshGameClient(HashSet<int> existingProcessIds)
     {
+        var found = new List<GameClientWindow>();
         foreach (var processName in new[] { "ffxiv", "ffxiv_dx11" })
         {
             foreach (var process in Process.GetProcessesByName(processName))
@@ -4290,10 +4288,9 @@ internal sealed class MainForm : Form
                     process.Refresh();
                     var handle = process.MainWindowHandle;
                     var title = process.MainWindowTitle ?? "";
-                    if (handle == IntPtr.Zero) return new GameClientWindow(process.Id, handle, title);
-                    if (IsWindowVisible(handle) && GetWindowRect(handle, out var rect) && rect.Width > 320 && rect.Height > 240)
+                    if (handle == IntPtr.Zero || (IsWindowVisible(handle) && GetWindowRect(handle, out var rect) && rect.Width > 320 && rect.Height > 240))
                     {
-                        return new GameClientWindow(process.Id, handle, title);
+                        found.Add(new GameClientWindow(process.Id, handle, title));
                     }
                 }
                 catch { }
@@ -4303,8 +4300,16 @@ internal sealed class MainForm : Form
                 }
             }
         }
-        return null;
+        return SelectUnambiguousNewClient(found);
     }
+
+    internal static GameClientWindow? SelectUnambiguousNewClient(IReadOnlyList<GameClientWindow> clients) =>
+        clients.Count switch
+        {
+            0 => null,
+            1 => clients[0],
+            _ => throw new InvalidOperationException("Multiple new FFXIV clients appeared. Stop external launches and retry; no client was assigned to this account.")
+        };
 
     private static GameClientWindow? GetGameClientByProcessId(int processId)
     {
@@ -4881,7 +4886,7 @@ internal sealed class MainForm : Form
         var key = AccountIconKey(account);
         if (runningClientProcessIds.TryGetValue(key, out var trackedProcessId))
         {
-            if (IsRunningGameClientProcess(trackedProcessId))
+            if (runningClientAwareness.IsTracked(key, trackedProcessId))
             {
                 ids.Add(trackedProcessId);
             }
@@ -4893,26 +4898,19 @@ internal sealed class MainForm : Form
 
         var candidates = AccountCharacterNameCandidates(account);
         if (candidates.Count == 0) return ids.ToList();
-        foreach (var processName in new[] { "ffxiv", "ffxiv_dx11" })
+        settings.AccountIcons.TryGetValue(key, out var expectedProfile);
+        var reader = new ExternalGameState();
+        foreach (var client in RunningClientAwareness.Capture())
         {
-            foreach (var process in Process.GetProcessesByName(processName))
-            {
-                try
-                {
-                    var title = process.MainWindowTitle ?? "";
-                    if (GameClientTitleMatchesAccount(title, candidates))
-                    {
-                        ids.Add(process.Id);
-                    }
-                }
-                catch
-                {
-                }
-                finally
-                {
-                    process.Dispose();
-                }
-            }
+            if (client.StartTimeUtc is not DateTime start) continue;
+            var state = reader.Read(client.ProcessId, start);
+            // Destructive account actions require tracked ownership or validated identity,
+            // never an arbitrary window title or an ambiguous same-name character.
+            if (state.State is not (WorldReadiness.InWorld or WorldReadiness.Loading) ||
+                !candidates.Contains(state.CharacterName) || string.IsNullOrWhiteSpace(expectedProfile?.World) ||
+                !GameWorldNames.All.TryGetValue(state.HomeWorld, out var world) ||
+                !world.Equals(expectedProfile.World.Trim(), StringComparison.OrdinalIgnoreCase)) continue;
+            ids.Add(client.ProcessId);
         }
         return ids.ToList();
     }

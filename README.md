@@ -34,11 +34,19 @@ The Artemis desktop pet can be enabled or disabled under Settings. Drag her with
 
 ### Already-running clients
 
-Band launching checks live `ffxiv`/`ffxiv_dx11` processes before each member is launched. It matches the account's linked/remembered character name and world to the game's `Character@World` window title. Without linked character metadata, it uses the account's display name. A client launched during the current Potato Launcher session can also be recognized by its process ID **and start time**, even while its title is generic.
+In the 1.0.105 preview, band launching reads character identity and home world directly from supported live DX11 clients before each member is launched. MoP's title updates are not required. A legacy `Character@World` title remains a discovery fallback when memory detection is unavailable, but never proves readiness. Without linked character metadata, discovery uses the account's display name. Clients launched during the current session are also tracked by process ID **and start time**.
 
 Matching members appear as **Already running** and are skipped. Saved band checkboxes are not changed. Existing clients are not logged in again, initialized again, optimized, or subject to launch-helper cleanup. If every member is already running, no launch command is issued. Single-account launch remains an explicit launch action; this automatic skip applies to bands.
 
-Discovery cannot identify an externally launched client that has no character title (including login screens or setups without character-title updates), or a process Windows prevents Potato Launcher from inspecting. Those unknown clients are not arbitrarily assigned to accounts. Use accurate character metadata/titles before launching a band. Conflicting worlds or multiple same-name matches without a configured world stop the queue with an explanation; verify the account and any world visit first. Discovery is PC-local, not account-online detection across computers. Separate simultaneously running Potato Launcher instances or external launches can still race; use one launcher instance per PC and avoid starting the same account elsewhere during its queue.
+Discovery cannot assign an externally launched pre-login client to an account, or reliably identify a process Windows prevents Potato Launcher from inspecting. Unknown clients are not arbitrarily assigned. Keep character/home-world metadata accurate. Conflicting worlds or multiple same-name matches without a configured world stop the queue. Discovery is PC-local, not account-online detection across computers. Use one launcher instance per PC and avoid external launches during its queue.
+
+### Plugin-free launch preview
+
+Version 1.0.105-preview.1 releases only FFXIV's two exact instance-limit mutex handles before launching another client, using the same mechanism as MoP from outside the game. It does not terminate game processes, inject code, or write game memory. Access or identity-validation failures stop the launch.
+
+Potato maintains titles for clients it starts and confirms a loaded local player and territory through read-only game state, stable for three seconds. Character selection is still manual or handled by your chosen autologin plugin. The launch cooldown is separate from readiness. Unsupported game builds fail with a compatibility-update message instead of guessing; the current profile is pinned to game build `2026.09.15.0000.0000`.
+
+This is a public prerelease, excluded from the stable updater. The no-MoP third-client launch and other live checks remain pending; see [verification notes](docs/PLUGIN_FREE_LAUNCH_VERIFICATION.md).
 
 ### Pairing PCs
 
