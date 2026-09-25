@@ -70,7 +70,8 @@ public class OptimizerMonitorFormTests
                 refreshStable.Invoke(form, null);
                 Assert.Equal(0, labelChanges);
                 Assert.Equal(CpuAssignmentMode.BalancedShared, optimizer.Settings.CpuAssignmentMode);
-                Assert.Equal(6, optimizer.Settings.MainLogicalProcessors);
+                // Normalization clamps the default to this machine's available CPU count.
+                Assert.Equal(Math.Min(6, Environment.ProcessorCount), optimizer.Settings.MainLogicalProcessors);
                 foreach (var size in new[] { new Size(1120, 780), new Size(940, 680) })
                 {
                     form.Size = size;
