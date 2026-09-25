@@ -19,9 +19,9 @@ public class OptimizerCoreTests
     }
 
     [Fact]
-    public void OptimizerSettings_DefaultsToPressureAwareMemoryTrimming()
+    public void OptimizerSettings_DefaultsToPerClientThresholdTrimming()
     {
-        Assert.Equal(MemoryTrimMode.PressureAware, new OptimizerSettings().MemoryTrimMode);
+        Assert.Equal(MemoryTrimMode.Threshold, new OptimizerSettings().MemoryTrimMode);
     }
 
     [Fact]

@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.0.107 - 2026-09-25
+
+- Add in-app rollback to the three previous published stable releases, with confirmation and application/profile JSON backups.
+- Add hardware-aware shared CPU allocation, safer affinity restoration and CPU-aware launch pacing; remove Rescue CPU. Launch pacing is not a hard CPU cap.
+- Keep configurable per-client RAM thresholds and cooldowns, protect main/foreground clients, and show system commit separately from resident RAM.
+- Improve GPU monitoring, add optional PresentMon FPS measurement, and reduce launcher animation, allocation and optimizer refresh overhead.
+- Contain optional Artemis desktop-pet rendering failures and fix repeated footer repainting.
+- Known limitations: 16 clients at 60 FPS is hardware/settings dependent and not guaranteed. Working-set trimming does not release commit. The separately reported news-banner drawing OOM under extreme memory pressure is not fixed in this release; the pet fix does not cover every renderer. Rollback to older releases may lose current game compatibility or plugin-free features.
+
+## 1.0.107-preview.6 - local test build, 2026-09-25
+
+- Add Settings → Roll back version with the three preceding published stable releases, downloaded from the official repository and checked against their executable version.
+- Require confirmation and an idle launch queue; back up application files and profile JSON before replacement. Copy only the executable/assets, preserve active settings, and attempt application-file recovery after replacement failure.
+
+## 1.0.107-preview.5 - local test build, 2026-09-23
+
+- Avoid clearing and re-appending optimizer footer text on every refresh. Unchanged main-client/memory text no longer triggers repeated repainting.
+- Apply CPU-mode visibility changes only when the mode changes and double-buffer optimizer table-layout containers. Per-client RAM trimming remains unchanged.
+
+## 1.0.107-preview.4 - local test build, 2026-09-23
+
+- Restore per-client Trim trigger MB and Auto trim at threshold / Pressure-aware modes at the user's request. Existing saved thresholds and enabled choices survive migration from the budget preview.
+- Remove the combined 30 GiB budget and rebound-observation policy from active trimming. Restore configurable sweep interval and per-client cooldown (defaults 10/30 seconds); one client per attempt. Main/foreground protection, PID/start-time validation, planning-only safety and commit warnings remain.
+- Balanced preset preserves the user's threshold rather than replacing it with a band budget. Other CPU and rendering changes are retained. This preview does not include a fix for the separately reported news-banner rendering failure.
+
+## 1.0.107-preview.3 - local test build, 2026-09-23
+
+- Contain desktop-pet out-of-memory/GDI drawing failures: stop and hide the optional pet for the session, release its artwork, and leave the launcher running. Reuse frame and pixel buffers instead of allocating them on every frame; check native drawing failures and release resources on direct disposal as well as closing.
+- Replace fixed launch cooldown with three consecutive calm CPU readings, using language-neutral Windows PDH counters. Failed measurements and a five-minute busy timeout stop the queue; cancellation is checked again before launch.
+- Handle a disappearing/inaccessible process during manual RAM trimming without an unhandled UI exception.
+- Display system committed memory separately from physical RAM and warn at 95% of the commit limit. This is informational, not a launch block.
+- This is not a fix for exhausted Windows commit capacity. RAM trimming does not release the game's private committed allocations, and no CPU hard cap or OS/pagefile change is included.
+
+## 1.0.107-preview.2 - local test build, 2026-09-23
+
+- Replace fixed per-client RAM thresholds with a configurable 30 GiB summed game working-set target; Balanced preset now enables this policy.
+- Trim one eligible background in-world client at a time, check resident-memory rebound after ten seconds, and back off globally/per-client if savings do not persist. Report system available RAM separately, without attributing concurrent launches to trimming failure.
+- Protect main, foreground, newly started and loading clients. Preserve existing enabled/disabled preference on migration. No launch admission guard or hard working-set limit is applied.
+- Hide irrelevant main/follower CPU-count fields in shared mode and describe the actual policy. BalancedShared on a single cache domain is all-core scheduling, not a measured performance gain.
+- The memory target is best-effort and cannot guarantee zero stutter or prevent out-of-memory crashes. Live 16-client RAM/FPS validation is still required.
+
+## 1.0.107-preview.1 - local test build, 2026-09-23
+
+- Remove manual and automatic Rescue CPU.
+- Add hardware-aware BalancedShared allocation and a Balanced preset, without exclusive main/system core reservations or a fixed client limit. Keep Windows scheduling for hybrid/unknown core types and asymmetric layouts; decline unsupported cross-processor-group affinity changes.
+- Restore only CPU affinities this session actually changed, respecting process identity and external changes. Do not overwrite process priorities. Stop / restore disables CPU and RAM automation; planning-only restores owned changes.
+- Disable automatic RAM trimming in new profiles and the balanced preset; explicit trimming affects one eligible client per sweep rather than the entire band.
+- Fix GPU 3D totals to use the busiest engine, move GPU sampling off the UI thread, cache CPU topology, and detect reused PIDs in CPU samples.
+- Add optional plugin-free PresentMon capture with per-client average present rate and p95 frame times.
+- Keep full SMT siblings in one-physical-core mode and distribute advanced shared-pool followers evenly from the first clients onward.
+- Preserve combo-box selections when the optimizer window opens and keep controls accessible at its minimum size.
+- Use replacement writes for launcher, account-list state and optimizer settings. Pause launcher theme video and decorative updates while minimized.
+- Performance improvement and maximum 60-FPS client capacity still require controlled live testing; no GPU scheduling, game graphics or frame-cap changes are applied by this build.
+
 ## 1.0.106 - 2026-09-22
 
 - Follow a newly started FFXIV process immediately even when XIVLauncher stays open without a window. This prevents the final band member from remaining queued while its game client is already running.

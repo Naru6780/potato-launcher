@@ -26,6 +26,6 @@ Open Optimizer and confirm:
 4. Other configured mains appear as `Follower (main candidate)`.
 5. The Planned column never overlaps the active main or reserved system processors.
 
-Allocation, rescue, and memory-pressure transitions are written to `test-profile\optimizer-decisions.log`.
+Allocation and memory-pressure transitions are written to `test-profile\optimizer-decisions.log`. Rescue CPU has been removed.
 
 Before a live affinity test, close the production Potato Launcher or disable its CPU optimizer. Select `Live optimization — apply CPU affinity` only in the test build, apply the allocation, and begin with two clients before testing larger bands.

@@ -109,6 +109,7 @@ internal sealed class AppSettings
     public bool LaunchModeChosen { get; set; }
     public string Theme { get; set; } = "Pink";
     public int LaunchCooldownSeconds { get; set; } = 0;
+    public int LaunchCpuThresholdPercent { get; set; } = 80;
     public bool WaitForClientInitializationBeforeNextLaunch { get; set; }
     public bool AutoCloseLaunchHelpers { get; set; }
     public string AccountDisplayMode { get; set; } = "Text";
@@ -266,7 +267,7 @@ internal static class AppText
         Pair two Potato Launcher PCs on the same private network, choose one local band and one remote band, and save them as a launch plan. Launch both queues from the main PC with a synchronized countdown and combined progress. Account credentials always stay on their own PC.
 
         Launching
-        OTP-enabled accounts launch with autologin disabled so you can finish login manually. Potato releases FFXIV's two instance-count mutexes before launching another client; MoP is not needed for this. Character selection remains manual or handled by your existing autologin plugin. In-world readiness uses read-only game state, never window titles or cooldowns. Game patches may require a compatibility update. The launch cooldown setting still adds a delay between band launches. The optional helper cleanup setting closes only the XIVLauncher and Dalamud helper processes detected for that launch after its game client is initialized; closing DalamudCrashHandler disables its crash-reporting protection for that client.
+        OTP-enabled accounts launch with autologin disabled so you can finish login manually. Potato releases FFXIV's two instance-count mutexes before launching another client; MoP is not needed for this. Character selection remains manual or handled by your existing autologin plugin. In-world readiness uses read-only game state, never window titles or cooldowns. Game patches may require a compatibility update. Before each launch, CPU usage must stay below the configured threshold for three consecutive one-second readings. A measurement failure or five-minute busy timeout stops the queue. This pacing does not cap CPU usage or prevent memory exhaustion. The optional helper cleanup setting closes only the XIVLauncher and Dalamud helper processes detected for that launch after its game client is initialized; closing DalamudCrashHandler disables its crash-reporting protection for that client.
 
         Display and themes
         Switch the account list between Text and Roster display in Settings. Themes can change colors and backgrounds, and can be randomized each time the app starts.
@@ -284,7 +285,7 @@ internal static class AppText
         Kill FFXIV closes every running FFXIV game process. Per-account and per-band kill actions only target clients Potato Launcher can match to those accounts.
 
         Optimizer
-        Optimizer opens a live monitor for running FFXIV clients. Adaptive Shared Pools uses the chosen main processor count to size a cache-local allocation, then automatically shares the remaining pools among followers; the follower processor count is used only by Split Lanes. Main selection order chooses one active main when multiple configured candidates are running. Live optimization applies CPU affinity; Planning only shows the proposed allocation without changing it. Auto RAM Optimization can be pressure-aware or trim followers above the configured threshold, and Rescue selected temporarily expands a stalled follower's CPU allocation.
+        Optimizer targets 60 FPS for every client, subject to hardware and game settings. Balanced preset shares CPU capacity without exclusive main/system reservations and enables RAM trimming with a 30 GiB total game-RAM target. Symmetric cache domains can share clients evenly; hybrid, asymmetric or unknown layouts retain all-core scheduling. On a single cache domain BalancedShared is equivalent to all-core scheduling, not a dynamic FPS tuner. Compare modes using Measure FPS (optional PresentMon console, no game plugin). RAM trimming observes one client's resident-memory rebound before continuing and protects main, foreground and loading clients. It does not enforce a hard memory cap, block launches, free committed allocations or guarantee zero stutters. Planning only applies neither CPU changes nor RAM trims. Stop / restore disables automation and restores only session-owned affinity changes. GPU 3D readings are monitoring, not GPU-core allocation.
         """);
     }
 
@@ -538,6 +539,7 @@ internal static class SettingsMigration
         settings.SharedProfileFolder ??= "";
         settings.Theme = string.IsNullOrWhiteSpace(settings.Theme) ? "Pink" : settings.Theme.Trim();
         settings.LaunchCooldownSeconds = Math.Clamp(settings.LaunchCooldownSeconds, 0, 300);
+        settings.LaunchCpuThresholdPercent = Math.Clamp(settings.LaunchCpuThresholdPercent, 40, 95);
         settings.AccountDisplayMode = NormalizeAccountDisplayModeValue(settings.AccountDisplayMode);
         settings.LastShownChangelogVersion ??= "";
         settings.AccountIcons ??= [];
@@ -839,6 +841,8 @@ internal sealed class MainForm : Form
     private Button browseBatButton = null!;
     private Button browseSharedProfileButton = null!;
     private Button updateButton = null!;
+    private Button rollbackButton = null!;
+    private bool releaseOperationActive;
     private Label accountDisplayLabel = null!;
     private ComboBox accountDisplayInput = null!;
     private Label launchCooldownLabel = null!;
@@ -1008,13 +1012,16 @@ internal sealed class MainForm : Form
         {
             UpdateMascotOverlay();
             UpdateDesktopPetVisibility();
+            UpdateDecorativePlayback();
         };
+        VisibleChanged += (_, _) => UpdateDecorativePlayback();
         Move += (_, _) => UpdateMascotOverlay();
         Resize += (_, _) =>
         {
             ApplyResponsiveLayout();
             UpdateMascotOverlay();
             UpdateDesktopPetVisibility();
+            UpdateDecorativePlayback();
         };
         Activated += (_, _) => UpdateMascotOverlay();
         FormClosed += async (_, _) =>
@@ -1061,7 +1068,7 @@ internal sealed class MainForm : Form
         backgroundVideo.MediaEnded += (_, _) =>
         {
             backgroundVideo.Position = TimeSpan.Zero;
-            backgroundVideo.Play();
+            UpdateDecorativePlayback();
         };
 
         wpfMascot = new WpfImage
@@ -1568,13 +1575,13 @@ internal sealed class MainForm : Form
         themeInput.SelectedIndexChanged += (_, _) => { SaveSettingsFromInputs(showFeedback: true); ApplyTheme(settings.Theme); };
         settingsDrawer.Controls.AddRange([themeLabel, themeInput]);
 
-        launchCooldownLabel = Label("Launch cooldown: seconds between clients", 24, 432, 300, 24);
+        launchCooldownLabel = Label("Launch when CPU stays below (%) for 3 sec", 24, 432, 332, 24);
         settingsDrawer.Controls.Add(launchCooldownLabel);
         launchCooldownInput = new NumericUpDown
         {
-            Minimum = 0,
-            Maximum = 300,
-            Value = Math.Clamp(settings.LaunchCooldownSeconds, 0, 300),
+            Minimum = 40,
+            Maximum = 95,
+            Value = Math.Clamp(settings.LaunchCpuThresholdPercent, 40, 95),
             Bounds = new Rectangle(24, 460, 96, 29)
         };
         launchCooldownInput.ValueChanged += (_, _) => SaveSettingsFromInputs(showFeedback: true);
@@ -1613,6 +1620,9 @@ internal sealed class MainForm : Form
         updateButton = Button("Check for updates", 24, 752, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
+        rollbackButton = Button("Roll back version", 24, 794, 180, 34, "Secondary");
+        rollbackButton.Click += async (_, _) => await RollBackVersionAsync();
+        settingsDrawer.Controls.Add(rollbackButton);
         UpdateLaunchModeUi();
         background.Controls.Add(settingsDrawer);
     }
@@ -1648,6 +1658,7 @@ internal sealed class MainForm : Form
             SetY(notificationsEnabledInput, 662);
             SetY(desktopPetEnabledInput, 696);
             SetY(updateButton, 734);
+            SetY(rollbackButton, 776);
         }
         else
         {
@@ -1667,6 +1678,7 @@ internal sealed class MainForm : Form
             SetY(notificationsEnabledInput, 662);
             SetY(desktopPetEnabledInput, 696);
             SetY(updateButton, 734);
+            SetY(rollbackButton, 776);
         }
     }
 
@@ -3739,10 +3751,6 @@ internal sealed class MainForm : Form
                     readinessTasks.Add(readinessTask);
                 }
 
-                if (index < bandAccounts.Count - 1)
-                {
-                    await WaitForLaunchCooldownAsync(band.Name, cancellation.Token);
-                }
             }
             await Task.WhenAll(readinessTasks);
             var loadedMessage = $"{band.Name}: {launchedCount} launched, {skippedCount} already running (skipped).";
@@ -3848,6 +3856,7 @@ internal sealed class MainForm : Form
     private async Task<StartedGameClient> StartAccountAndWaitForClientAsync(Account account, CancellationToken token)
     {
         SaveSettingsFromInputs();
+        await WaitForCpuHeadroomAsync(account.Name, token);
         // Before asking XIVLauncher for another client, release only the two known FFXIV count locks.
         // No new account is started if access/identity validation fails.
         await Task.Run(() =>
@@ -3874,6 +3883,7 @@ internal sealed class MainForm : Form
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden
         };
+        token.ThrowIfCancellationRequested();
         using var launcherProcess = Process.Start(startInfo);
         var launcherProcessId = launcherProcess?.Id;
         SetStatus(IsSharedLaunchMode()
@@ -3897,18 +3907,14 @@ internal sealed class MainForm : Form
         return new StartedGameClient(account, client.ProcessId, cleanupScope, gameStart);
     }
 
-    private async Task WaitForLaunchCooldownAsync(string bandName, CancellationToken token)
+    private async Task WaitForCpuHeadroomAsync(string accountName, CancellationToken token)
     {
-        var seconds = Math.Clamp(settings.LaunchCooldownSeconds, 0, 300);
-        if (seconds <= 0) return;
-        for (var remaining = seconds; remaining > 0; remaining--)
+        await CpuLaunchPacing.WaitAsync(settings.LaunchCpuThresholdPercent, message =>
         {
-            token.ThrowIfCancellationRequested();
-            var message = $"{bandName}: next client launches in {remaining}s.";
-            SetStatus(message);
-            UpdateLoadingOverlay(AppText.LoadingCooldownText(remaining), force: true);
-            await Task.Delay(TimeSpan.FromSeconds(1), token);
-        }
+            var statusMessage = $"{accountName}: {message}";
+            SetStatus(statusMessage, force: true);
+            UpdateLoadingOverlay(statusMessage, force: true);
+        }, token);
         UpdateLoadingOverlay("", force: true);
     }
 
@@ -5273,7 +5279,7 @@ internal sealed class MainForm : Form
         settings.LaunchMode = NormalizeLaunchMode(launchModeInput?.SelectedItem?.ToString() ?? settings.LaunchMode);
         settings.LaunchModeChosen = true;
         settings.Theme = themeInput?.SelectedItem?.ToString() ?? settings.Theme;
-        settings.LaunchCooldownSeconds = (int)(launchCooldownInput?.Value ?? settings.LaunchCooldownSeconds);
+        settings.LaunchCpuThresholdPercent = (int)(launchCooldownInput?.Value ?? settings.LaunchCpuThresholdPercent);
         settings.WaitForClientInitializationBeforeNextLaunch = waitForClientInitializationInput?.Checked ?? settings.WaitForClientInitializationBeforeNextLaunch;
         settings.AutoCloseLaunchHelpers = autoCloseLaunchHelpersInput?.Checked ?? settings.AutoCloseLaunchHelpers;
         settings.AccountDisplayMode = NormalizeAccountDisplayMode(accountDisplayInput?.SelectedItem?.ToString() ?? settings.AccountDisplayMode);
@@ -5287,6 +5293,9 @@ internal sealed class MainForm : Form
 
     private async Task CheckForUpdatesAsync()
     {
+        if (releaseOperationActive) return;
+        releaseOperationActive = true;
+        rollbackButton.Enabled = false;
         updateButton.Enabled = false;
         var previousStatus = status.Text;
         try
@@ -5326,8 +5335,113 @@ internal sealed class MainForm : Form
         }
         finally
         {
+            releaseOperationActive = false;
+            if (!IsDisposed) rollbackButton.Enabled = true;
             if (!IsDisposed) updateButton.Enabled = true;
         }
+    }
+
+    private async Task RollBackVersionAsync()
+    {
+        if (releaseOperationActive) return;
+        if (queueCancel is not null)
+        {
+            MessageBox.Show(this, "Finish or cancel the launch queue before rolling back.", "Rollback unavailable");
+            return;
+        }
+        releaseOperationActive = true;
+        updateButton.Enabled = rollbackButton.Enabled = false;
+        string? tempRoot = null;
+        var handedOff = false;
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
+            status.Text = "Loading previous releases...";
+            var json = await http.GetStringAsync($"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases?per_page=100");
+            var releases = RollbackReleases.Parse(json, CurrentAppVersion());
+            if (releases.Count == 0) throw new InvalidOperationException("No older stable release with a portable package was found.");
+            using var dialog = new Form { Text = "Roll back Potato Launcher", ClientSize = new Size(470, 190),
+                StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog,
+                MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false };
+            dialog.Controls.Add(new Label { Text = "Choose a previous published release. Older versions may lose\ncurrent game compatibility, fixes or plugin-free features.", Bounds = new Rectangle(18, 16, 430, 48) });
+            var choices = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(18, 74, 430, 28) };
+            choices.Items.AddRange(releases.Cast<object>().ToArray());
+            choices.SelectedIndex = 0;
+            dialog.Controls.Add(choices);
+            var accept = new Button { Text = "Continue", DialogResult = DialogResult.OK, Bounds = new Rectangle(234, 130, 100, 32) };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(346, 130, 100, 32) };
+            dialog.Controls.AddRange([accept, cancel]);
+            dialog.AcceptButton = accept;
+            dialog.CancelButton = cancel;
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            var selected = (RollbackRelease)choices.SelectedItem!;
+            if (MessageBox.Show(this, $"Roll back to {selected.Tag}?\n\nPotato Launcher will restart. Game clients will not be closed. Current application files and profile JSON settings will be backed up locally. Older versions may interpret settings differently.\n\nYou can use Check for updates in the older version to return to the latest published release; unpublished previews are not downloaded from GitHub.",
+                "Confirm rollback", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            tempRoot = Path.Combine(Path.GetTempPath(), $"PotatoLauncherRollback-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            var zipPath = Path.Combine(tempRoot, ReleaseZipName);
+            var extract = Path.Combine(tempRoot, "extract");
+            status.Text = $"Downloading {selected.Tag}...";
+            await using (var input = await http.GetStreamAsync(selected.DownloadUrl))
+            await using (var output = File.Create(zipPath)) await input.CopyToAsync(output);
+            await Task.Run(() => RollbackReleases.ExtractApplication(zipPath, extract));
+            if (ReadPackagedAppVersion(extract) != selected.Version) throw new InvalidDataException("Downloaded executable version does not match the selected release.");
+            if (queueCancel is not null) throw new InvalidOperationException("A launch queue started. Finish it before rolling back.");
+            SaveSettingsFromInputs();
+            StartRollbackUpdater(tempRoot, extract);
+            handedOff = true;
+            Application.Exit();
+        }
+        catch (Exception ex) { MessageBox.Show(this, $"Rollback could not start.\n\n{ex.Message}", "Rollback failed", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        finally
+        {
+            if (!handedOff && tempRoot is not null) TryDeleteDirectory(tempRoot);
+            releaseOperationActive = false;
+            if (!IsDisposed) { updateButton.Enabled = rollbackButton.Enabled = true; status.Text = "Ready."; }
+        }
+    }
+
+    private static void StartRollbackUpdater(string tempRoot, string extractPath)
+    {
+        var backup = Path.Combine(PersistentDataRoot(), "Rollback Backups", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
+        var script = $$"""
+            $ErrorActionPreference = 'Stop'
+            $extract = '{{EscapePowerShellString(extractPath)}}'
+            $target = '{{EscapePowerShellString(AppContext.BaseDirectory)}}'
+            $exe = '{{EscapePowerShellString(Application.ExecutablePath)}}'
+            $backup = '{{EscapePowerShellString(backup)}}'
+            $profile = '{{EscapePowerShellString(PersistentDataRoot())}}'
+            $changed = $false
+            try {
+                Wait-Process -Id {{Environment.ProcessId}} -ErrorAction SilentlyContinue
+                New-Item -ItemType Directory -Path (Join-Path $backup 'profile') -Force | Out-Null
+                Copy-Item -LiteralPath $exe -Destination (Join-Path $backup 'Potato Launcher.exe')
+                Copy-Item -LiteralPath (Join-Path $target 'Potato Launcher Assets') -Destination $backup -Recurse
+                Get-ChildItem -LiteralPath $profile -Filter '*.json' -File | Copy-Item -Destination (Join-Path $backup 'profile')
+                $changed = $true
+                Copy-Item -LiteralPath (Join-Path $extract 'Potato Launcher Assets') -Destination $target -Recurse -Force
+                Copy-Item -LiteralPath (Join-Path $extract 'Potato Launcher.exe') -Destination $exe -Force
+                Start-Process -FilePath $exe -WorkingDirectory $target
+            } catch {
+                $failure = $_.Exception.Message
+                if ($changed) {
+                    try {
+                        Copy-Item -LiteralPath (Join-Path $backup 'Potato Launcher Assets') -Destination $target -Recurse -Force
+                        Copy-Item -LiteralPath (Join-Path $backup 'Potato Launcher.exe') -Destination $exe -Force
+                        Start-Process -FilePath $exe -WorkingDirectory $target
+                    } catch { $failure += "`nAutomatic recovery failed: " + $_.Exception.Message }
+                }
+                Add-Type -AssemblyName System.Windows.Forms
+                [System.Windows.Forms.MessageBox]::Show("Rollback failed: $failure`nBackup: $backup", 'Potato Launcher rollback') | Out-Null
+            }
+            """;
+        var scriptPath = Path.Combine(tempRoot, "rollback.ps1");
+        File.WriteAllText(scriptPath, script);
+        using var updater = Process.Start(new ProcessStartInfo { FileName = "powershell.exe",
+            Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {QuoteArgument(scriptPath)}",
+            UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden })
+            ?? throw new InvalidOperationException("Could not start rollback installer.");
     }
 
     private async Task ShowChangelogIfNewVersionAsync()
@@ -5613,7 +5727,7 @@ internal sealed class MainForm : Form
             videoHost.Visible = true;
             videoHost.SendToBack();
             mascotTimer.Stop();
-            backgroundVideo.Play();
+            UpdateDecorativePlayback();
             ApplyResponsiveLayout();
             UpdateMascotOverlay();
             return;
@@ -5752,6 +5866,15 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void UpdateDecorativePlayback()
+    {
+        var active = Visible && WindowState != FormWindowState.Minimized;
+        if (background is not null) background.AnimateBubbles = active;
+        if (backgroundVideo is null || !themeHasVideo) return;
+        if (active) backgroundVideo.Play();
+        else backgroundVideo.Pause();
+    }
+
     private Color CurrentCardColor(RoundedPanel panel)
     {
         if (ReferenceEquals(panel, settingsDrawer)) return Color.FromArgb(244, palette.Card);
@@ -5777,7 +5900,7 @@ internal sealed class MainForm : Form
                 if (changed)
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                    File.WriteAllText(path, cleanedJson);
+                    AtomicTextFile.Write(path, cleanedJson);
                 }
 
                 return JsonSerializer.Deserialize<AppSettings>(cleanedJson) ?? new AppSettings();
@@ -5796,7 +5919,7 @@ internal sealed class MainForm : Form
             SettingsMigration.CleanSettings(settings);
             var path = SettingsPath();
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
+            AtomicTextFile.Write(path, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
     }
@@ -5897,7 +6020,7 @@ internal sealed class MainForm : Form
         {
             var path = AccountListStatePath();
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+            AtomicTextFile.Write(path, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
     }
@@ -7372,6 +7495,7 @@ internal sealed class NewsBandrollControl : Control
 
     private void UpdateRollAnimation()
     {
+        if (!Visible || FindForm()?.WindowState == FormWindowState.Minimized) return;
         if (slides.Count <= 1)
         {
             animating = false;
