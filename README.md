@@ -17,6 +17,10 @@ Potato Launcher is a Windows companion for FFXIV players who manage several XIVL
 
 ## Installation
 
+**v1.0.107 replacement:** this build starts from v106 and preserves its interface, launch cooldown and optimizer behavior. It adds rollback plus internal rendering/resource-handling improvements, not the earlier v107 optimizer redesign. If you already installed the earlier v107, download and install this replacement manually: an unchanged numeric version cannot trigger the existing updater.
+
+In Settings, **Roll back version** offers the three previous published stable releases (currently v106, v105 and v104). Finish or cancel any launch queue, select a version and confirm. It backs up the executable, assets and profile JSON under `%APPDATA%\Potato Launcher\Rollback Backups` before replacement. Active settings and game processes are not replaced or closed. Older versions may interpret settings differently or lose current game/plugin compatibility. Use Check for updates to return to the latest published version.
+
 Download `PotatoLauncherSetup.exe` from the [latest release](https://github.com/Naru6780/potato-launcher/releases/latest) and run it. A portable `PotatoLauncher.zip` is provided alongside the installer.
 
 Potato Launcher stores its configuration in `%APPDATA%\Potato Launcher`, separately from the application files. Updating or reinstalling the launcher does not reset saved bands or account settings.

@@ -839,6 +839,8 @@ internal sealed class MainForm : Form
     private Button browseBatButton = null!;
     private Button browseSharedProfileButton = null!;
     private Button updateButton = null!;
+    private Button rollbackButton = null!;
+    private bool releaseOperationActive;
     private Label accountDisplayLabel = null!;
     private ComboBox accountDisplayInput = null!;
     private Label launchCooldownLabel = null!;
@@ -1613,6 +1615,9 @@ internal sealed class MainForm : Form
         updateButton = Button("Check for updates", 24, 752, 180, 34, "Secondary");
         updateButton.Click += async (_, _) => await CheckForUpdatesAsync();
         settingsDrawer.Controls.Add(updateButton);
+        rollbackButton = Button("Roll back version", 24, 794, 180, 34, "Secondary");
+        rollbackButton.Click += async (_, _) => await RollBackVersionAsync();
+        settingsDrawer.Controls.Add(rollbackButton);
         UpdateLaunchModeUi();
         background.Controls.Add(settingsDrawer);
     }
@@ -1648,6 +1653,7 @@ internal sealed class MainForm : Form
             SetY(notificationsEnabledInput, 662);
             SetY(desktopPetEnabledInput, 696);
             SetY(updateButton, 734);
+            SetY(rollbackButton, 776);
         }
         else
         {
@@ -1667,6 +1673,7 @@ internal sealed class MainForm : Form
             SetY(notificationsEnabledInput, 662);
             SetY(desktopPetEnabledInput, 696);
             SetY(updateButton, 734);
+            SetY(rollbackButton, 776);
         }
     }
 
@@ -5287,6 +5294,9 @@ internal sealed class MainForm : Form
 
     private async Task CheckForUpdatesAsync()
     {
+        if (releaseOperationActive) return;
+        releaseOperationActive = true;
+        rollbackButton.Enabled = false;
         updateButton.Enabled = false;
         var previousStatus = status.Text;
         try
@@ -5327,7 +5337,112 @@ internal sealed class MainForm : Form
         finally
         {
             if (!IsDisposed) updateButton.Enabled = true;
+            releaseOperationActive = false;
+            if (!IsDisposed) rollbackButton.Enabled = true;
         }
+    }
+
+    private async Task RollBackVersionAsync()
+    {
+        if (releaseOperationActive) return;
+        if (queueCancel is not null)
+        {
+            MessageBox.Show(this, "Finish or cancel the launch queue before rolling back.", "Rollback unavailable");
+            return;
+        }
+        releaseOperationActive = true;
+        updateButton.Enabled = rollbackButton.Enabled = false;
+        string? tempRoot = null;
+        var handedOff = false;
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
+            status.Text = "Loading previous releases...";
+            var json = await http.GetStringAsync($"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases?per_page=100");
+            var releases = RollbackReleases.Parse(json, CurrentAppVersion());
+            if (releases.Count == 0) throw new InvalidOperationException("No older stable release with a portable package was found.");
+            using var dialog = new Form { Text = "Roll back Potato Launcher", ClientSize = new Size(470, 190),
+                StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog,
+                MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false };
+            dialog.Controls.Add(new Label { Text = "Choose a previous published release. Older versions may lose\ncurrent game compatibility, fixes or plugin-free features.", Bounds = new Rectangle(18, 16, 430, 48) });
+            var choices = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Bounds = new Rectangle(18, 74, 430, 28) };
+            choices.Items.AddRange(releases.Cast<object>().ToArray());
+            choices.SelectedIndex = 0;
+            dialog.Controls.Add(choices);
+            var accept = new Button { Text = "Continue", DialogResult = DialogResult.OK, Bounds = new Rectangle(234, 130, 100, 32) };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(346, 130, 100, 32) };
+            dialog.Controls.AddRange([accept, cancel]);
+            dialog.AcceptButton = accept;
+            dialog.CancelButton = cancel;
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            var selected = (RollbackRelease)choices.SelectedItem!;
+            if (MessageBox.Show(this, $"Roll back to {selected.Tag}?\n\nPotato Launcher will restart. Game clients will not be closed. Current application files and profile JSON settings will be backed up locally. Older versions may interpret settings differently.\n\nYou can use Check for updates in the older version to return to the latest published release; unpublished previews are not downloaded from GitHub.",
+                "Confirm rollback", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            tempRoot = Path.Combine(Path.GetTempPath(), $"PotatoLauncherRollback-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            var zipPath = Path.Combine(tempRoot, ReleaseZipName);
+            var extract = Path.Combine(tempRoot, "extract");
+            status.Text = $"Downloading {selected.Tag}...";
+            await using (var input = await http.GetStreamAsync(selected.DownloadUrl))
+            await using (var output = File.Create(zipPath)) await input.CopyToAsync(output);
+            await Task.Run(() => RollbackReleases.ExtractApplication(zipPath, extract));
+            if (ReadPackagedAppVersion(extract) != selected.Version) throw new InvalidDataException("Downloaded executable version does not match the selected release.");
+            if (queueCancel is not null) throw new InvalidOperationException("A launch queue started. Finish it before rolling back.");
+            SaveSettingsFromInputs();
+            StartRollbackUpdater(tempRoot, extract);
+            handedOff = true;
+            Application.Exit();
+        }
+        catch (Exception ex) { MessageBox.Show(this, $"Rollback could not start.\n\n{ex.Message}", "Rollback failed", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        finally
+        {
+            if (!handedOff && tempRoot is not null) TryDeleteDirectory(tempRoot);
+            releaseOperationActive = false;
+            if (!IsDisposed) { updateButton.Enabled = rollbackButton.Enabled = true; status.Text = "Ready."; }
+        }
+    }
+
+    private static void StartRollbackUpdater(string tempRoot, string extractPath)
+    {
+        var backup = Path.Combine(PersistentDataRoot(), "Rollback Backups", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
+        var script = $$"""
+            $ErrorActionPreference = 'Stop'
+            $extract = '{{EscapePowerShellString(extractPath)}}'
+            $target = '{{EscapePowerShellString(AppContext.BaseDirectory)}}'
+            $exe = '{{EscapePowerShellString(Application.ExecutablePath)}}'
+            $backup = '{{EscapePowerShellString(backup)}}'
+            $profile = '{{EscapePowerShellString(PersistentDataRoot())}}'
+            $changed = $false
+            try {
+                Wait-Process -Id {{Environment.ProcessId}} -ErrorAction SilentlyContinue
+                New-Item -ItemType Directory -Path (Join-Path $backup 'profile') -Force | Out-Null
+                Copy-Item -LiteralPath $exe -Destination (Join-Path $backup 'Potato Launcher.exe')
+                Copy-Item -LiteralPath (Join-Path $target 'Potato Launcher Assets') -Destination $backup -Recurse
+                Get-ChildItem -LiteralPath $profile -Filter '*.json' -File | Copy-Item -Destination (Join-Path $backup 'profile')
+                $changed = $true
+                Copy-Item -LiteralPath (Join-Path $extract 'Potato Launcher Assets') -Destination $target -Recurse -Force
+                Copy-Item -LiteralPath (Join-Path $extract 'Potato Launcher.exe') -Destination $exe -Force
+                Start-Process -FilePath $exe -WorkingDirectory $target
+            } catch {
+                $failure = $_.Exception.Message
+                if ($changed) {
+                    try {
+                        Copy-Item -LiteralPath (Join-Path $backup 'Potato Launcher Assets') -Destination $target -Recurse -Force
+                        Copy-Item -LiteralPath (Join-Path $backup 'Potato Launcher.exe') -Destination $exe -Force
+                        Start-Process -FilePath $exe -WorkingDirectory $target
+                    } catch { $failure += "`nAutomatic recovery failed: " + $_.Exception.Message }
+                }
+                Add-Type -AssemblyName System.Windows.Forms
+                [System.Windows.Forms.MessageBox]::Show("Rollback failed: $failure`nBackup: $backup", 'Potato Launcher rollback') | Out-Null
+            }
+            """;
+        var scriptPath = Path.Combine(tempRoot, "rollback.ps1");
+        File.WriteAllText(scriptPath, script);
+        using var updater = Process.Start(new ProcessStartInfo { FileName = "powershell.exe",
+            Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {QuoteArgument(scriptPath)}",
+            UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden })
+            ?? throw new InvalidOperationException("Could not start rollback installer.");
     }
 
     private async Task ShowChangelogIfNewVersionAsync()
@@ -5777,7 +5892,7 @@ internal sealed class MainForm : Form
                 if (changed)
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                    File.WriteAllText(path, cleanedJson);
+                    AtomicTextFile.Write(path, cleanedJson);
                 }
 
                 return JsonSerializer.Deserialize<AppSettings>(cleanedJson) ?? new AppSettings();
@@ -5796,7 +5911,7 @@ internal sealed class MainForm : Form
             SettingsMigration.CleanSettings(settings);
             var path = SettingsPath();
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
+            AtomicTextFile.Write(path, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
     }
@@ -5897,7 +6012,7 @@ internal sealed class MainForm : Form
         {
             var path = AccountListStatePath();
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+            AtomicTextFile.Write(path, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
     }
@@ -6153,6 +6268,7 @@ internal sealed class CuteBackgroundPanel : Panel
         timer.Tick += (_, _) =>
         {
             if (!Visible) return;
+            if (FindForm()?.WindowState == FormWindowState.Minimized) return;
             tick += 0.018f;
             Invalidate(ClientRectangle, false);
         };
@@ -7304,6 +7420,7 @@ internal readonly record struct TopNavigationBandrollMetrics(Rectangle Bounds, b
 
 internal sealed class NewsBandrollControl : Control
 {
+    private readonly OptionalRenderCircuit renderCircuit = new();
     private readonly System.Windows.Forms.Timer rollTimer = new();
     private readonly List<NewsBandrollSlide> slides = [];
     private int currentIndex;
@@ -7332,6 +7449,11 @@ internal sealed class NewsBandrollControl : Control
 
     public void SetSlides(IReadOnlyList<NewsBandrollSlide> newsSlides)
     {
+        if (renderCircuit.Failed)
+        {
+            foreach (var slide in newsSlides) slide.Image.Dispose();
+            return;
+        }
         foreach (var slide in slides)
         {
             slide.Image.Dispose();
@@ -7372,6 +7494,7 @@ internal sealed class NewsBandrollControl : Control
 
     private void UpdateRollAnimation()
     {
+        if (renderCircuit.Failed || !Visible || FindForm()?.WindowState == FormWindowState.Minimized) return;
         if (slides.Count <= 1)
         {
             animating = false;
@@ -7386,6 +7509,7 @@ internal sealed class NewsBandrollControl : Control
             animating = true;
         }
 
+        var needsPaint = animating;
         if (animating && (now - animationStartUtc).TotalMilliseconds >= AnimationMilliseconds)
         {
             currentIndex = nextIndex;
@@ -7394,12 +7518,28 @@ internal sealed class NewsBandrollControl : Control
             ApplyImageLayout();
         }
 
-        if (Visible) Invalidate();
+        if (needsPaint) Invalidate();
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+        RenderSafely(() => PaintSlides(e));
+    }
+
+    internal void RenderSafely(Action render)
+    {
+        if (renderCircuit.Failed) return;
+        if (renderCircuit.TryRender(render)) return;
+        rollTimer.Stop();
+        animating = false;
+        foreach (var slide in slides) slide.Image.Dispose();
+        slides.Clear();
+        Visible = false;
+    }
+
+    private void PaintSlides(PaintEventArgs e)
+    {
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
 
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;

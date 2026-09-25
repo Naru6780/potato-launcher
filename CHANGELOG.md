@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.107 - v106-based replacement, 2026-09-25
+
+- Replaces the earlier v107 with the v106 interface, optimizer policies, per-client RAM trimmer, Rescue CPU and fixed launch cooldown. The earlier v107 optimizer redesign is not included.
+- Add Settings → Roll back version for v106, v105 and v104, with confirmation and local application/profile JSON backups.
+- Reduce idle news-banner repaints, skip minimized bubble animation work, and reuse desktop-pet frame/pixel buffers.
+- Stop and release optional news/pet artwork after drawing-resource failures instead of letting those exceptions interrupt the launcher.
+- Safely replace launcher-owned settings files; dispose discarded process wrappers and failed GPU counters, and avoid repeated GPU counter discovery every refresh when unavailable.
+- Recognize superseded v107 optimizer mode names without discarding the rest of the user's settings. BalancedShared maps to existing AllAvailableCores; BandBudget maps to the existing per-client Threshold mode.
+- Existing v107 installations must reinstall this replacement manually because the version number is unchanged. No 16-client/60-FPS guarantee or Windows pagefile change is included.
+
 ## 1.0.106 - 2026-09-22
 
 - Follow a newly started FFXIV process immediately even when XIVLauncher stays open without a window. This prevents the final band member from remaining queued while its game client is already running.

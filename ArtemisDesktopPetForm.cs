@@ -115,6 +115,9 @@ internal sealed class ArtemisDesktopPetForm : Form
     private Point lastCursorPosition;
     private int lastFrame = -1;
     private int sizePercent;
+    private readonly OptionalRenderCircuit renderCircuit = new();
+    private Bitmap? frameBuffer;
+    private byte[] pixelBuffer = [];
 
     public event EventHandler? RestoreRequested;
     public event EventHandler? SizePercentChanged;
@@ -153,7 +156,7 @@ internal sealed class ArtemisDesktopPetForm : Form
         };
         VisibleChanged += (_, _) =>
         {
-            if (Visible)
+            if (Visible && !renderCircuit.Failed)
             {
                 BeginState(ArtemisAnimationState.Idle);
                 frameTimer.Start();
@@ -188,7 +191,7 @@ internal sealed class ArtemisDesktopPetForm : Form
 
     public void ShowNear(Rectangle workingArea)
     {
-        if (Visible) return;
+        if (Visible || renderCircuit.Failed || IsDisposed) return;
         Location = new Point(workingArea.Right - Width - 28, workingArea.Bottom - Height - 18);
         Show();
     }
@@ -268,14 +271,17 @@ internal sealed class ArtemisDesktopPetForm : Form
         BeginState(ArtemisAnimationState.Release);
     }
 
-    protected override void OnFormClosed(FormClosedEventArgs e)
+    protected override void Dispose(bool disposing)
     {
-        frameTimer.Stop();
-        frameTimer.Dispose();
-        stateClock.Stop();
-        petMenu.Dispose();
-        foreach (var sheet in sheets.Values) sheet.Dispose();
-        base.OnFormClosed(e);
+        if (disposing)
+        {
+            frameTimer.Stop();
+            frameTimer.Dispose();
+            stateClock.Stop();
+            petMenu.Dispose();
+            ReleaseRenderResources();
+        }
+        base.Dispose(disposing);
     }
 
     private void AdvanceAnimation()
@@ -304,13 +310,43 @@ internal sealed class ArtemisDesktopPetForm : Form
     }
 
     private void RenderCurrentFrame(bool force = false)
+        => RenderSafely(() => RenderFrameCore(force));
+
+    internal void RenderSafely(Action render)
+    {
+        if (renderCircuit.Failed) return;
+        if (renderCircuit.TryRender(render)) return;
+        // A cosmetic feature must not take down the launcher or retry allocations
+        // every timer tick under memory/GDI pressure. Stay disabled for this session.
+        frameTimer.Stop();
+        stateClock.Stop();
+        dragging = false;
+        Capture = false;
+        ReleaseRenderResources();
+        Hide();
+    }
+
+    private void ReleaseRenderResources()
+    {
+        frameBuffer?.Dispose();
+        frameBuffer = null;
+        pixelBuffer = [];
+        foreach (var sheet in sheets.Values) sheet.Dispose();
+        sheets.Clear();
+    }
+
+    private void RenderFrameCore(bool force)
     {
         if (!IsHandleCreated || IsDisposed || !Visible) return;
         var frame = ArtemisAnimationTiming.FrameAt(state, stateClock.Elapsed);
         if (!force && frame == lastFrame) return;
-        lastFrame = frame;
-
-        using var rendered = new Bitmap(ClientSize.Width, ClientSize.Height, PixelFormat.Format32bppPArgb);
+        if (frameBuffer is null || frameBuffer.Size != ClientSize)
+        {
+            frameBuffer?.Dispose();
+            frameBuffer = null;
+            frameBuffer = new Bitmap(ClientSize.Width, ClientSize.Height, PixelFormat.Format32bppPArgb);
+        }
+        var rendered = frameBuffer;
         using (var graphics = Graphics.FromImage(rendered))
         {
             graphics.Clear(Color.Transparent);
@@ -334,6 +370,7 @@ internal sealed class ArtemisDesktopPetForm : Form
             graphics.DrawImage(sheets[state], destination, source, GraphicsUnit.Pixel);
         }
         UpdateLayeredBitmap(rendered);
+        lastFrame = frame;
     }
 
     private static void DrawInteractionMask(Graphics graphics, Rectangle bounds)
@@ -378,6 +415,8 @@ internal sealed class ArtemisDesktopPetForm : Form
         var previousObject = IntPtr.Zero;
         try
         {
+            if (screenDc == IntPtr.Zero || memoryDc == IntPtr.Zero)
+                throw new ExternalException("Desktop pet drawing context unavailable.");
             var bitmapInfo = new BitmapInfo
             {
                 Header = new BitmapInfoHeader
@@ -391,7 +430,8 @@ internal sealed class ArtemisDesktopPetForm : Form
                 }
             };
             bitmapHandle = CreateDIBSection(screenDc, ref bitmapInfo, 0, out var bitmapBits, IntPtr.Zero, 0);
-            if (bitmapHandle == IntPtr.Zero || bitmapBits == IntPtr.Zero) return;
+            if (bitmapHandle == IntPtr.Zero || bitmapBits == IntPtr.Zero)
+                throw new ExternalException("Desktop pet bitmap allocation failed.");
             var bitmapData = bitmap.LockBits(
                 new Rectangle(0, 0, bitmap.Width, bitmap.Height),
                 ImageLockMode.ReadOnly,
@@ -399,15 +439,17 @@ internal sealed class ArtemisDesktopPetForm : Form
             try
             {
                 var byteCount = Math.Abs(bitmapData.Stride) * bitmap.Height;
-                var pixels = new byte[byteCount];
-                Marshal.Copy(bitmapData.Scan0, pixels, 0, byteCount);
-                Marshal.Copy(pixels, 0, bitmapBits, byteCount);
+                if (pixelBuffer.Length != byteCount) pixelBuffer = new byte[byteCount];
+                Marshal.Copy(bitmapData.Scan0, pixelBuffer, 0, byteCount);
+                Marshal.Copy(pixelBuffer, 0, bitmapBits, byteCount);
             }
             finally
             {
                 bitmap.UnlockBits(bitmapData);
             }
             previousObject = SelectObject(memoryDc, bitmapHandle);
+            if (previousObject == IntPtr.Zero || previousObject == new IntPtr(-1))
+                throw new ExternalException("Desktop pet bitmap selection failed.");
             var destination = new NativePoint(Left, Top);
             var size = new NativeSize(bitmap.Width, bitmap.Height);
             var source = new NativePoint(0, 0);
@@ -417,14 +459,15 @@ internal sealed class ArtemisDesktopPetForm : Form
                 SourceConstantAlpha = 255,
                 AlphaFormat = AcSrcAlpha
             };
-            UpdateLayeredWindow(Handle, screenDc, ref destination, ref size, memoryDc, ref source, 0, ref blend, UlwAlpha);
+            if (!UpdateLayeredWindow(Handle, screenDc, ref destination, ref size, memoryDc, ref source, 0, ref blend, UlwAlpha))
+                throw new ExternalException("Desktop pet window update failed.");
         }
         finally
         {
-            if (previousObject != IntPtr.Zero) SelectObject(memoryDc, previousObject);
+            if (previousObject != IntPtr.Zero && previousObject != new IntPtr(-1)) SelectObject(memoryDc, previousObject);
             if (bitmapHandle != IntPtr.Zero) DeleteObject(bitmapHandle);
-            DeleteDC(memoryDc);
-            ReleaseDC(IntPtr.Zero, screenDc);
+            if (memoryDc != IntPtr.Zero) DeleteDC(memoryDc);
+            if (screenDc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, screenDc);
         }
     }
 

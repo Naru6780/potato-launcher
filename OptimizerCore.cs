@@ -105,7 +105,7 @@ internal sealed class OptimizerSettings
             }
 
             var json = File.ReadAllText(path);
-            var settings = JsonSerializer.Deserialize<OptimizerSettings>(json, JsonOptions) ?? new OptimizerSettings();
+            var settings = DeserializeCompatible(json);
             MigrateLegacyCpuOptimizationFlag(settings, json);
             settings.Normalize();
             return settings;
@@ -133,12 +133,25 @@ internal sealed class OptimizerSettings
         }
     }
 
+    internal static OptimizerSettings DeserializeCompatible(string json)
+    {
+        // Preserve the rest of a profile created by the superseded v107 rather
+        // than discarding all settings when its new enum names are encountered.
+        var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject
+            ?? throw new JsonException("Optimizer settings must be an object.");
+        if (node["cpuAssignmentMode"]?.ToString() is "BalancedShared" or "4")
+            node["cpuAssignmentMode"] = "AllAvailableCores";
+        if (node["memoryTrimMode"]?.ToString() is "BandBudget" or "2")
+            node["memoryTrimMode"] = "Threshold";
+        return node.Deserialize<OptimizerSettings>(JsonOptions) ?? new OptimizerSettings();
+    }
+
     public void Save()
     {
         Normalize();
         var path = MainForm.OptimizerSettingsPath();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
+        AtomicTextFile.Write(path, JsonSerializer.Serialize(this, JsonOptions));
     }
 
     public int GetMainReservedLogicalProcessors(string clientName)
@@ -465,14 +478,15 @@ internal sealed class IntegratedOptimizerService : IDisposable
 
     private IReadOnlyList<Process> GetFfxivClients()
     {
-        return FfxivProcessNames
-            .SelectMany(name => Process.GetProcessesByName(name))
-            .Where(IsProcessAlive)
-            .GroupBy(process => process.Id)
-            .Select(group => group.First())
-            .OrderBy(SafeStartTime)
-            .ThenBy(client => client.Id)
-            .ToList();
+        var clients = new List<Process>();
+        var seen = new HashSet<int>();
+        foreach (var name in FfxivProcessNames)
+        foreach (var process in Process.GetProcessesByName(name))
+        {
+            if (IsProcessAlive(process) && seen.Add(process.Id)) clients.Add(process);
+            else process.Dispose();
+        }
+        return clients.OrderBy(SafeStartTime).ThenBy(client => client.Id).ToList();
     }
 
     private MainClientSelection GetMainClientSelection(IReadOnlyList<Process> clients)
@@ -1503,7 +1517,7 @@ internal sealed class GpuUsageSampler : IDisposable
 
     private void RefreshCountersIfNeeded()
     {
-        if ((DateTime.UtcNow - lastRefreshUtc).TotalSeconds < 10 && countersByInstance.Count > 0) return;
+        if ((DateTime.UtcNow - lastRefreshUtc).TotalSeconds < 10) return;
         lastRefreshUtc = DateTime.UtcNow;
 
         var category = new PerformanceCounterCategory("GPU Engine");
@@ -1521,8 +1535,12 @@ internal sealed class GpuUsageSampler : IDisposable
         {
             if (countersByInstance.ContainsKey(instance)) continue;
             var counter = new PerformanceCounter("GPU Engine", "Utilization Percentage", instance, readOnly: true);
-            _ = counter.NextValue();
-            countersByInstance[instance] = counter;
+            try
+            {
+                _ = counter.NextValue();
+                countersByInstance[instance] = counter;
+            }
+            catch { counter.Dispose(); throw; }
         }
     }
 
