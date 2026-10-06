@@ -325,9 +325,11 @@ internal sealed class MultibandServer : IAsyncDisposable
     public Task StartAsync()
     {
         if (listener is not null) return Task.CompletedTask;
+        // Publish the listener only once it is listening, so a failed start (port in use) never reports IsRunning.
+        var newListener = new TcpListener(IPAddress.Any, settings.Port);
+        newListener.Start();
         serverCancellation = new CancellationTokenSource();
-        listener = new TcpListener(IPAddress.Any, settings.Port);
-        listener.Start();
+        listener = newListener;
         _ = AcceptLoopAsync(listener, serverCancellation.Token);
         return Task.CompletedTask;
     }

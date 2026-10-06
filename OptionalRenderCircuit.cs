@@ -12,7 +12,8 @@ internal sealed class OptionalRenderCircuit
     {
         if (Failed) return false;
         try { render(); return true; }
-        catch (Exception ex) when (ex is OutOfMemoryException or ExternalException or Win32Exception)
+        // GDI+ reports most bitmap/LockBits failures as ArgumentException ("Parameter is not valid").
+        catch (Exception ex) when (ex is OutOfMemoryException or ExternalException or Win32Exception or ArgumentException)
         {
             Failed = true;
             return false;

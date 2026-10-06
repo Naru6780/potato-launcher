@@ -1485,9 +1485,20 @@ internal sealed class GpuUsageSampler : IDisposable
             RefreshCountersIfNeeded();
             var usage = new Dictionary<int, double>();
             var total = 0d;
-            foreach (var (instance, counter) in countersByInstance)
+            foreach (var (instance, counter) in countersByInstance.ToList())
             {
-                var value = Math.Max(0, counter.NextValue());
+                float value;
+                try
+                {
+                    value = Math.Max(0, counter.NextValue());
+                }
+                catch (InvalidOperationException)
+                {
+                    // The process behind this GPU instance exited; drop only this counter.
+                    counter.Dispose();
+                    countersByInstance.Remove(instance);
+                    continue;
+                }
                 total += value;
                 var processId = TryParseGpuEngineProcessId(instance);
                 if (processId is null || !wanted.Contains(processId.Value)) continue;
@@ -1540,7 +1551,11 @@ internal sealed class GpuUsageSampler : IDisposable
                 _ = counter.NextValue();
                 countersByInstance[instance] = counter;
             }
-            catch { counter.Dispose(); throw; }
+            catch (InvalidOperationException)
+            {
+                // Instance vanished between listing and reading; skip it instead of failing the whole refresh.
+                counter.Dispose();
+            }
         }
     }
 

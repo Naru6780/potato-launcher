@@ -840,6 +840,7 @@ internal sealed class MainForm : Form
     private Button browseSharedProfileButton = null!;
     private Button updateButton = null!;
     private Button rollbackButton = null!;
+    private Button dlss5Button = null!;
     private bool releaseOperationActive;
     private Label accountDisplayLabel = null!;
     private ComboBox accountDisplayInput = null!;
@@ -1021,14 +1022,16 @@ internal sealed class MainForm : Form
         Activated += (_, _) => UpdateMascotOverlay();
         FormClosed += async (_, _) =>
         {
+            // Synchronous cleanup first: the app context exits on FormClosed, so anything after an await may never
+            // run (that previously left running clients with the optimizer's CPU affinity).
             clientLabels.Dispose();
             multibandForm?.Close();
-            if (multibandServer is not null) await multibandServer.DisposeAsync();
             optimizerMonitor?.Close();
             optimizerService.Dispose();
             appToolTip?.Dispose();
             mascotOverlay?.Close();
             artemisDesktopPet?.Close();
+            if (multibandServer is not null) await multibandServer.DisposeAsync();
         };
         BuildLauncherTab(background);
         BuildSettingsDrawer();
@@ -1618,6 +1621,13 @@ internal sealed class MainForm : Form
         rollbackButton = Button("Roll back version", 24, 794, 180, 34, "Secondary");
         rollbackButton.Click += async (_, _) => await RollBackVersionAsync();
         settingsDrawer.Controls.Add(rollbackButton);
+        dlss5Button = Button("DLSS 5 clients", 214, 752, 130, 34, "Secondary");
+        dlss5Button.Click += (_, _) => OpenDlss5Clients();
+        settingsDrawer.Controls.Add(dlss5Button);
+        appToolTip?.Attach(
+            dlss5Button,
+            "DLSS 5 clients",
+            "Choose exactly which clients start with DLSS 5. The others keep ReShade without add-ons.");
         UpdateLaunchModeUi();
         background.Controls.Add(settingsDrawer);
     }
@@ -1653,6 +1663,7 @@ internal sealed class MainForm : Form
             SetY(notificationsEnabledInput, 662);
             SetY(desktopPetEnabledInput, 696);
             SetY(updateButton, 734);
+            SetY(dlss5Button, 734);
             SetY(rollbackButton, 776);
         }
         else
@@ -1673,6 +1684,7 @@ internal sealed class MainForm : Form
             SetY(notificationsEnabledInput, 662);
             SetY(desktopPetEnabledInput, 696);
             SetY(updateButton, 734);
+            SetY(dlss5Button, 734);
             SetY(rollbackButton, 776);
         }
     }
@@ -2445,6 +2457,15 @@ internal sealed class MainForm : Form
 
         menu.Items.Add(new ToolStripSeparator());
 
+        var dlss5 = new ToolStripMenuItem("Use DLSS 5 on this client") { Checked = Dlss5Clients.IsEnabled(Dlss5Clients.Load(), AccountIconKey(account)) };
+        dlss5.Click += (_, _) => ToggleDlss5(account);
+        menu.Items.Add(dlss5);
+        var dlss5Manage = new ToolStripMenuItem("Choose DLSS 5 clients...");
+        dlss5Manage.Click += (_, _) => OpenDlss5Clients();
+        menu.Items.Add(dlss5Manage);
+
+        menu.Items.Add(new ToolStripSeparator());
+
         var killClient = new ToolStripMenuItem("Kill this client");
         killClient.Click += (_, _) => KillGameInstance(account);
         menu.Items.Add(killClient);
@@ -2476,7 +2497,65 @@ internal sealed class MainForm : Form
         delete.Click += (_, _) => DeleteAccount(account);
         menu.Items.Add(delete);
 
+        menu.Closed += (_, _) => BeginInvoke(new Action(menu.Dispose));
         menu.Show(owner, location);
+    }
+
+    private void OpenDlss5Clients()
+    {
+        var config = Dlss5Clients.Load();
+        var choices = OrderedAccounts()
+            .Select(account => new Dlss5AccountChoice(AccountIconKey(account), Dlss5ChoiceLabel(account)))
+            .ToList();
+        using var form = new Dlss5ClientsForm(choices, config, settings.SharedProfileFolder);
+        if (form.ShowDialog(this) != DialogResult.OK) return;
+        config.AccountKeys = form.SelectedAccountKeys();
+        SaveDlss5Config(config);
+    }
+
+    private void ToggleDlss5(Account account)
+    {
+        var config = Dlss5Clients.Load();
+        var key = AccountIconKey(account);
+        if (Dlss5Clients.IsEnabled(config, key)) config.AccountKeys.RemoveAll(existing => existing.Equals(key, StringComparison.OrdinalIgnoreCase));
+        else config.AccountKeys.Add(key);
+        SaveDlss5Config(config);
+    }
+
+    private void SaveDlss5Config(Dlss5Config config)
+    {
+        try
+        {
+            Dlss5Clients.Save(config);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not save DLSS 5 clients: {ex.Message}", "DLSS 5 clients", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var error = config.AccountKeys.Count == 0
+            ? ""
+            : Dlss5Clients.EnsureSplit(Dlss5Clients.FindGameFolder(config, settings.SharedProfileFolder));
+        if (!string.IsNullOrEmpty(error))
+        {
+            MessageBox.Show(this, $"Saved, but DLSS 5 cannot be applied yet:\n\n{error}", "DLSS 5 clients", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        SetStatus(config.AccountKeys.Count switch
+        {
+            0 => "DLSS 5 is off for every client.",
+            1 => "DLSS 5 enabled for 1 client. Applies on its next launch.",
+            var count => $"DLSS 5 enabled for {count} clients. Applies on their next launch."
+        }, force: true);
+    }
+
+    private string Dlss5ChoiceLabel(Account account)
+    {
+        var name = AccountDisplayName(account);
+        var character = GetAccountIconProfile(account)?.CharacterName;
+        return string.IsNullOrWhiteSpace(character) || character.Equals(name, StringComparison.OrdinalIgnoreCase)
+            ? name
+            : $"{name}  ({character})";
     }
 
     private AccountIconProfile? GetAccountIconProfile(Account account)
@@ -2646,7 +2725,7 @@ internal sealed class MainForm : Form
             if (!changed) return false;
 
             BackupXivLauncherAccountList(accountListPath);
-            File.WriteAllText(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
+            AtomicTextFile.Write(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
             if (showResult)
             {
                 status.Text = $"Updated XIVLauncher account metadata for {profile.CharacterName}.";
@@ -2757,7 +2836,7 @@ internal sealed class MainForm : Form
 
         if (updatedEntries.Count == entries.Count) throw new InvalidOperationException("No matching XIVLauncher account entry was found.");
 
-        File.WriteAllText(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
+        AtomicTextFile.Write(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private void DeleteInstancedAccount(Account account)
@@ -2936,7 +3015,7 @@ internal sealed class MainForm : Form
             var importedOrder = ApplyImportedAccountState(transfer, mode.Value);
 
             if (File.Exists(accountListPath)) BackupXivLauncherAccountList(accountListPath);
-            File.WriteAllText(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
+            AtomicTextFile.Write(accountListPath, JsonSerializer.Serialize(updatedEntries, new JsonSerializerOptions { WriteIndented = true }));
             SaveSettings(settings);
             SaveAccountListState(accountState);
             LoadAccounts();
@@ -2958,8 +3037,15 @@ internal sealed class MainForm : Form
             Bands = CurrentBands().Select(CloneBand).ToList()
         };
         var path = BandExportPath();
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
+        try
+        {
+            AtomicTextFile.Write(path, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not save bands: {ex.Message}", "Save bands", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         ShowSaveFeedback($"Saved {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")} to {Path.GetFileName(path)}.");
     }
 
@@ -2979,8 +3065,16 @@ internal sealed class MainForm : Form
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
+        try
+        {
             File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(transfer, new JsonSerializerOptions { WriteIndented = true }));
-            ShowSaveFeedback($"Exported {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")}.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not export bands: {ex.Message}", "Export bands", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        ShowSaveFeedback($"Exported {transfer.Bands.Count} band{(transfer.Bands.Count == 1 ? "" : "s")}.");
     }
 
     private void ImportBands()
@@ -3571,6 +3665,7 @@ internal sealed class MainForm : Form
         menu.Items.Add("Set name", null, (_, _) => SetSelectedBandName(band));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Kill this band's clients", null, (_, _) => KillBandGameInstances(band));
+        menu.Closed += (_, _) => BeginInvoke(new Action(menu.Dispose));
         menu.Show(owner, location);
     }
 
@@ -3881,6 +3976,14 @@ internal sealed class MainForm : Form
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden
         };
+        if (Dlss5Clients.ApplyToLaunch(startInfo, AccountIconKey(account), settings.SharedProfileFolder, out var dlss5Message))
+        {
+            SetStatus($"{AccountDisplayName(account)}: starting with DLSS 5.", force: true);
+        }
+        else if (!string.IsNullOrEmpty(dlss5Message))
+        {
+            SetStatus(dlss5Message, force: true);
+        }
         AccountLaunchEnvironment.Apply(startInfo, AccountIconKey(account));
         using var launcherProcess = Process.Start(startInfo);
         var launcherProcessId = launcherProcess?.Id;
@@ -3894,8 +3997,16 @@ internal sealed class MainForm : Form
 
         await WaitForLauncherHandoffAsync(launcherProcess, launcherProcessesBefore, gameClientsBefore, account.Name, token);
         var client = await WaitForFreshGameClientAsync(gameClientsBefore, account.Name, token);
-        using var gameProcess = Process.GetProcessById(client.ProcessId);
-        var gameStart = gameProcess.StartTime.ToUniversalTime();
+        DateTime gameStart;
+        try
+        {
+            using var gameProcess = Process.GetProcessById(client.ProcessId);
+            gameStart = gameProcess.StartTime.ToUniversalTime();
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            throw new InvalidOperationException($"{account.Name}'s FFXIV client closed right after starting.", ex);
+        }
         runningClientProcessIds[AccountIconKey(account)] = client.ProcessId;
         runningClientAwareness.Track(AccountIconKey(account), client.ProcessId);
         clientLabels.Track(client.ProcessId, gameStart, AccountDisplayName(account));
@@ -5227,19 +5338,19 @@ internal sealed class MainForm : Form
         var gifs = Directory.GetFiles(folder, "*.gif", SearchOption.AllDirectories);
         if (gifs.Length == 0) return;
 
-        Image? oldImage = null;
+        Image newImage;
         try
         {
-            oldImage = loadingPicture.Image;
-            loadingPicture.Image = Image.FromFile(gifs[Random.Shared.Next(gifs.Length)]);
+            newImage = Image.FromFile(gifs[Random.Shared.Next(gifs.Length)]);
         }
         catch
         {
+            // Keep the current image: disposing it while still displayed breaks the next paint.
+            return;
         }
-        finally
-        {
-            oldImage?.Dispose();
-        }
+        var oldImage = loadingPicture.Image;
+        loadingPicture.Image = newImage;
+        oldImage?.Dispose();
     }
 
     private void BrowseFolder(TextBox target, string description, Action afterSelection)
@@ -5760,7 +5871,8 @@ internal sealed class MainForm : Form
     {
         try
         {
-            using var stream = new MemoryStream(File.ReadAllBytes(path));
+            // GDI+ reads from the stream for the image's whole lifetime, so it must stay open (memory only, no file lock).
+            var stream = new MemoryStream(File.ReadAllBytes(path));
             return Image.FromStream(stream);
         }
         catch
@@ -5882,9 +5994,10 @@ internal sealed class MainForm : Form
 
     private static AppSettings LoadSettings()
     {
-        var path = SettingsPath();
+        var path = "";
         try
         {
+            path = SettingsPath();
             if (File.Exists(path))
             {
                 var json = File.ReadAllText(path);
@@ -5901,8 +6014,24 @@ internal sealed class MainForm : Form
         }
         catch { }
         var settings = new AppSettings();
-        SaveSettings(settings);
+        // Never replace an existing but unreadable file with defaults unless a copy of it was kept.
+        if (PreserveUnreadableFile(path)) SaveSettings(settings);
         return settings;
+    }
+
+    // Returns true when it is safe to write defaults over path: it does not exist, or it was copied aside.
+    internal static bool PreserveUnreadableFile(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return true;
+            File.Copy(path, $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss-fff}", overwrite: false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void SaveSettings(AppSettings settings)
@@ -5919,9 +6048,10 @@ internal sealed class MainForm : Form
 
     private static AccountListState LoadAccountListState()
     {
+        var path = "";
         try
         {
-            var path = AccountListStatePath();
+            path = AccountListStatePath();
             if (File.Exists(path))
             {
                 var loadedState = JsonSerializer.Deserialize<AccountListState>(File.ReadAllText(path)) ?? new AccountListState();
@@ -5932,7 +6062,7 @@ internal sealed class MainForm : Form
         catch { }
         var state = MigrateAccountListStateFromSettings();
         SettingsMigration.CleanAccountListState(state);
-        SaveAccountListState(state);
+        if (PreserveUnreadableFile(path)) SaveAccountListState(state);
         return state;
     }
 
@@ -7076,9 +7206,9 @@ internal sealed class AccountRosterGrid : ScrollableControl
 
         var layout = CurrentLayout();
         var portraitBounds = new Rectangle(bounds.X + (bounds.Width - layout.PortraitSize) / 2, bounds.Y + 6, layout.PortraitSize, layout.PortraitSize);
-        if (!string.IsNullOrWhiteSpace(item.FacePath) && File.Exists(item.FacePath))
+        var image = !string.IsNullOrWhiteSpace(item.FacePath) && File.Exists(item.FacePath) ? GetImage(item.FacePath) : null;
+        if (image is not null)
         {
-            var image = GetImage(item.FacePath);
             using var clip = Rounded(portraitBounds, 8);
             graphics.SetClip(clip);
             DrawImageCover(graphics, image, portraitBounds);
@@ -7102,13 +7232,21 @@ internal sealed class AccountRosterGrid : ScrollableControl
         DrawCenteredText(graphics, item.DisplayName, nameBounds, nameFont, selected ? Color.White : palette.Text);
     }
 
-    private Image GetImage(string path)
+    private Image? GetImage(string path)
     {
         if (imageCache.TryGetValue(path, out var cached)) return cached;
-        using var source = Image.FromFile(path);
-        var copy = new Bitmap(source);
-        imageCache[path] = copy;
-        return copy;
+        try
+        {
+            using var source = Image.FromFile(path);
+            var copy = new Bitmap(source);
+            imageCache[path] = copy;
+            return copy;
+        }
+        catch
+        {
+            // A truncated or locked portrait must not break painting; the tile shows "No Data Found" instead.
+            return null;
+        }
     }
 
     private static void DrawImageCover(Graphics graphics, Image image, Rectangle bounds)

@@ -13,7 +13,14 @@ internal static class AtomicTextFile
         var temporaryPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporaryPath, text);
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(text);
+                writer.Flush();
+                // Reach the disk before replacing, so a crash cannot leave an empty settings file.
+                stream.Flush(flushToDisk: true);
+            }
             File.Move(temporaryPath, path, true);
         }
         finally { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }

@@ -19,6 +19,8 @@ Potato Launcher is a Windows companion for FFXIV players who manage several XIVL
 
 **v1.0.107 replacement:** this build starts from v106 and preserves its interface, launch cooldown and optimizer behavior. It adds rollback plus internal rendering/resource-handling improvements, not the earlier v107 optimizer redesign. If you already installed the earlier v107, download and install this replacement manually: an unchanged numeric version cannot trigger the existing updater.
 
+**DLSS 5 clients (v1.0.108):** all clients share one game folder, so a ReShade-based DLSS 5 install (such as RenoDX DLSS) normally loads in every client. Open Settings → **DLSS 5 clients** (or right-click an account → **Use DLSS 5 on this client**) and tick exactly the clients that should use it. Potato points the game's `ReShade.ini` add-on path at an empty folder and gives the ticked clients their own ReShade profile under `%APPDATA%\Potato Launcher\DLSS5\ReShade`, which loads add-ons from the game folder. Other clients still run ReShade, without add-ons. The game folder is read from XIVLauncher and can be changed in the dialog.
+
 **Per-account launch environment (v1.0.108):** create `%APPDATA%\Potato Launcher\launchEnvironment.json` to give one account's client extra environment variables, keyed by its `--account` value:
 
 ```json

@@ -2,8 +2,17 @@
 
 ## 1.0.108 - 2026-10-07
 
+- Add **DLSS 5 clients**: choose exactly which clients start with DLSS 5 (ReShade + RenoDX add-on in the shared game folder) from Settings → **DLSS 5 clients** or an account's right-click menu (**Use DLSS 5 on this client**). Other clients keep ReShade without add-ons. Potato re-applies the split before every launch, so re-running a DLSS installer cannot silently enable DLSS on every client again.
 - Add optional per-account launch environment variables from `%APPDATA%\Potato Launcher\launchEnvironment.json`. They are applied only to the launcher process of the matching account key and inherited by its game client, so one client can use a different injector setup (for example a ReShade base path with DLSS 5 add-ons) while the others keep the shared one.
 - No file means no change in launch behavior.
+- Fix: an unreadable settings.json or accountList.json is no longer silently replaced by defaults; a `.corrupt-<time>` copy is kept first. Settings writes are flushed to disk before replacing the file.
+- Fix: closing the launcher with Multiband listening now restores running clients' CPU affinity (cleanup ran after an await that never resumed).
+- Fix: XIVLauncher's accountsList.json and band.json are written atomically; band save/export errors show a message instead of crashing.
+- Fix: a broken loading GIF, theme background or portrait file no longer breaks painting; right-click menus are disposed after closing.
+- Fix: a client that closes right after starting reports a clear error instead of a generic queue failure.
+- Fix: selecting a client in the Optimizer no longer silently re-saves it as the lowest-priority main client.
+- Fix: a Multiband listener that fails to start (port in use) no longer reports "Listening".
+- Fix: one vanished GPU counter no longer blanks every GPU reading; the desktop pet's rendering fallback also catches GDI+ "Parameter is not valid" errors.
 
 ## 1.0.107 - v106-based replacement, 2026-09-25
 

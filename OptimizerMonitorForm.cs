@@ -712,7 +712,14 @@ internal sealed class OptimizerMonitorForm : Form
         }
 
         var target = item.IsMainCandidate ? "Main" : "Follower";
-        if (!Equals(roleInput.SelectedItem, target)) roleInput.SelectedItem = target;
+        if (!Equals(roleInput.SelectedItem, target))
+        {
+            // Only reflect the stored role; the user did not change it, so it must not re-save (and re-prioritize) it.
+            var wasRefreshing = refreshing;
+            refreshing = true;
+            try { roleInput.SelectedItem = target; }
+            finally { refreshing = wasRefreshing; }
+        }
         SetStepperValueIfIdle(mainPriority, Math.Max(1, optimizer.Settings.GetMainPriority(item.ClientName)));
         mainPriority.Enabled = item.IsMainCandidate;
     }
