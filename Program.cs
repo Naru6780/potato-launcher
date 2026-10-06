@@ -3881,6 +3881,7 @@ internal sealed class MainForm : Form
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden
         };
+        AccountLaunchEnvironment.Apply(startInfo, AccountIconKey(account));
         using var launcherProcess = Process.Start(startInfo);
         var launcherProcessId = launcherProcess?.Id;
         SetStatus(IsSharedLaunchMode()

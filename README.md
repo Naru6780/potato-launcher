@@ -19,6 +19,14 @@ Potato Launcher is a Windows companion for FFXIV players who manage several XIVL
 
 **v1.0.107 replacement:** this build starts from v106 and preserves its interface, launch cooldown and optimizer behavior. It adds rollback plus internal rendering/resource-handling improvements, not the earlier v107 optimizer redesign. If you already installed the earlier v107, download and install this replacement manually: an unchanged numeric version cannot trigger the existing updater.
 
+**Per-account launch environment (v1.0.108):** create `%APPDATA%\Potato Launcher\launchEnvironment.json` to give one account's client extra environment variables, keyed by its `--account` value:
+
+```json
+{ "myaccount-False-False": { "RESHADE_BASE_PATH_OVERRIDE": "C:\\Games\\ReShade-DLSS5\\Main" } }
+```
+
+Only that account's launch receives the variables. This lets a single client load its own ReShade config/add-ons (such as DLSS 5) while every other client keeps the shared game-folder setup.
+
 In Settings, **Roll back version** offers the three previous published stable releases (currently v106, v105 and v104). Finish or cancel any launch queue, select a version and confirm. It backs up the executable, assets and profile JSON under `%APPDATA%\Potato Launcher\Rollback Backups` before replacement. Active settings and game processes are not replaced or closed. Older versions may interpret settings differently or lose current game/plugin compatibility. Use Check for updates to return to the latest published version.
 
 Download `PotatoLauncherSetup.exe` from the [latest release](https://github.com/Naru6780/potato-launcher/releases/latest) and run it. A portable `PotatoLauncher.zip` is provided alongside the installer.

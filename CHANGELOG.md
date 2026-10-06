@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.108 - 2026-10-07
+
+- Add optional per-account launch environment variables from `%APPDATA%\Potato Launcher\launchEnvironment.json`. They are applied only to the launcher process of the matching account key and inherited by its game client, so one client can use a different injector setup (for example a ReShade base path with DLSS 5 add-ons) while the others keep the shared one.
+- No file means no change in launch behavior.
+
 ## 1.0.107 - v106-based replacement, 2026-09-25
 
 - Replaces the earlier v107 with the v106 interface, optimizer policies, per-client RAM trimmer, Rescue CPU and fixed launch cooldown. The earlier v107 optimizer redesign is not included.
