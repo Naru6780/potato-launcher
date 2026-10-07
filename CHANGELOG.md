@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.114 - 2026-10-07
+
+- Minimized clients really are held near 60 now. v1.0.113 coarsened their timer, which was measured to have no effect on a minimized FFXIV (it stops presenting and spins at 230-400 loops/s). Potato now puts a hard CPU-time cap on a client only while it is minimized (Windows job object) and steers it from the measured loop rate to the target FPS; restoring the window removes the cap at once. Live test with 7 minimized clients: 250-400 -> ~57-71 loops/s.
+- Removed the ineffective timer throttling for minimized clients.
+- docs/OPTIMIZER_NOTES.md: measured costs and what was tried, for future work.
+
 ## 1.0.113 - 2026-10-07
 
 - Minimized clients no longer run uncapped. A minimized FFXIV stops presenting, so neither the display nor the GPU driver frame cap paces it: its loop spun at 240-400 iterations per second and pushed CPU and GPU to 100%. While a client is minimized, Potato now lets Windows coarsen only its timer (CPU speed is never throttled), bringing it back to about 60; restoring the window lifts it immediately. Setting: LimitMinimizedClients (on).

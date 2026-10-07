@@ -95,7 +95,7 @@ internal sealed class OptimizerSettings
     public ProcessPriorityClass BackgroundClientPriority { get; set; } = ProcessPriorityClass.Normal;
     public bool PreventWindowsThrottling { get; set; } = true;
     public bool LowMemoryPriorityForBackground { get; set; } = true;
-    // Minimized clients stop presenting and spin far above their cap; coarsen their timer while minimized.
+    // Minimized clients stop presenting and spin far above their cap; hold them at TargetFps with a hard CPU cap.
     public bool LimitMinimizedClients { get; set; } = true;
     // The frame cap every client should hold; used for "at cap" status and the capacity estimate.
     public int TargetFps { get; set; } = 60;
@@ -344,6 +344,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly Dictionary<int, (DateTime Start, ClientPolicyState State)> appliedPolicies = [];
     private readonly ExternalGameState frameReader = new();
     private readonly ClientFpsTracker fpsTracker = new();
+    private readonly MinimizedClientLimiter minimizedLimiter = new();
     private readonly Dictionary<int, double> latestFps = [];
     private int? lastForegroundClientId;
     private readonly HashSet<int> unresponsiveNotificationsSent = [];
@@ -497,6 +498,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
             var foreground = ClientPolicyNative.ForegroundProcessId();
             lastForegroundClientId = foreground is int pid && clientIds.Contains(pid) ? pid : null;
             SampleFrameRates(clients);
+            if (Settings.ClientPolicyEnabled && Settings.LimitMinimizedClients) LimitMinimizedClients(clients);
+            else minimizedLimiter.Dispose();
             var activeClientIds = ClientPolicy.ActiveClientIds(
                 clientIds,
                 mainSelection.CandidateClientIds,
@@ -527,7 +530,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         {
             var start = SafeStartTime(client);
             var role = activeClientIds.Contains(client.Id) ? ClientRole.Active : ClientRole.Background;
-            var desired = ClientPolicy.Desired(role, Settings, ClientPolicyNative.IsMinimized(client));
+            var desired = ClientPolicy.Desired(role, Settings);
             var changed = !appliedPolicies.TryGetValue(client.Id, out var applied) || applied.Start != start || applied.State != desired;
             ClientPolicyNative.Apply(client, desired, changed);
             if (changed)
@@ -548,8 +551,21 @@ internal sealed class IntegratedOptimizerService : IDisposable
         if (!enabled) RestoreClientPolicies();
     }
 
+    private void LimitMinimizedClients(IReadOnlyList<Process> clients)
+    {
+        foreach (var client in clients)
+        {
+            DateTime start;
+            try { start = client.StartTime.ToUniversalTime(); } catch { continue; }
+            minimizedLimiter.Update(client.Id, start, ClientPolicyNative.IsMinimized(client),
+                latestFps.TryGetValue(client.Id, out var fps) ? fps : null, Settings.TargetFps);
+        }
+        minimizedLimiter.Forget(clients.Select(client => client.Id));
+    }
+
     private void RestoreClientPolicies()
     {
+        minimizedLimiter.Dispose();
         if (appliedPolicies.Count == 0) return;
         var clients = GetFfxivClients();
         try

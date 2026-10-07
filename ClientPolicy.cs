@@ -13,20 +13,15 @@ internal enum ClientRole
     Background
 }
 
-// TimerThrottled: the client is minimized. A minimized FFXIV stops presenting, so neither the display nor the GPU
-// driver's frame cap paces it any more; its loop only sleeps ~1 ms and spins at 240-400 iterations/s. Letting Windows
-// coarsen its timer brings that back to roughly 60/s. CPU execution speed is never throttled.
-internal sealed record ClientPolicyState(ProcessPriorityClass Priority, bool LowMemoryPriority, bool PreventThrottling, bool TimerThrottled = false);
+// Minimized clients are handled by MinimizedClientLimiter (hard CPU cap). Windows' timer/EcoQoS throttling was measured
+// to have no effect on a minimized FFXIV's loop rate, so it is not used for that.
+internal sealed record ClientPolicyState(ProcessPriorityClass Priority, bool LowMemoryPriority, bool PreventThrottling);
 
 internal static class ClientPolicy
 {
-    public static ClientPolicyState Desired(ClientRole role, OptimizerSettings settings, bool minimized = false)
-    {
-        var timerThrottled = minimized && settings.PreventWindowsThrottling && settings.LimitMinimizedClients;
-        return role == ClientRole.Active
-            ? new ClientPolicyState(settings.ActiveClientPriority, LowMemoryPriority: false, settings.PreventWindowsThrottling, timerThrottled)
-            : new ClientPolicyState(settings.BackgroundClientPriority, settings.LowMemoryPriorityForBackground, settings.PreventWindowsThrottling, timerThrottled);
-    }
+    public static ClientPolicyState Desired(ClientRole role, OptimizerSettings settings) => role == ClientRole.Active
+        ? new ClientPolicyState(settings.ActiveClientPriority, LowMemoryPriority: false, settings.PreventWindowsThrottling)
+        : new ClientPolicyState(settings.BackgroundClientPriority, settings.LowMemoryPriorityForBackground, settings.PreventWindowsThrottling);
 
     public static HashSet<int> ActiveClientIds(IReadOnlyCollection<int> clientIds, IEnumerable<int> mainCandidateIds, int? foregroundProcessId, bool followForeground)
     {
@@ -65,7 +60,7 @@ internal static class ClientPolicyNative
         TrySetPriority(process, state.Priority);
         if (!stateChanged) return;
         TrySetMemoryPriority(process.Id, state.LowMemoryPriority ? MemoryPriorityLow : MemoryPriorityNormal);
-        TrySetThrottling(process.Id, preventThrottling: state.PreventThrottling, timerThrottled: state.TimerThrottled);
+        TrySetThrottling(process.Id, preventThrottling: state.PreventThrottling);
         // GPU scheduling follows the CPU role: the client being played gets its frames scheduled first on the GPU.
         TrySetGpuPriority(process.Id, state.Priority == ProcessPriorityClass.AboveNormal ? GpuPriorityAboveNormal : GpuPriorityNormal);
     }
@@ -111,7 +106,7 @@ internal static class ClientPolicyNative
     // preventThrottling = true: tell Windows never to apply EcoQoS or timer-resolution throttling to this client.
     // Windows 11 otherwise ignores the timer resolution of minimized/covered windows, which breaks the game's
     // frame limiter and drops covered clients below their cap. false: hand the decision back to Windows.
-    private static void TrySetThrottling(int processId, bool preventThrottling, bool timerThrottled = false)
+    private static void TrySetThrottling(int processId, bool preventThrottling)
     {
         WithHandle(processId, handle =>
         {
@@ -119,8 +114,8 @@ internal static class ClientPolicyNative
             {
                 Version = PowerThrottlingCurrentVersion,
                 ControlMask = preventThrottling ? ThrottleExecutionSpeed | ThrottleIgnoreTimerResolution : 0,
-                // Execution speed is always kept at full; only a minimized client's timer is coarsened.
-                StateMask = preventThrottling && timerThrottled ? ThrottleIgnoreTimerResolution : 0
+
+                StateMask = 0
             };
             SetProcessInformation(handle, ProcessPowerThrottling, ref state, Marshal.SizeOf<PowerThrottlingState>());
         });

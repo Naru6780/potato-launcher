@@ -59,21 +59,18 @@ public class ClientPolicyTests
     }
 }
 
-public class MinimizedClientPolicyTests
+public class MinimizedClientLimiterTests
 {
     [Fact]
-    public void MinimizedClientsGetOnlyTheirTimerCoarsened()
+    public void CapStartsModestAndSteersTowardTheTarget()
     {
-        var settings = new OptimizerSettings();
-        Assert.True(ClientPolicy.Desired(ClientRole.Background, settings, minimized: true).TimerThrottled);
-        Assert.True(ClientPolicy.Desired(ClientRole.Active, settings, minimized: true).TimerThrottled);
-        Assert.False(ClientPolicy.Desired(ClientRole.Background, settings, minimized: false).TimerThrottled);
-
-        settings.LimitMinimizedClients = false;
-        Assert.False(ClientPolicy.Desired(ClientRole.Background, settings, minimized: true).TimerThrottled);
-        settings.LimitMinimizedClients = true;
-        settings.PreventWindowsThrottling = false;
-        Assert.False(ClientPolicy.Desired(ClientRole.Background, settings, minimized: true).TimerThrottled);
+        Assert.Equal(MinimizedClientLimiter.InitialCap, MinimizedClientLimiter.NextCap(0, 270, 60));
+        Assert.True(MinimizedClientLimiter.NextCap(300, 87, 60) < 300);   // too fast: tighten
+        Assert.True(MinimizedClientLimiter.NextCap(300, 40, 60) > 300);   // too slow: loosen
+        Assert.Equal(300u, MinimizedClientLimiter.NextCap(300, 62, 60));  // within tolerance: hold
+        Assert.Equal(255u, MinimizedClientLimiter.NextCap(300, 400, 60)); // one step is bounded (x0.85)
+        Assert.Equal(MinimizedClientLimiter.MinimumCap, MinimizedClientLimiter.NextCap(55, 400, 60));
+        Assert.Equal(MinimizedClientLimiter.MaximumCap, MinimizedClientLimiter.NextCap(2400, 10, 60));
     }
 
     [Fact]
