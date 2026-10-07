@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.125 - 2026-10-07
+
+- "Main: exact 60 via NVIDIA cap" is off by default: the in-game limit is cheaper (6.26% vs 7.07% CPU on the main, measured) and is the default for every client. Setting renamed so 1.0.124's default-on value is not carried over.
+
 ## 1.0.124 - 2026-10-07
 
 - New "Main: exact 60 via NVIDIA cap" (on by default): the configured main launches with Frame Rate None so the NVIDIA Max Frame Rate paces it at an exact target; followers keep the game's own limit. Only when Potato reads an NVIDIA cap equal to the target (new read-only NvAPI reader), so the main never runs uncapped (seen: 121 FPS with the cap off). Costs ~0.8 point CPU on that client (measured).

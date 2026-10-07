@@ -3998,8 +3998,8 @@ internal sealed class MainForm : Form
                 : "";
             var isMain = character.Length > 0 && optimizerSettings.IsMainCandidate(character);
             var frameLimitMessage = FrameLimitEnforcer.ApplyOption(FrameLimitEnforcer.LaunchOption(
-                dlss5Client, isMain, optimizerSettings.MainUsesDriverCap,
-                isMain && optimizerSettings.MainUsesDriverCap ? NvidiaFrameCap.ForGame() : null,
+                dlss5Client, isMain, optimizerSettings.MainUsesNvidiaCap,
+                isMain && optimizerSettings.MainUsesNvidiaCap ? NvidiaFrameCap.ForGame() : null,
                 optimizerSettings.TargetFps));
             if (!string.IsNullOrEmpty(frameLimitMessage)) SetStatus(frameLimitMessage, force: true);
         }

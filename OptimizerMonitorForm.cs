@@ -142,14 +142,16 @@ internal sealed class OptimizerMonitorForm : Form
         mainDriverCap.AutoSize = true;
         mainDriverCap.BackColor = Color.Transparent;
         toolTip.SetToolTip(mainDriverCap,
-            "At launch, your configured main client gets Frame Rate None so the NVIDIA Max Frame Rate holds it at an exact target\n" +
-            "(the game's own limit lands at ~56-58). Costs about 0.8 point of CPU for that one client (measured).\n" +
+            "Off by default: the game's own limit uses less CPU (measured) and is what every client gets.\n" +
+            "Tick it only if an exact 60 on your main matters more than CPU: at launch, your configured main gets Frame Rate None\n" +
+            "so the NVIDIA Max Frame Rate holds it at an exact target (the game's own limit lands at ~56-58).\n" +
+            "Costs about 0.8 point of CPU for that one client (measured).\n" +
             "Only used when Potato reads an NVIDIA cap equal to the target, so the main never runs uncapped.\n" +
             "Followers always keep the game's own limit. Takes effect when the main is next launched.");
         mainDriverCap.CheckedChanged += (_, _) =>
         {
             if (refreshing) return;
-            optimizer.Settings.MainUsesDriverCap = mainDriverCap.Checked;
+            optimizer.Settings.MainUsesNvidiaCap = mainDriverCap.Checked;
             optimizer.SaveSettings();
             RefreshView();
         };
@@ -507,7 +509,7 @@ internal sealed class OptimizerMonitorForm : Form
             SetStepperValueIfIdle(trimTrigger, settings.TrimTriggerMBPerClient);
             SetStepperValueIfIdle(targetFps, settings.TargetFps);
             enforceFrameLimit.Checked = settings.EnforceInGameFrameLimit;
-            mainDriverCap.Checked = settings.MainUsesDriverCap;
+            mainDriverCap.Checked = settings.MainUsesNvidiaCap;
             var driverCap = NvidiaFrameCap.ForGame();
             nvidiaCapLabel.Text = driverCap switch { null => "(no NVIDIA cap readable)", 0 => "(NVIDIA cap: off)", var cap => $"(NVIDIA cap: {cap})" };
 
@@ -521,7 +523,7 @@ internal sealed class OptimizerMonitorForm : Form
             var fpsText = withFps.Count == 0 ? "FPS unavailable" : $"{atCap}/{withFps.Count} at {settings.TargetFps} FPS";
             var capacity = optimizer.EstimateCapacity(snapshots, system);
             var findings = OptimizerDiagnostics.Get(snapshots, settings.TargetFps, optimizer.ExternalChangesLastMinute).ToList();
-            if (settings.MainUsesDriverCap && snapshots.Any(snapshot => snapshot.IsMainCandidate) && NvidiaFrameCap.ForGame() is int nvidiaCap && nvidiaCap != settings.TargetFps)
+            if (settings.MainUsesNvidiaCap && snapshots.Any(snapshot => snapshot.IsMainCandidate) && NvidiaFrameCap.ForGame() is int nvidiaCap && nvidiaCap != settings.TargetFps)
                 findings.Insert(0, $"\"Main: exact 60 via NVIDIA cap\" is on, but the NVIDIA Max Frame Rate for FFXIV is {(nvidiaCap == 0 ? "off" : nvidiaCap.ToString())}, so your main keeps the game's own limit (~56-58). " +
                                    $"Set Max Frame Rate to {settings.TargetFps} for FFXIV in NVIDIA App or Control Panel (it applies to every client; followers keep their in-game {settings.TargetFps}), then relaunch the main.");
             summaryLabel.Text =
