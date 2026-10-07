@@ -18,6 +18,9 @@ internal sealed class Dlss5Config
 {
     public List<string> AccountKeys { get; set; } = [];
     public string GameFolderOverride { get; set; } = "";
+    // When at least one DLSS 5 client is chosen: start every other client with ReShade switched off entirely
+    // (no banner, overlay or effects) instead of ReShade without add-ons.
+    public bool ReShadeOffForOtherClients { get; set; } = true;
 }
 
 internal sealed record Dlss5Status(string GameFolder, bool ReShadeFound, IReadOnlyList<string> AddOns)
@@ -165,9 +168,49 @@ internal static class Dlss5Clients
             message = $"DLSS 5 not applied: {error}";
             return false;
         }
-        if (!IsEnabled(config, accountKey)) return false;
+        if (!IsEnabled(config, accountKey))
+        {
+            if (config.ReShadeOffForOtherClients && !TryApplyReShadeOff(startInfo))
+                message = "Could not prepare the ReShade-off profile; this client starts with ReShade (no add-ons).";
+            return false;
+        }
         startInfo.Environment[BasePathVariable] = DlssProfileFolder();
         return true;
+    }
+
+    internal static string ReShadeOffFolder(string? dataRoot = null) => Path.Combine(dataRoot ?? MainForm.PersistentDataRoot(), "DLSS5", "ReShadeOff");
+
+    // ReShade has no "off" switch. Verified with ReShade 6.8 as a dxgi.dll proxy: disabling graphics hooks alone
+    // crashes the game, because the proxy's exports are only wired to the real dxgi.dll inside the graphics-hook setup.
+    // With its own base path whose ReShade.ini forwards the exports to the system dxgi.dll, the process runs normally
+    // and ReShade never creates a runtime (no banner, overlay, effects or add-ons).
+    internal static bool TryApplyReShadeOff(ProcessStartInfo startInfo, string? dataRoot = null)
+    {
+        var folder = EnsureReShadeOffProfile(dataRoot);
+        if (folder is null) return false; // Never set the disable switches without the forwarding profile.
+        startInfo.Environment["RESHADE_DISABLE_GRAPHICS_HOOK"] = "1";
+        startInfo.Environment["RESHADE_DISABLE_INPUT_HOOK"] = "1";
+        startInfo.Environment[BasePathVariable] = folder;
+        return true;
+    }
+
+    internal static string? EnsureReShadeOffProfile(string? dataRoot = null)
+    {
+        try
+        {
+            var systemDxgi = Path.Combine(Environment.SystemDirectory, "dxgi.dll");
+            if (!File.Exists(systemDxgi)) return null;
+            var folder = ReShadeOffFolder(dataRoot);
+            Directory.CreateDirectory(folder);
+            var iniPath = Path.Combine(folder, "ReShade.ini");
+            var ini = $"[PROXY]\r\nEnableProxyLibrary=1\r\nProxyLibrary={systemDxgi}\r\n\r\n[INSTALL]\r\nLogging=0\r\n";
+            if (!File.Exists(iniPath) || File.ReadAllText(iniPath) != ini) File.WriteAllText(iniPath, ini, new UTF8Encoding(false));
+            return folder;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     internal static string SetIniValue(string ini, string section, string key, string value)

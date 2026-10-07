@@ -493,7 +493,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     {
         return MainClientSelector.Select(clients.Select(client => new MainClientIdentity(
             client.Id,
-            ExtractCharacterName(SafeMainWindowTitle(client)),
+            ResolveClientName(client),
             SafeStartTime(client))).ToList(), Settings);
     }
 
@@ -581,7 +581,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         gpuUsage.TryGetValue(client.Id, out var gpuPercent);
         return new OptimizerClientSnapshot(
             client.Id,
-            ExtractCharacterName(title),
+            ResolveClientName(client),
             title,
             mainSelection.ActiveMainClientIds.Contains(client.Id),
             mainSelection.CandidateClientIds.Contains(client.Id),
@@ -618,7 +618,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         foreach (var processId in Settings.ManualMainClientIds.ToList())
         {
             if (!liveById.TryGetValue(processId, out var client)) continue;
-            Settings.SetMainCandidate(ExtractCharacterName(SafeMainWindowTitle(client)), true);
+            Settings.SetMainCandidate(ResolveClientName(client), true);
         }
         Settings.ManualMainClientIds.Clear();
         Settings.Save();
@@ -653,11 +653,11 @@ internal sealed class IntegratedOptimizerService : IDisposable
             {
                 rescueUntilByClientId[client.Id] = now.AddSeconds(30);
                 lastCpuLaneUtc = DateTime.MinValue;
-                LogDecision($"Automatic rescue started for {ExtractCharacterName(SafeMainWindowTitle(client))} (PID {client.Id}).");
+                LogDecision($"Automatic rescue started for {ResolveClientName(client)} (PID {client.Id}).");
             }
             if ((now - since).TotalSeconds >= 60 && unresponsiveNotificationsSent.Add(client.Id))
             {
-                var message = $"{ExtractCharacterName(SafeMainWindowTitle(client))} remains unresponsive after CPU rescue.";
+                var message = $"{ResolveClientName(client)} remains unresponsive after CPU rescue.";
                 LogDecision(message);
                 Alert?.Invoke(this, new OptimizerAlertEventArgs(message));
             }
@@ -746,6 +746,19 @@ internal sealed class IntegratedOptimizerService : IDisposable
                 launcher.Dispose();
             }
         }
+    }
+
+    // Stable name for main-client rules: the confirmed Character@World for this process when known (it survives
+    // loading screens, unlike the window title), otherwise the name from the window title.
+    internal static string ResolveClientName(Process client)
+    {
+        try
+        {
+            var identity = ClientIdentities.Get(client.Id, client.StartTime.ToUniversalTime());
+            if (!string.IsNullOrWhiteSpace(identity)) return OptimizerSettings.NormalizeClientName(identity);
+        }
+        catch { }
+        return ExtractCharacterName(SafeMainWindowTitle(client));
     }
 
     internal static string ExtractCharacterName(string title)
@@ -1109,7 +1122,7 @@ internal sealed class CpuAffinityAllocator
     {
         try
         {
-            return IntegratedOptimizerService.ExtractCharacterName(client.MainWindowTitle);
+            return IntegratedOptimizerService.ResolveClientName(client);
         }
         catch
         {

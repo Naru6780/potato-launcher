@@ -87,6 +87,22 @@ public sealed class Dlss5ClientsTests : IDisposable
     }
 
     [Fact]
+    public void ReShadeOff_SetsAllSwitchesOnlyWithTheForwardingProfile()
+    {
+        var startInfo = new ProcessStartInfo("x.exe");
+        Assert.True(Dlss5Clients.TryApplyReShadeOff(startInfo, Data));
+
+        var folder = Dlss5Clients.ReShadeOffFolder(Data);
+        Assert.Equal(folder, startInfo.Environment["RESHADE_BASE_PATH_OVERRIDE"]);
+        Assert.Equal("1", startInfo.Environment["RESHADE_DISABLE_GRAPHICS_HOOK"]);
+        Assert.Equal("1", startInfo.Environment["RESHADE_DISABLE_INPUT_HOOK"]);
+        var ini = File.ReadAllText(Path.Combine(folder, "ReShade.ini"));
+        Assert.Contains("EnableProxyLibrary=1", ini);
+        Assert.Contains($"ProxyLibrary={Path.Combine(Environment.SystemDirectory, "dxgi.dll")}", ini);
+        Assert.Contains("Logging=0", ini);
+    }
+
+    [Fact]
     public void FindGameFolder_UsesValidOverride()
     {
         Assert.Equal(Path.GetFullPath(Game), Dlss5Clients.FindGameFolder(new Dlss5Config { GameFolderOverride = Game }, ""));

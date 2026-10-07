@@ -14,6 +14,7 @@ internal sealed class MultibandForm : Form
     private readonly CheckBox allowConnections = new();
     private readonly Label addressLabel = new();
     private readonly Label pairingCodeLabel = new();
+    private readonly Label securityCodeLabel = new();
     private readonly TextBox hostInput = new();
     private readonly NumericUpDown portInput = new();
     private readonly TextBox codeInput = new();
@@ -132,6 +133,8 @@ internal sealed class MultibandForm : Form
         pairingCodeLabel.Font = new Font("Segoe UI", 14F, FontStyle.Bold);
         pairingCodeLabel.Bounds = new Rectangle(232, 216, 430, 34);
         page.Controls.Add(pairingCodeLabel);
+        securityCodeLabel.Bounds = new Rectangle(232, 250, 470, 24);
+        page.Controls.Add(securityCodeLabel);
 
         page.Controls.Add(Heading("Pair with another PC", 24, 282, 420));
         page.Controls.Add(TextLabel("IP address or computer name", 24, 324, 230, 24));
@@ -238,8 +241,8 @@ internal sealed class MultibandForm : Form
         {
             if (allowConnections.Checked) await server.StartAsync();
             else await server.StopAsync();
-            settings.ListenEnabled = allowConnections.Checked;
-            settingsStore.Save(settings);
+            var listen = allowConnections.Checked;
+            settingsStore.Update(settings, () => settings.ListenEnabled = listen);
             UpdateAddressLabel();
         }
         catch (Exception ex)
@@ -261,10 +264,10 @@ internal sealed class MultibandForm : Form
                 allowConnections.Checked = true;
                 updatingControls = false;
                 await server.StartAsync();
-                settings.ListenEnabled = true;
-                settingsStore.Save(settings);
+                settingsStore.Update(settings, () => settings.ListenEnabled = true);
             }
             pairingCodeLabel.Text = $"Pairing code: {server.CreatePairingCode()}  (5 minutes)";
+            securityCodeLabel.Text = $"Security code: {server.SecurityCode}  (the other PC must show the same)";
             UpdateAddressLabel();
         }
         catch (Exception ex)
@@ -283,11 +286,18 @@ internal sealed class MultibandForm : Form
         pairButton.Enabled = false;
         try
         {
-            var peer = await client.PairAsync(hostInput.Text, (int)portInput.Value, codeInput.Text);
+            // Show the certificate we actually reached before sending the code: a machine in the middle shows a different code.
+            var fingerprint = await client.GetServerFingerprintAsync(hostInput.Text, (int)portInput.Value);
+            var confirm = MessageBox.Show(this,
+                $"Security code of {hostInput.Text.Trim()}:\n\n    {MultibandServer.FormatSecurityCode(fingerprint)}\n\n" +
+                "Does the other PC show exactly this security code next to its pairing code?\n\nIf it does not match, choose No: something on the network may be intercepting the connection.",
+                "Confirm the other PC", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+            if (confirm != DialogResult.Yes) return;
+            var peer = await client.PairAsync(hostInput.Text, (int)portInput.Value, codeInput.Text, fingerprint);
             if (peer.DeviceId.Equals(settings.DeviceId, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("A PC cannot be paired with itself.");
             codeInput.Clear();
             RefreshDeviceControls();
-            remoteDeviceInput.SelectedItem = settings.PairedDevices.FirstOrDefault(item => item.DeviceId == peer.DeviceId);
+            remoteDeviceInput.SelectedItem = remoteDeviceInput.Items.OfType<PairedDevice>().FirstOrDefault(item => item.DeviceId == peer.DeviceId);
             MessageBox.Show(this, $"Paired with {peer.Name}.", "Pair PCs", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
@@ -304,9 +314,11 @@ internal sealed class MultibandForm : Form
     {
         if (pairedDevicesList.SelectedItem is not PairedDevice peer) return;
         if (MessageBox.Show(this, $"Forget {peer.Name}? Saved plans using this PC will need to be repaired.", "Forget PC", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-        settings.PairedDevices.RemoveAll(item => item.DeviceId.Equals(peer.DeviceId, StringComparison.OrdinalIgnoreCase));
-        foreach (var plan in settings.Plans.Where(plan => plan.RemoteDeviceId.Equals(peer.DeviceId, StringComparison.OrdinalIgnoreCase))) plan.RemoteDeviceId = "";
-        settingsStore.Save(settings);
+        settingsStore.Update(settings, () =>
+        {
+            settings.PairedDevices.RemoveAll(item => item.DeviceId.Equals(peer.DeviceId, StringComparison.OrdinalIgnoreCase));
+            foreach (var plan in settings.Plans.Where(plan => plan.RemoteDeviceId.Equals(peer.DeviceId, StringComparison.OrdinalIgnoreCase))) plan.RemoteDeviceId = "";
+        });
         RefreshDeviceControls();
     }
 
@@ -326,11 +338,12 @@ internal sealed class MultibandForm : Form
     private void RefreshDeviceControls()
     {
         var selectedDeviceId = (remoteDeviceInput.SelectedItem as PairedDevice)?.DeviceId;
+        var peers = PairedDevicesSnapshot();
         pairedDevicesList.Items.Clear();
-        pairedDevicesList.Items.AddRange(settings.PairedDevices.Cast<object>().ToArray());
+        pairedDevicesList.Items.AddRange(peers.Cast<object>().ToArray());
         remoteDeviceInput.Items.Clear();
-        remoteDeviceInput.Items.AddRange(settings.PairedDevices.Cast<object>().ToArray());
-        remoteDeviceInput.SelectedItem = settings.PairedDevices.FirstOrDefault(peer => peer.DeviceId.Equals(selectedDeviceId, StringComparison.OrdinalIgnoreCase));
+        remoteDeviceInput.Items.AddRange(peers.Cast<object>().ToArray());
+        remoteDeviceInput.SelectedItem = peers.FirstOrDefault(peer => peer.DeviceId.Equals(selectedDeviceId, StringComparison.OrdinalIgnoreCase));
         if (remoteDeviceInput.SelectedIndex < 0 && remoteDeviceInput.Items.Count > 0) remoteDeviceInput.SelectedIndex = 0;
     }
 
@@ -338,11 +351,15 @@ internal sealed class MultibandForm : Form
     {
         selectedPlanId ??= (planInput.SelectedItem as MultibandLaunchPlan)?.Id;
         updatingControls = true;
+        var plans = settingsStore.Read(() => settings.Plans.ToList());
         planInput.Items.Clear();
-        planInput.Items.AddRange(settings.Plans.Cast<object>().ToArray());
-        planInput.SelectedItem = settings.Plans.FirstOrDefault(plan => plan.Id.Equals(selectedPlanId, StringComparison.OrdinalIgnoreCase));
+        planInput.Items.AddRange(plans.Cast<object>().ToArray());
+        planInput.SelectedItem = plans.FirstOrDefault(plan => plan.Id.Equals(selectedPlanId, StringComparison.OrdinalIgnoreCase));
         updatingControls = false;
     }
+
+    // Server threads can add or update peers at any time; the UI works on a snapshot taken under the settings lock.
+    private List<PairedDevice> PairedDevicesSnapshot() => settingsStore.Read(() => settings.PairedDevices.ToList());
 
     private async Task RefreshRemoteBandsAsync(bool showErrors = false, string? preferredBandId = null)
     {
@@ -377,7 +394,7 @@ internal sealed class MultibandForm : Form
         if (updatingControls || planInput.SelectedItem is not MultibandLaunchPlan plan) return;
         planNameInput.Text = plan.Name;
         localBandInput.SelectedItem = localBandInput.Items.Cast<MultibandBandSummary>().FirstOrDefault(band => band.Id.Equals(plan.LocalBandId, StringComparison.OrdinalIgnoreCase));
-        remoteDeviceInput.SelectedItem = settings.PairedDevices.FirstOrDefault(peer => peer.DeviceId.Equals(plan.RemoteDeviceId, StringComparison.OrdinalIgnoreCase));
+        remoteDeviceInput.SelectedItem = remoteDeviceInput.Items.OfType<PairedDevice>().FirstOrDefault(peer => peer.DeviceId.Equals(plan.RemoteDeviceId, StringComparison.OrdinalIgnoreCase));
         await RefreshRemoteBandsAsync(preferredBandId: plan.RemoteBandId);
     }
 
@@ -394,17 +411,16 @@ internal sealed class MultibandForm : Form
     private void SavePlan()
     {
         if (!TryReadPlan(out var localBand, out var remotePeer, out var remoteBand)) return;
-        var plan = planInput.SelectedItem as MultibandLaunchPlan;
-        if (plan is null)
+        var plan = planInput.SelectedItem as MultibandLaunchPlan ?? new MultibandLaunchPlan();
+        var name = string.IsNullOrWhiteSpace(planNameInput.Text) ? $"{localBand.Name} + {remoteBand.Name}" : planNameInput.Text.Trim();
+        settingsStore.Update(settings, () =>
         {
-            plan = new MultibandLaunchPlan();
-            settings.Plans.Add(plan);
-        }
-        plan.Name = string.IsNullOrWhiteSpace(planNameInput.Text) ? $"{localBand.Name} + {remoteBand.Name}" : planNameInput.Text.Trim();
-        plan.LocalBandId = localBand.Id;
-        plan.RemoteDeviceId = remotePeer.DeviceId;
-        plan.RemoteBandId = remoteBand.Id;
-        settingsStore.Save(settings);
+            if (!settings.Plans.Contains(plan)) settings.Plans.Add(plan);
+            plan.Name = name;
+            plan.LocalBandId = localBand.Id;
+            plan.RemoteDeviceId = remotePeer.DeviceId;
+            plan.RemoteBandId = remoteBand.Id;
+        });
         RefreshPlanControls(plan.Id);
         planInput.SelectedItem = plan;
     }
@@ -412,8 +428,7 @@ internal sealed class MultibandForm : Form
     private void DeleteSelectedPlan()
     {
         if (planInput.SelectedItem is not MultibandLaunchPlan plan) return;
-        settings.Plans.Remove(plan);
-        settingsStore.Save(settings);
+        settingsStore.Update(settings, () => settings.Plans.Remove(plan));
         RefreshPlanControls();
         ClearPlanEditor();
     }
@@ -464,7 +479,7 @@ internal sealed class MultibandForm : Form
             void ReportLocal(MultibandLaunchProgress progress)
             {
                 localProgress = progress;
-                if (!IsDisposed) BeginInvoke(() => RenderProgress(localBand.Name, localProgress, remotePeer.Name, remoteBand.Name, remoteProgress));
+                if (!IsDisposed && IsHandleCreated) BeginInvoke(() => RenderProgress(localBand.Name, localProgress, remotePeer.Name, remoteBand.Name, remoteProgress));
             }
 
             var localTask = launchLocalAsync(localBand.Id, startAt, ReportLocal, token);
@@ -478,16 +493,19 @@ internal sealed class MultibandForm : Form
         }
         catch (OperationCanceledException)
         {
-            progressText.AppendText("\r\n\r\nLaunch cancelled.");
+            if (!IsDisposed) progressText.AppendText("\r\n\r\nLaunch cancelled.");
         }
         catch (Exception ex)
         {
-            progressText.AppendText($"\r\n\r\nLaunch failed: {ex.Message}");
+            if (!IsDisposed) progressText.AppendText($"\r\n\r\nLaunch failed: {ex.Message}");
         }
         finally
         {
-            launchButton.Enabled = true;
-            cancelButton.Enabled = false;
+            if (!IsDisposed)
+            {
+                launchButton.Enabled = true;
+                cancelButton.Enabled = false;
+            }
             activeOperationId = "";
             activeRemoteDevice = null;
         }
@@ -513,8 +531,34 @@ internal sealed class MultibandForm : Form
         try { await client.CancelAsync(activeRemoteDevice, activeOperationId); } catch { }
     }
 
+    // Closing the window mid-launch would orphan the launch (no way back to cancel it), so ask and cancel both PCs.
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(activeOperationId) && e.CloseReason == CloseReason.UserClosing)
+        {
+            if (MessageBox.Show(this, "A Multiband launch is still running. Cancel it on both PCs and close?", "Multiband",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            {
+                e.Cancel = true;
+                return;
+            }
+            _ = CancelLaunchAsync();
+        }
+        else if (!string.IsNullOrWhiteSpace(activeOperationId))
+        {
+            // Owner window closing or app exit: no prompt possible, but still stop the remote half (best effort).
+            _ = CancelLaunchAsync();
+        }
+        else
+        {
+            launchCancellation?.Cancel();
+        }
+        base.OnFormClosing(e);
+    }
+
     private void RenderProgress(string localBandName, MultibandLaunchProgress local, string remoteDeviceName, string remoteBandName, MultibandOperationSnapshot? remote)
     {
+        if (IsDisposed || progressText.IsDisposed) return;
         var lines = new List<string>
         {
             $"{settings.DeviceName} — {localBandName}",

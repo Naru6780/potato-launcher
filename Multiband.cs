@@ -122,6 +122,22 @@ internal sealed class MultibandSettingsStore
         this.path = path;
     }
 
+    // The settings object is shared by the UI thread and the server's connection threads. Every read of the
+    // PairedDevices/Plans lists and every change goes through this lock.
+    public T Read<T>(Func<T> read)
+    {
+        lock (sync) return read();
+    }
+
+    public void Update(MultibandSettings settings, Action change)
+    {
+        lock (sync)
+        {
+            change();
+            Save(settings);
+        }
+    }
+
     public MultibandSettings Load()
     {
         lock (sync)
@@ -143,10 +159,7 @@ internal sealed class MultibandSettingsStore
         lock (sync)
         {
             settings = Clean(settings);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var temporaryPath = $"{path}.tmp";
-            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(settings, JsonOptions));
-            File.Move(temporaryPath, path, true);
+            AtomicTextFile.Write(path, JsonSerializer.Serialize(settings, JsonOptions));
         }
     }
 
@@ -270,6 +283,17 @@ internal sealed class MultibandOperation
         }
     }
 
+    // Atomically moves Prepared -> Scheduled so concurrent or retried Commit requests start the launch only once.
+    public bool TryBeginCommit(MultibandLaunchProgress scheduled)
+    {
+        lock (sync)
+        {
+            if (snapshot.State is not "Prepared") return false;
+            Update(scheduled);
+            return true;
+        }
+    }
+
     public MultibandOperationSnapshot Snapshot()
     {
         lock (sync)
@@ -296,11 +320,18 @@ internal sealed class MultibandServer : IAsyncDisposable
     private readonly Func<string, DateTimeOffset, Action<MultibandLaunchProgress>, CancellationToken, Task> launchAsync;
     private readonly ConcurrentDictionary<string, MultibandOperation> operations = new(StringComparer.OrdinalIgnoreCase);
     private readonly object pairingSync = new();
+    private readonly SemaphoreSlim connectionSlots = new(MaximumConcurrentConnections);
+    private readonly Dictionary<string, int> pairingFailuresByAddress = new(StringComparer.OrdinalIgnoreCase);
     private TcpListener? listener;
     private CancellationTokenSource? serverCancellation;
     private string pairingCode = "";
     private DateTimeOffset pairingExpiresUtc;
     private int pairingFailedAttempts;
+
+    internal const int MaximumConcurrentConnections = 16;
+    internal const int MaximumPairingFailuresPerAddress = 5;
+    internal const int MaximumPairingFailuresTotal = 30;
+    private static readonly TimeSpan ConnectionTimeout = TimeSpan.FromSeconds(10);
 
     public bool IsRunning => listener is not null;
     public string CertificateFingerprint => certificate.GetCertHashString(HashAlgorithmName.SHA256);
@@ -355,8 +386,20 @@ internal sealed class MultibandServer : IAsyncDisposable
             pairingCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
             pairingExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(5);
             pairingFailedAttempts = 0;
+            pairingFailuresByAddress.Clear();
             return pairingCode;
         }
+    }
+
+    // Shown next to the pairing code. The other PC shows the same code from the certificate it actually connected to,
+    // so a machine in the middle (different certificate) is spotted before the pairing code is sent.
+    public string SecurityCode => FormatSecurityCode(CertificateFingerprint);
+
+    internal static string FormatSecurityCode(string fingerprint)
+    {
+        var hex = MultibandSettingsStore.NormalizeFingerprint(fingerprint);
+        if (hex.Length < 16) return "unknown";
+        return string.Join("-", Enumerable.Range(0, 4).Select(index => hex.Substring(index * 4, 4)));
     }
 
     public static IReadOnlyList<string> LocalIpv4Addresses()
@@ -377,6 +420,12 @@ internal sealed class MultibandServer : IAsyncDisposable
             try
             {
                 var client = await activeListener.AcceptTcpClientAsync(token);
+                // Drop non-local peers before any TLS work, and never hold more than a few connections at once.
+                if (client.Client.RemoteEndPoint is not IPEndPoint remote || !IsPrivateOrLocal(remote.Address) || !connectionSlots.Wait(0))
+                {
+                    client.Dispose();
+                    continue;
+                }
                 _ = HandleClientSafelyAsync(client, token);
             }
             catch (OperationCanceledException) { }
@@ -395,18 +444,24 @@ internal sealed class MultibandServer : IAsyncDisposable
         {
             try
             {
+                var remoteEndPoint = client.Client.RemoteEndPoint as IPEndPoint;
                 await using var ssl = new SslStream(client.GetStream(), false);
-                await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                string? line;
+                // A peer that stalls the handshake or streams bytes without a newline is cut off.
+                using (var receiveTimeout = CancellationTokenSource.CreateLinkedTokenSource(token))
                 {
-                    ServerCertificate = certificate,
-                    ClientCertificateRequired = false,
-                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
-                }, token);
-                using var reader = new StreamReader(ssl, Encoding.UTF8, false, 4096, true);
-                await using var writer = new StreamWriter(ssl, new UTF8Encoding(false), 4096, true) { AutoFlush = true };
-                var line = await reader.ReadLineAsync(token);
+                    receiveTimeout.CancelAfter(ConnectionTimeout);
+                    await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                    {
+                        ServerCertificate = certificate,
+                        ClientCertificateRequired = false,
+                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+                    }, receiveTimeout.Token);
+                    line = await MultibandWire.ReadLineAsync(ssl, MultibandProtocol.MaximumMessageLength, receiveTimeout.Token);
+                }
+
                 MultibandResponse response;
-                if (string.IsNullOrWhiteSpace(line) || line.Length > MultibandProtocol.MaximumMessageLength)
+                if (string.IsNullOrWhiteSpace(line))
                 {
                     response = MultibandResponse.Fail("Invalid request.");
                 }
@@ -415,12 +470,16 @@ internal sealed class MultibandServer : IAsyncDisposable
                     var request = JsonSerializer.Deserialize<MultibandRequest>(line);
                     response = request is null
                         ? MultibandResponse.Fail("Invalid request.")
-                        : await HandleRequestAsync(request, client.Client.RemoteEndPoint as IPEndPoint);
+                        : await HandleRequestAsync(request, remoteEndPoint);
                 }
-                await writer.WriteLineAsync(JsonSerializer.Serialize(response));
+
+                using var sendTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                sendTimeout.CancelAfter(ConnectionTimeout);
+                await MultibandWire.WriteLineAsync(ssl, JsonSerializer.Serialize(response), sendTimeout.Token);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { LastError = ex.ToString(); }
+            finally { connectionSlots.Release(); }
         }
     }
 
@@ -465,11 +524,19 @@ internal sealed class MultibandServer : IAsyncDisposable
     {
         lock (pairingSync)
         {
+            var address = remoteEndPoint?.Address.ToString() ?? "";
+            if (pairingFailuresByAddress.GetValueOrDefault(address) >= MaximumPairingFailuresPerAddress)
+            {
+                // Only this address is locked out, so one bad host cannot burn the code for the real PC.
+                return MultibandResponse.Fail("Too many incorrect pairing attempts from this PC. Generate a new pairing code on the receiving PC.");
+            }
             if (string.IsNullOrWhiteSpace(pairingCode) || pairingExpiresUtc < DateTimeOffset.UtcNow || !CryptographicEquals(pairingCode, request.PairingCode))
             {
+                pairingFailuresByAddress[address] = pairingFailuresByAddress.GetValueOrDefault(address) + 1;
                 pairingFailedAttempts++;
-                if (pairingFailedAttempts >= 5)
+                if (pairingFailedAttempts >= MaximumPairingFailuresTotal)
                 {
+                    // Backstop against guessing from many addresses.
                     pairingCode = "";
                     return MultibandResponse.Fail("Too many incorrect pairing attempts. Generate a new pairing code on the receiving PC.");
                 }
@@ -479,22 +546,25 @@ internal sealed class MultibandServer : IAsyncDisposable
 
             var normalizedDeviceId = parsedDeviceId.ToString("N");
             if (normalizedDeviceId.Equals(settings.DeviceId, StringComparison.OrdinalIgnoreCase)) return MultibandResponse.Fail("A PC cannot be paired with itself.");
-            var peer = settings.PairedDevices.FirstOrDefault(item => item.DeviceId.Equals(normalizedDeviceId, StringComparison.OrdinalIgnoreCase));
             var sharedSecret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-            if (peer is null)
+            settingsStore.Update(settings, () =>
             {
-                peer = new PairedDevice { DeviceId = normalizedDeviceId };
-                settings.PairedDevices.Add(peer);
-            }
-            peer.Name = string.IsNullOrWhiteSpace(request.DeviceName) ? remoteEndPoint?.Address.ToString() ?? "Paired PC" : request.DeviceName.Trim();
-            peer.Host = remoteEndPoint?.Address.ToString() ?? peer.Host;
-            peer.Port = request.DevicePort is >= 1024 and <= 65535 ? request.DevicePort : MultibandProtocol.DefaultPort;
-            peer.CertificateFingerprint = MultibandSettingsStore.NormalizeFingerprint(request.CertificateFingerprint);
-            peer.SharedSecret = sharedSecret;
-            peer.LastSeenUtc = DateTimeOffset.UtcNow;
-            settingsStore.Save(settings);
+                var peer = settings.PairedDevices.FirstOrDefault(item => item.DeviceId.Equals(normalizedDeviceId, StringComparison.OrdinalIgnoreCase));
+                if (peer is null)
+                {
+                    peer = new PairedDevice { DeviceId = normalizedDeviceId };
+                    settings.PairedDevices.Add(peer);
+                }
+                peer.Name = string.IsNullOrWhiteSpace(request.DeviceName) ? remoteEndPoint?.Address.ToString() ?? "Paired PC" : request.DeviceName.Trim();
+                peer.Host = remoteEndPoint?.Address.ToString() ?? peer.Host;
+                peer.Port = request.DevicePort is >= 1024 and <= 65535 ? request.DevicePort : MultibandProtocol.DefaultPort;
+                peer.CertificateFingerprint = MultibandSettingsStore.NormalizeFingerprint(request.CertificateFingerprint);
+                peer.SharedSecret = sharedSecret;
+                peer.LastSeenUtc = DateTimeOffset.UtcNow;
+            });
             pairingCode = "";
             pairingFailedAttempts = 0;
+            pairingFailuresByAddress.Clear();
 
             var response = SuccessResponse();
             response.SharedSecret = sharedSecret;
@@ -531,16 +601,10 @@ internal sealed class MultibandServer : IAsyncDisposable
         if (!operation.BandId.Equals(NormalizeOperationId(request.BandId), StringComparison.OrdinalIgnoreCase)) return MultibandResponse.Fail("Prepared band does not match the launch request.");
         if (request.StartAtUtc < DateTimeOffset.UtcNow.AddSeconds(-2) || request.StartAtUtc > DateTimeOffset.UtcNow.AddMinutes(1)) return MultibandResponse.Fail("The synchronized start time is invalid.");
 
-        var existingSnapshot = operation.Snapshot();
-        if (existingSnapshot.State is not "Prepared")
+        if (operation.TryBeginCommit(MultibandLaunchProgress.Scheduled($"Scheduled for {request.StartAtUtc.LocalDateTime:T}.")))
         {
-            var existingResponse = SuccessResponse();
-            existingResponse.Operation = existingSnapshot;
-            return existingResponse;
+            _ = RunOperationAsync(operation, request.StartAtUtc);
         }
-
-        operation.Update(MultibandLaunchProgress.Scheduled($"Scheduled for {request.StartAtUtc.LocalDateTime:T}."));
-        _ = RunOperationAsync(operation, request.StartAtUtc);
         var response = SuccessResponse();
         response.Operation = operation.Snapshot();
         return response;
@@ -600,20 +664,25 @@ internal sealed class MultibandServer : IAsyncDisposable
 
     private bool Authenticate(MultibandRequest request)
     {
-        var peer = settings.PairedDevices.FirstOrDefault(item => item.DeviceId.Equals(request.DeviceId, StringComparison.OrdinalIgnoreCase));
-        return peer is not null && CryptographicEquals(peer.SharedSecret, request.Token);
+        var secret = settingsStore.Read(() => settings.PairedDevices
+            .FirstOrDefault(item => item.DeviceId.Equals(request.DeviceId, StringComparison.OrdinalIgnoreCase))?.SharedSecret);
+        return secret is not null && CryptographicEquals(secret, request.Token);
     }
 
     private void TouchPeer(string deviceId, string? host)
     {
-        var peer = settings.PairedDevices.FirstOrDefault(item => item.DeviceId.Equals(deviceId, StringComparison.OrdinalIgnoreCase));
-        if (peer is null) return;
-        var now = DateTimeOffset.UtcNow;
-        var hostChanged = !string.IsNullOrWhiteSpace(host) && !peer.Host.Equals(host, StringComparison.OrdinalIgnoreCase);
-        if (hostChanged) peer.Host = host!;
-        var shouldPersist = hostChanged || now - peer.LastSeenUtc > TimeSpan.FromSeconds(30);
-        peer.LastSeenUtc = now;
-        if (shouldPersist) settingsStore.Save(settings);
+        settingsStore.Read(() =>
+        {
+            var peer = settings.PairedDevices.FirstOrDefault(item => item.DeviceId.Equals(deviceId, StringComparison.OrdinalIgnoreCase));
+            if (peer is null) return false;
+            var now = DateTimeOffset.UtcNow;
+            var hostChanged = !string.IsNullOrWhiteSpace(host) && !peer.Host.Equals(host, StringComparison.OrdinalIgnoreCase);
+            if (hostChanged) peer.Host = host!;
+            var shouldPersist = hostChanged || now - peer.LastSeenUtc > TimeSpan.FromSeconds(30);
+            peer.LastSeenUtc = now;
+            if (shouldPersist) settingsStore.Save(settings);
+            return shouldPersist;
+        });
     }
 
     private MultibandResponse SuccessResponse()
@@ -661,6 +730,34 @@ internal sealed class MultibandServer : IAsyncDisposable
     }
 }
 
+// Line-based wire format with a hard byte limit, so a peer cannot make us buffer an unbounded line.
+internal static class MultibandWire
+{
+    public static async Task<string?> ReadLineAsync(Stream stream, int maximumBytes, CancellationToken token)
+    {
+        var buffer = new byte[4096];
+        using var line = new MemoryStream();
+        while (true)
+        {
+            var read = await stream.ReadAsync(buffer, token);
+            if (read == 0) return line.Length == 0 ? null : Decode(line);
+            var newline = Array.IndexOf(buffer, (byte)'\n', 0, read);
+            var take = newline >= 0 ? newline : read;
+            if (line.Length + take > maximumBytes) throw new InvalidDataException("Multiband message is too long.");
+            line.Write(buffer, 0, take);
+            if (newline >= 0) return Decode(line);
+        }
+    }
+
+    public static async Task WriteLineAsync(Stream stream, string text, CancellationToken token)
+    {
+        await stream.WriteAsync(new UTF8Encoding(false).GetBytes(text + "\n"), token);
+        await stream.FlushAsync(token);
+    }
+
+    private static string Decode(MemoryStream line) => Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length).TrimEnd('\r');
+}
+
 internal sealed class MultibandClient
 {
     private readonly MultibandSettings settings;
@@ -674,8 +771,35 @@ internal sealed class MultibandClient
         this.localCertificateFingerprint = MultibandSettingsStore.NormalizeFingerprint(localCertificateFingerprint);
     }
 
-    public async Task<PairedDevice> PairAsync(string host, int port, string code, CancellationToken token = default)
+    // Connects without sending anything secret and returns the certificate fingerprint the other PC presented.
+    // The UI shows it as a security code to compare before the pairing code is sent.
+    public async Task<string> GetServerFingerprintAsync(string host, int port, CancellationToken token = default)
     {
+        string observedFingerprint = "";
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        using var client = new TcpClient();
+        await client.ConnectAsync(host.Trim(), port, timeout.Token);
+        await using var ssl = new SslStream(client.GetStream(), false, (_, certificate, _, _) =>
+        {
+            if (certificate is null) return false;
+            observedFingerprint = Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256));
+            return true;
+        });
+        await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+        {
+            TargetHost = string.IsNullOrWhiteSpace(host) ? "PotatoLauncher" : host.Trim(),
+            EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+            CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+        }, timeout.Token);
+        return MultibandSettingsStore.NormalizeFingerprint(observedFingerprint);
+    }
+
+    // Pairs only with the server whose certificate matches the fingerprint the user confirmed.
+    public async Task<PairedDevice> PairAsync(string host, int port, string code, string confirmedFingerprint, CancellationToken token = default)
+    {
+        var expectedFingerprint = MultibandSettingsStore.NormalizeFingerprint(confirmedFingerprint);
+        if (expectedFingerprint.Length == 0) throw new InvalidOperationException("The other PC's security code was not confirmed.");
         string observedFingerprint = "";
         var request = new MultibandRequest
         {
@@ -689,28 +813,39 @@ internal sealed class MultibandClient
         var response = await SendCoreAsync(host.Trim(), port, request, (_, certificate, _, _) =>
         {
             if (certificate is null) return false;
-            observedFingerprint = Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256));
-            return true;
+            observedFingerprint = MultibandSettingsStore.NormalizeFingerprint(Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256)));
+            return FingerprintsMatch(expectedFingerprint, observedFingerprint);
         }, token);
         EnsureSuccess(response);
         if (!Guid.TryParse(response.DeviceId, out var remoteDeviceId) || string.IsNullOrWhiteSpace(response.SharedSecret)) throw new InvalidOperationException("The remote PC returned invalid pairing information.");
 
         var normalizedDeviceId = remoteDeviceId.ToString("N");
         if (normalizedDeviceId.Equals(settings.DeviceId, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("A PC cannot be paired with itself.");
-        var peer = settings.PairedDevices.FirstOrDefault(item => item.DeviceId.Equals(normalizedDeviceId, StringComparison.OrdinalIgnoreCase));
-        if (peer is null)
+        PairedDevice? paired = null;
+        settingsStore.Update(settings, () =>
         {
-            peer = new PairedDevice { DeviceId = normalizedDeviceId };
-            settings.PairedDevices.Add(peer);
-        }
-        peer.Name = string.IsNullOrWhiteSpace(response.DeviceName) ? host.Trim() : response.DeviceName.Trim();
-        peer.Host = host.Trim();
-        peer.Port = response.DevicePort is >= 1024 and <= 65535 ? response.DevicePort : port;
-        peer.CertificateFingerprint = MultibandSettingsStore.NormalizeFingerprint(observedFingerprint);
-        peer.SharedSecret = response.SharedSecret;
-        peer.LastSeenUtc = DateTimeOffset.UtcNow;
-        settingsStore.Save(settings);
-        return peer;
+            var peer = settings.PairedDevices.FirstOrDefault(item => item.DeviceId.Equals(normalizedDeviceId, StringComparison.OrdinalIgnoreCase));
+            if (peer is null)
+            {
+                peer = new PairedDevice { DeviceId = normalizedDeviceId };
+                settings.PairedDevices.Add(peer);
+            }
+            peer.Name = string.IsNullOrWhiteSpace(response.DeviceName) ? host.Trim() : response.DeviceName.Trim();
+            peer.Host = host.Trim();
+            peer.Port = response.DevicePort is >= 1024 and <= 65535 ? response.DevicePort : port;
+            peer.CertificateFingerprint = observedFingerprint;
+            peer.SharedSecret = response.SharedSecret;
+            peer.LastSeenUtc = DateTimeOffset.UtcNow;
+            paired = peer;
+        });
+        return paired!;
+    }
+
+    internal static bool FingerprintsMatch(string expected, string actual)
+    {
+        var expectedBytes = Encoding.ASCII.GetBytes(MultibandSettingsStore.NormalizeFingerprint(expected));
+        var actualBytes = Encoding.ASCII.GetBytes(MultibandSettingsStore.NormalizeFingerprint(actual));
+        return expectedBytes.Length > 0 && expectedBytes.Length == actualBytes.Length && CryptographicOperations.FixedTimeEquals(expectedBytes, actualBytes);
     }
 
     public async Task<IReadOnlyList<MultibandBandSummary>> GetCatalogAsync(PairedDevice peer, CancellationToken token = default)
@@ -744,18 +879,20 @@ internal sealed class MultibandClient
             OperationId = operationId,
             StartAtUtc = startAtUtc
         };
-        var expectedFingerprint = MultibandSettingsStore.NormalizeFingerprint(peer.CertificateFingerprint);
-        var response = await SendCoreAsync(peer.Host, peer.Port, request, (_, certificate, _, _) =>
-        {
-            if (certificate is null) return false;
-            var actual = MultibandSettingsStore.NormalizeFingerprint(Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256)));
-            var expectedBytes = Encoding.ASCII.GetBytes(expectedFingerprint);
-            var actualBytes = Encoding.ASCII.GetBytes(actual);
-            return expectedBytes.Length > 0 && expectedBytes.Length == actualBytes.Length && CryptographicOperations.FixedTimeEquals(expectedBytes, actualBytes);
-        }, token);
+        var (host, port, expectedFingerprint) = settingsStore.Read(() => (peer.Host, peer.Port, peer.CertificateFingerprint));
+        var response = await SendCoreAsync(host, port, request, (_, certificate, _, _) =>
+            certificate is not null &&
+            FingerprintsMatch(expectedFingerprint, Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256))), token);
         EnsureSuccess(response);
-        peer.LastSeenUtc = DateTimeOffset.UtcNow;
-        settingsStore.Save(settings);
+        settingsStore.Read(() =>
+        {
+            // Status is polled every 600 ms during a launch; only persist "last seen" occasionally.
+            var now = DateTimeOffset.UtcNow;
+            var persist = now - peer.LastSeenUtc > TimeSpan.FromSeconds(30);
+            peer.LastSeenUtc = now;
+            if (persist) settingsStore.Save(settings);
+            return persist;
+        });
         return response;
     }
 
@@ -772,11 +909,9 @@ internal sealed class MultibandClient
             EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck
         }, timeout.Token);
-        using var reader = new StreamReader(ssl, Encoding.UTF8, false, 4096, true);
-        await using var writer = new StreamWriter(ssl, new UTF8Encoding(false), 4096, true) { AutoFlush = true };
-        await writer.WriteLineAsync(JsonSerializer.Serialize(request));
-        var line = await reader.ReadLineAsync(timeout.Token);
-        if (string.IsNullOrWhiteSpace(line) || line.Length > MultibandProtocol.MaximumMessageLength) throw new IOException("The remote PC returned an invalid response.");
+        await MultibandWire.WriteLineAsync(ssl, JsonSerializer.Serialize(request), timeout.Token);
+        var line = await MultibandWire.ReadLineAsync(ssl, MultibandProtocol.MaximumMessageLength, timeout.Token);
+        if (string.IsNullOrWhiteSpace(line)) throw new IOException("The remote PC returned an invalid response.");
         return JsonSerializer.Deserialize<MultibandResponse>(line) ?? throw new IOException("The remote PC returned an invalid response.");
     }
 

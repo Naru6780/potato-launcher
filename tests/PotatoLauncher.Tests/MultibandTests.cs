@@ -92,7 +92,13 @@ public class MultibandTests
             PairedDevice peer;
             try
             {
-                peer = await client.PairAsync("127.0.0.1", port, server.CreatePairingCode());
+                var code = server.CreatePairingCode();
+                var fingerprint = await client.GetServerFingerprintAsync("127.0.0.1", port);
+                Assert.Equal(MultibandSettingsStore.NormalizeFingerprint(server.CertificateFingerprint), fingerprint);
+                Assert.Equal(server.SecurityCode, MultibandServer.FormatSecurityCode(fingerprint));
+                // A different (man-in-the-middle) certificate than the one confirmed is refused before the code is sent.
+                await Assert.ThrowsAnyAsync<Exception>(() => client.PairAsync("127.0.0.1", port, code, new string('A', 64)));
+                peer = await client.PairAsync("127.0.0.1", port, code, fingerprint);
             }
             catch (Exception ex)
             {
@@ -117,6 +123,84 @@ public class MultibandTests
 
             peer.CertificateFingerprint = new string('0', 64);
             await Assert.ThrowsAnyAsync<Exception>(() => client.GetCatalogAsync(peer));
+        }
+        finally
+        {
+            if (server is not null) await server.DisposeAsync();
+            clientCertificate?.Dispose();
+            if (Directory.Exists(temporaryRoot)) Directory.Delete(temporaryRoot, true);
+        }
+    }
+
+    [Fact]
+    public async Task Wire_ReadsBoundedLinesAndRejectsOversizedOnes()
+    {
+        using var ok = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"a\":1}\r\nrest"));
+        Assert.Equal("{\"a\":1}", await MultibandWire.ReadLineAsync(ok, 64, CancellationToken.None));
+
+        using var empty = new MemoryStream();
+        Assert.Null(await MultibandWire.ReadLineAsync(empty, 64, CancellationToken.None));
+
+        using var huge = new MemoryStream(new byte[10_000]);
+        await Assert.ThrowsAsync<InvalidDataException>(() => MultibandWire.ReadLineAsync(huge, 4096, CancellationToken.None));
+    }
+
+    [Fact]
+    public void SecurityCode_IsFourGroupsOfTheFingerprint()
+    {
+        Assert.Equal("ABCD-EF01-2345-6789", MultibandServer.FormatSecurityCode("ab:cd:ef:01:23:45:67:89:ff"));
+        Assert.Equal("unknown", MultibandServer.FormatSecurityCode("abc"));
+        Assert.True(MultibandClient.FingerprintsMatch("aa:bb", "AABB"));
+        Assert.False(MultibandClient.FingerprintsMatch("", ""));
+        Assert.False(MultibandClient.FingerprintsMatch("AABB", "AABC"));
+    }
+
+    [Fact]
+    public async Task Server_LimitsPairingGuessesPerAddressAndSurvivesOversizedRequests()
+    {
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), $"PotatoLauncherMultibandTests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryRoot);
+        var port = GetFreeTcpPort();
+        MultibandServer? server = null;
+        System.Security.Cryptography.X509Certificates.X509Certificate2? clientCertificate = null;
+        try
+        {
+            var serverSettings = new MultibandSettings { DeviceName = "Agent PC", Port = port, ListenEnabled = true };
+            server = new MultibandServer(
+                serverSettings,
+                new MultibandSettingsStore(Path.Combine(temporaryRoot, "server.json")),
+                new MultibandCertificateStore(Path.Combine(temporaryRoot, "server.pfx")).LoadOrCreate(serverSettings.DeviceName),
+                () => Task.FromResult<IReadOnlyList<MultibandBandSummary>>([]),
+                _ => Task.FromResult(MultibandReadiness.Success()),
+                (_, _, _, _) => Task.CompletedTask);
+            await server.StartAsync();
+
+            // An oversized line is dropped without taking the server down.
+            using (var raw = new TcpClient())
+            {
+                await raw.ConnectAsync(IPAddress.Loopback, port);
+                await using var ssl = new System.Net.Security.SslStream(raw.GetStream(), false, (_, _, _, _) => true);
+                await ssl.AuthenticateAsClientAsync("PotatoLauncher");
+                try { await ssl.WriteAsync(new byte[MultibandProtocol.MaximumMessageLength + 4096]); } catch (IOException) { }
+            }
+
+            var clientSettings = new MultibandSettings { DeviceName = "Main PC", Port = GetFreeTcpPort() };
+            clientCertificate = new MultibandCertificateStore(Path.Combine(temporaryRoot, "client.pfx")).LoadOrCreate(clientSettings.DeviceName);
+            var client = new MultibandClient(clientSettings, new MultibandSettingsStore(Path.Combine(temporaryRoot, "client.json")),
+                clientCertificate.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256));
+            var code = server.CreatePairingCode();
+            var fingerprint = await client.GetServerFingerprintAsync("127.0.0.1", port);
+            var wrong = code == "111111" ? "222222" : "111111";
+            for (var attempt = 0; attempt < MultibandServer.MaximumPairingFailuresPerAddress; attempt++)
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(() => client.PairAsync("127.0.0.1", port, wrong, fingerprint));
+            }
+            var lockedOut = await Assert.ThrowsAsync<InvalidOperationException>(() => client.PairAsync("127.0.0.1", port, code, fingerprint));
+            Assert.Contains("from this PC", lockedOut.Message);
+
+            // A fresh code lifts the lockout.
+            var peer = await client.PairAsync("127.0.0.1", port, server.CreatePairingCode(), fingerprint);
+            Assert.False(string.IsNullOrWhiteSpace(peer.SharedSecret));
         }
         finally
         {

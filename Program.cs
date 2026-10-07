@@ -2510,6 +2510,7 @@ internal sealed class MainForm : Form
         using var form = new Dlss5ClientsForm(choices, config, settings.SharedProfileFolder);
         if (form.ShowDialog(this) != DialogResult.OK) return;
         config.AccountKeys = form.SelectedAccountKeys();
+        config.ReShadeOffForOtherClients = form.ReShadeOffForOtherClients;
         SaveDlss5Config(config);
     }
 
@@ -5407,16 +5408,23 @@ internal sealed class MainForm : Form
     private async Task CheckForUpdatesAsync()
     {
         if (releaseOperationActive) return;
+        if (queueCancel is not null)
+        {
+            MessageBox.Show(this, "Finish or cancel the launch queue before updating.", "Update unavailable");
+            return;
+        }
         releaseOperationActive = true;
         rollbackButton.Enabled = false;
         updateButton.Enabled = false;
         var previousStatus = status.Text;
+        string? tempRoot = null;
+        var handedOff = false;
         try
         {
             status.Text = "Downloading latest Potato Launcher...";
-            using var http = new HttpClient();
+            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
             http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoLauncher");
-            var tempRoot = Path.Combine(Path.GetTempPath(), $"PotatoLauncherUpdate-{Guid.NewGuid():N}");
+            tempRoot = Path.Combine(Path.GetTempPath(), $"PotatoLauncherUpdate-{Guid.NewGuid():N}");
             var zipPath = Path.Combine(tempRoot, ReleaseZipName);
             var extractPath = Path.Combine(tempRoot, "extract");
             Directory.CreateDirectory(tempRoot);
@@ -5426,19 +5434,22 @@ internal sealed class MainForm : Form
                 await downloadStream.CopyToAsync(fileStream);
             }
 
-            System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, extractPath);
+            // Same safe extraction as rollback: only the executable and assets, no path traversal.
+            await Task.Run(() => RollbackReleases.ExtractApplication(zipPath, extractPath));
             var latestVersion = ReadPackagedAppVersion(extractPath);
             var currentVersion = CurrentAppVersion();
             if (latestVersion.CompareTo(currentVersion) <= 0)
             {
-                TryDeleteDirectory(tempRoot);
                 status.Text = $"Potato Launcher is up to date ({currentVersion}).";
                 MessageBox.Show($"Potato Launcher is already up to date.\n\nCurrent version: {currentVersion}", "No update needed", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+            if (queueCancel is not null) throw new InvalidOperationException("A launch queue started. Finish it before updating.");
 
             status.Text = $"Installing Potato Launcher {latestVersion}...";
-            StartHiddenUpdater(tempRoot, extractPath);
+            SaveSettingsFromInputs();
+            StartReplacementInstaller(tempRoot, extractPath, "update");
+            handedOff = true;
             Application.Exit();
         }
         catch (Exception ex)
@@ -5448,6 +5459,7 @@ internal sealed class MainForm : Form
         }
         finally
         {
+            if (!handedOff && tempRoot is not null) TryDeleteDirectory(tempRoot);
             if (!IsDisposed) updateButton.Enabled = true;
             releaseOperationActive = false;
             if (!IsDisposed) rollbackButton.Enabled = true;
@@ -5502,7 +5514,7 @@ internal sealed class MainForm : Form
             if (ReadPackagedAppVersion(extract) != selected.Version) throw new InvalidDataException("Downloaded executable version does not match the selected release.");
             if (queueCancel is not null) throw new InvalidOperationException("A launch queue started. Finish it before rolling back.");
             SaveSettingsFromInputs();
-            StartRollbackUpdater(tempRoot, extract);
+            StartReplacementInstaller(tempRoot, extract, "rollback");
             handedOff = true;
             Application.Exit();
         }
@@ -5515,46 +5527,70 @@ internal sealed class MainForm : Form
         }
     }
 
-    private static void StartRollbackUpdater(string tempRoot, string extractPath)
+    // Replaces only the executable and assets (update and rollback share this). Backs up the current files and profile
+    // JSON first; if any copy fails, restores the backup, restarts the previous version and tells the user.
+    private static void StartReplacementInstaller(string tempRoot, string extractPath, string operation)
     {
-        var backup = Path.Combine(PersistentDataRoot(), "Rollback Backups", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
-        var script = $$"""
+        var title = operation == "update" ? "Potato Launcher update" : "Potato Launcher rollback";
+        var failureLabel = operation == "update" ? "Update failed" : "Rollback failed";
+        var backupsRoot = Path.Combine(PersistentDataRoot(), "Rollback Backups");
+        PruneReplacementBackups(backupsRoot, keep: 4);
+        var backup = Path.Combine(backupsRoot, DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + operation + "-" + Guid.NewGuid().ToString("N"));
+        var script = BuildReplacementScript(extractPath, AppContext.BaseDirectory, Application.ExecutablePath, backup,
+            PersistentDataRoot(), tempRoot, Environment.ProcessId, failureLabel, title, restart: true);
+        var scriptPath = Path.Combine(tempRoot, operation + ".ps1");
+        File.WriteAllText(scriptPath, script);
+        using var installer = Process.Start(new ProcessStartInfo { FileName = "powershell.exe",
+            Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {QuoteArgument(scriptPath)}",
+            UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden })
+            ?? throw new InvalidOperationException($"Could not start the {operation} installer.");
+    }
+
+    internal static string BuildReplacementScript(string extractPath, string targetDirectory, string exePath, string backup,
+        string profile, string tempRoot, int waitProcessId, string failureLabel, string title, bool restart)
+    {
+        var start = restart ? "Start-Process -FilePath $exe -WorkingDirectory $target" : "";
+        return $$"""
             $ErrorActionPreference = 'Stop'
             $extract = '{{EscapePowerShellString(extractPath)}}'
-            $target = '{{EscapePowerShellString(AppContext.BaseDirectory)}}'
-            $exe = '{{EscapePowerShellString(Application.ExecutablePath)}}'
+            $target = '{{EscapePowerShellString(targetDirectory)}}'
+            $exe = '{{EscapePowerShellString(exePath)}}'
             $backup = '{{EscapePowerShellString(backup)}}'
-            $profile = '{{EscapePowerShellString(PersistentDataRoot())}}'
+            $profile = '{{EscapePowerShellString(profile)}}'
+            $temp = '{{EscapePowerShellString(tempRoot)}}'
             $changed = $false
             try {
-                Wait-Process -Id {{Environment.ProcessId}} -ErrorAction SilentlyContinue
+                Wait-Process -Id {{waitProcessId}} -ErrorAction SilentlyContinue
                 New-Item -ItemType Directory -Path (Join-Path $backup 'profile') -Force | Out-Null
                 Copy-Item -LiteralPath $exe -Destination (Join-Path $backup 'Potato Launcher.exe')
-                Copy-Item -LiteralPath (Join-Path $target 'Potato Launcher Assets') -Destination $backup -Recurse
+                if (Test-Path -LiteralPath (Join-Path $target 'Potato Launcher Assets')) {
+                    Copy-Item -LiteralPath (Join-Path $target 'Potato Launcher Assets') -Destination $backup -Recurse
+                }
                 Get-ChildItem -LiteralPath $profile -Filter '*.json' -File | Copy-Item -Destination (Join-Path $backup 'profile')
                 $changed = $true
                 Copy-Item -LiteralPath (Join-Path $extract 'Potato Launcher Assets') -Destination $target -Recurse -Force
                 Copy-Item -LiteralPath (Join-Path $extract 'Potato Launcher.exe') -Destination $exe -Force
-                Start-Process -FilePath $exe -WorkingDirectory $target
+                {{start}}
             } catch {
                 $failure = $_.Exception.Message
-                if ($changed) {
-                    try {
-                        Copy-Item -LiteralPath (Join-Path $backup 'Potato Launcher Assets') -Destination $target -Recurse -Force
+                try {
+                    if ($changed) {
+                        if (Test-Path -LiteralPath (Join-Path $backup 'Potato Launcher Assets')) {
+                            Copy-Item -LiteralPath (Join-Path $backup 'Potato Launcher Assets') -Destination $target -Recurse -Force
+                        }
                         Copy-Item -LiteralPath (Join-Path $backup 'Potato Launcher.exe') -Destination $exe -Force
-                        Start-Process -FilePath $exe -WorkingDirectory $target
-                    } catch { $failure += "`nAutomatic recovery failed: " + $_.Exception.Message }
-                }
-                Add-Type -AssemblyName System.Windows.Forms
-                [System.Windows.Forms.MessageBox]::Show("Rollback failed: $failure`nBackup: $backup", 'Potato Launcher rollback') | Out-Null
+                    }
+                    # Nothing was replaced yet (or it was restored): bring the previous version back up.
+                    {{start}}
+                } catch { $failure += "`nAutomatic recovery failed: " + $_.Exception.Message }
+                Set-Content -LiteralPath (Join-Path $backup 'failure.txt') -Value $failure -ErrorAction SilentlyContinue
+                {{(restart ? "Add-Type -AssemblyName System.Windows.Forms" : "")}}
+                {{(restart ? $"[System.Windows.Forms.MessageBox]::Show(\"{failureLabel}: $failure`nBackup: $backup\", '{EscapePowerShellString(title)}') | Out-Null" : "")}}
+            } finally {
+                {{(restart ? "Start-Sleep -Seconds 2" : "")}}
+                Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
             }
             """;
-        var scriptPath = Path.Combine(tempRoot, "rollback.ps1");
-        File.WriteAllText(scriptPath, script);
-        using var updater = Process.Start(new ProcessStartInfo { FileName = "powershell.exe",
-            Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {QuoteArgument(scriptPath)}",
-            UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden })
-            ?? throw new InvalidOperationException("Could not start rollback installer.");
     }
 
     private async Task ShowChangelogIfNewVersionAsync()
@@ -5647,33 +5683,20 @@ internal sealed class MainForm : Form
         }
     }
 
-    private static void StartHiddenUpdater(string tempRoot, string extractPath)
+    // Each update/rollback keeps a full backup; keep only the newest few so they do not pile up.
+    internal static void PruneReplacementBackups(string backupsRoot, int keep)
     {
-        var appDirectory = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var exePath = Application.ExecutablePath;
-        var scriptPath = Path.Combine(tempRoot, "update.ps1");
-        var script = $$"""
-            $ErrorActionPreference = 'Stop'
-            $pidToWait = {{Environment.ProcessId}}
-            $extract = '{{EscapePowerShellString(extractPath)}}'
-            $target = '{{EscapePowerShellString(appDirectory)}}'
-            $exe = '{{EscapePowerShellString(exePath)}}'
-            $temp = '{{EscapePowerShellString(tempRoot)}}'
-            Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue
-            Copy-Item -Path (Join-Path $extract '*') -Destination $target -Recurse -Force
-            Start-Process -FilePath $exe
-            Start-Sleep -Seconds 2
-            Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
-            """;
-        File.WriteAllText(scriptPath, script);
-        Process.Start(new ProcessStartInfo
+        try
         {
-            FileName = "powershell.exe",
-            Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {QuoteArgument(scriptPath)}",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden
-        });
+            if (!Directory.Exists(backupsRoot)) return;
+            foreach (var old in new DirectoryInfo(backupsRoot).GetDirectories()
+                         .OrderByDescending(directory => directory.CreationTimeUtc)
+                         .Skip(keep))
+            {
+                TryDeleteDirectory(old.FullName);
+            }
+        }
+        catch { }
     }
 
     private static string EscapePowerShellString(string value) => value.Replace("'", "''");

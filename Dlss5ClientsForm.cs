@@ -15,6 +15,7 @@ internal sealed class Dlss5ClientsForm : Form
     private readonly CheckedListBox clientList;
     private readonly Label gameFolderLabel;
     private readonly Label statusLabel;
+    private readonly CheckBox reShadeOffInput;
 
     public Dlss5ClientsForm(IReadOnlyList<Dlss5AccountChoice> choices, Dlss5Config config, string sharedProfileFolder)
     {
@@ -25,12 +26,11 @@ internal sealed class Dlss5ClientsForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = false;
         MaximizeBox = false;
-        ClientSize = new Size(460, 540);
+        ClientSize = new Size(460, 572);
 
         var intro = new Label
         {
-            Text = "Tick the clients that start with DLSS 5. Every other client still runs ReShade, but without add-ons. " +
-                   "Changes apply the next time a client is launched.",
+            Text = "Tick the clients that start with DLSS 5. Changes apply the next time a client is launched.",
             Bounds = new Rectangle(14, 12, 432, 54)
         };
         gameFolderLabel = new Label { Bounds = new Rectangle(14, 70, 340, 36), AutoEllipsis = true };
@@ -48,14 +48,24 @@ internal sealed class Dlss5ClientsForm : Form
         selectAll.Click += (_, _) => SetAll(true);
         var clear = new Button { Text = "Clear", Bounds = new Rectangle(110, 474, 90, 30) };
         clear.Click += (_, _) => SetAll(false);
-        var save = new Button { Text = "Save", DialogResult = DialogResult.OK, Bounds = new Rectangle(266, 498, 86, 32) };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(360, 498, 86, 32) };
+        reShadeOffInput = new CheckBox
+        {
+            Text = "Turn ReShade off completely on the other clients",
+            Checked = config.ReShadeOffForOtherClients,
+            Bounds = new Rectangle(14, 507, 432, 22)
+        };
+        var reShadeOffHint = new ToolTip();
+        reShadeOffHint.SetToolTip(reShadeOffInput, "On: clients without DLSS 5 start with no ReShade at all (no banner, overlay or effects).\nOff: they run ReShade without add-ons.");
+        var save = new Button { Text = "Save", DialogResult = DialogResult.OK, Bounds = new Rectangle(266, 532, 86, 32) };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Bounds = new Rectangle(360, 532, 86, 32) };
 
-        Controls.AddRange([intro, gameFolderLabel, changeFolder, statusLabel, clientList, selectAll, clear, save, cancel]);
+        Controls.AddRange([intro, gameFolderLabel, changeFolder, statusLabel, clientList, selectAll, clear, reShadeOffInput, save, cancel]);
         AcceptButton = save;
         CancelButton = cancel;
         RefreshStatus();
     }
+
+    public bool ReShadeOffForOtherClients => reShadeOffInput.Checked;
 
     public List<string> SelectedAccountKeys() =>
         clientList.CheckedItems.OfType<Dlss5AccountChoice>().Select(choice => choice.AccountKey).ToList();

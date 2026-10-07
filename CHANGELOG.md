@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.109 - 2026-10-07
+
+- DLSS 5 clients: new option **Turn ReShade off completely on the other clients** (on by default once at least one DLSS 5 client is chosen). Clients without DLSS 5 start with no ReShade banner, overlay or effects.
+- Multiband: connections from outside the local network are dropped before TLS; at most 16 connections at once; 10-second handshake/read/write timeouts; messages are read with a hard 64 KB limit.
+- Multiband pairing: the connecting PC shows the other PC's **security code** (from its certificate) and pairs only after you confirm it matches the code shown next to the pairing code, so a machine in the middle cannot intercept pairing. Wrong codes lock out only the guessing address (with an overall backstop), so another host cannot burn your code.
+- Multiband: settings are shared safely between the window and incoming connections; a retried Commit starts a launch only once; closing the window during a launch asks and cancels it on both PCs.
+- Updates use the same safe installer as rollback: only the executable and assets are replaced, the current version and profile JSON are backed up first, a failed copy restores the previous version and shows a message, and updating waits for the launch queue. Only the newest 4 backups are kept.
+- Optimizer: main-client rules follow each client's confirmed Character@World instead of the window title, so a main client stays the main client through loading screens; window titles keep the character name while loading.
+
 ## 1.0.108 - 2026-10-07
 
 - Add **DLSS 5 clients**: choose exactly which clients start with DLSS 5 (ReShade + RenoDX add-on in the shared game folder) from Settings → **DLSS 5 clients** or an account's right-click menu (**Use DLSS 5 on this client**). Other clients keep ReShade without add-ons. Potato re-applies the split before every launch, so re-running a DLSS installer cannot silently enable DLSS on every client again.
