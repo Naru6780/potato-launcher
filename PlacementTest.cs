@@ -69,9 +69,13 @@ internal sealed class LoadSample
     private static extern bool GetSystemTimes(out long idle, out long kernel, out long user);
 }
 
-internal sealed record LoadWindow(double SystemCpu, double ClientCpu, IReadOnlyDictionary<int, double> CpuByClient, IReadOnlyDictionary<int, double> FpsByClient, double OtherCpu = 0);
+internal sealed record LoadWindow(double SystemCpu, double ClientCpu, IReadOnlyDictionary<int, double> CpuByClient, IReadOnlyDictionary<int, double> FpsByClient, double OtherCpu = 0,
+    IReadOnlyDictionary<int, IReadOnlyList<double>>? FpsSamples = null);
 
-internal sealed record PlacementScore(CpuPlacementMode Mode, double SystemCpu, double ClientCpu, double? MainFps, double? LowestFps, int AtTarget, int Measured);
+/// <summary>MainFps and LowestFps are "steady" values: the 5th percentile of per-second FPS when sampled (a client that
+/// dips is judged by its dips, not its average), else the window average.</summary>
+internal sealed record PlacementScore(CpuPlacementMode Mode, double SystemCpu, double ClientCpu, double? MainFps, double? LowestFps, int AtTarget, int Measured,
+    double? MainAverage = null);
 
 internal sealed record PlacementTestResult(IReadOnlyList<PlacementScore> Scores, CpuPlacementMode Winner, string Summary, bool Inconclusive = false);
 
@@ -93,6 +97,7 @@ internal sealed class PlacementTest
     private LoadSample? phaseSample;
     private HashSet<int>? clientIds;
     private DateTime lastTickUtc;
+    private readonly Dictionary<int, List<double>> phaseFps = [];
     internal static readonly TimeSpan MaxTickGap = TimeSpan.FromSeconds(5);
 
     public PlacementTest(IReadOnlyList<CpuPlacementMode> modes, int rounds, TimeSpan settle, TimeSpan measure, int targetFps, int? mainId,
@@ -126,7 +131,8 @@ internal sealed class PlacementTest
     }
 
     /// <summary>Call about once a second while CurrentMode is applied to the clients.</summary>
-    public void Tick(DateTime nowUtc, IReadOnlyList<ClientRef> clients)
+    /// <param name="liveFps">Each client's current FPS (about one value per second), recorded while measuring.</param>
+    public void Tick(DateTime nowUtc, IReadOnlyList<ClientRef> clients, IReadOnlyDictionary<int, double>? liveFps = null)
     {
         if (Done) return;
         var ids = clients.Select(client => client.ProcessId).ToHashSet();
@@ -144,10 +150,17 @@ internal sealed class PlacementTest
 
         var elapsed = nowUtc - phaseStartUtc;
         if (phaseSample is null && elapsed >= settle) phaseSample = LoadSample.Take(clients, frames);
+        if (phaseSample is not null && liveFps is not null)
+            foreach (var id in ids)
+                if (liveFps.TryGetValue(id, out var fps)) (phaseFps.TryGetValue(id, out var list) ? list : phaseFps[id] = []).Add(fps);
         // The window is timed from its own first sample, so it always spans the full measuring time.
         if (phaseSample is null || nowUtc - phaseSample.TakenUtc < measure) return;
 
-        var window = LoadSample.Between(phaseSample, LoadSample.Take(clients, frames));
+        var window = LoadSample.Between(phaseSample, LoadSample.Take(clients, frames)) with
+        {
+            FpsSamples = phaseFps.ToDictionary(entry => entry.Key, entry => (IReadOnlyList<double>)entry.Value.ToArray())
+        };
+        phaseFps.Clear();
         if (window.SystemCpu > 100.5 || window.ClientCpu > 100.5)
         {
             Cancel("Placement test stopped: a measurement came out impossible (over 100% CPU). Run it again.");
@@ -163,6 +176,10 @@ internal sealed class PlacementTest
 
     // Outside load (other programs) moving more than this during the test swamps the ~2-4 point differences measured.
     internal const double OtherCpuMaxSpread = 3.0;
+    // Same placement, different rounds: more than this apart means the scene changed (client CPU, % of the whole CPU).
+    internal const double SceneDriftMax = 5.0;
+    // Per-second FPS readings needed per client before the 5th percentile is used instead of the average.
+    internal const int MinimumSamples = 10;
 
     /// <param name="preferred">The placement kept when results are within the noise: the topology default, which two
     /// clean runs measured as cheaper than no pinning (a tie used to fall back to no pinning).</param>
@@ -174,22 +191,42 @@ internal sealed class PlacementTest
             var fpsByClient = group.SelectMany(entry => entry.Window.FpsByClient)
                 .GroupBy(entry => entry.Key)
                 .ToDictionary(entries => entries.Key, entries => entries.Average(entry => entry.Value));
+            // Steady FPS per client: 5th percentile of its per-second readings across this mode's windows.
+            var steady = fpsByClient.ToDictionary(entry => entry.Key, entry =>
+            {
+                var samples = group.SelectMany(window => window.Window.FpsSamples is { } all && all.TryGetValue(entry.Key, out var list) ? list : [])
+                    .OrderBy(value => value).ToArray();
+                return samples.Length >= MinimumSamples ? samples[(int)Math.Floor((samples.Length - 1) * 0.05)] : entry.Value;
+            });
             return new PlacementScore(
                 group.Key,
                 group.Average(entry => entry.Window.SystemCpu),
                 group.Average(entry => entry.Window.ClientCpu),
-                mainId is int main && fpsByClient.TryGetValue(main, out var mainFps) ? mainFps : null,
-                fpsByClient.Count == 0 ? null : fpsByClient.Values.Min(),
-                fpsByClient.Values.Count(fps => fps >= targetFps - AtTargetSlack),
-                fpsByClient.Count);
+                mainId is int main && steady.TryGetValue(main, out var mainSteady) ? mainSteady : null,
+                steady.Count == 0 ? null : steady.Values.Min(),
+                steady.Values.Count(fps => fps >= targetFps - AtTargetSlack),
+                steady.Count,
+                mainId is int m && fpsByClient.TryGetValue(m, out var mainAverage) ? mainAverage : null);
         }).OrderBy(score => score.Mode).ToList();
 
         var winner = scores.FirstOrDefault(score => score.Mode == preferred) ?? scores[0];
         foreach (var candidate in scores.Where(score => score != winner)) if (Better(candidate, winner)) winner = candidate;
         var lines = scores.Select(score =>
             $"{Label(score.Mode)}: CPU {score.SystemCpu:0.0}% (clients {score.ClientCpu:0.0}%), {score.AtTarget}/{score.Measured} at {targetFps}" +
-            (score.MainFps is double main ? $", main {main:0}" : "") +
+            (score.MainAverage is double average ? $", main {average:0}" : "") +
+            (score.MainFps is double main ? $" (worst {main:0})" : "") +
             (score.LowestFps is double low ? $", lowest {low:0}" : ""));
+        // The game itself getting busier or quieter mid-test shows as the SAME placement measuring differently between
+        // rounds (seen: client CPU 43% -> 64% within two minutes on a 9950X3D). Then the comparison is not fair.
+        var drift = windows.GroupBy(entry => entry.Mode).Where(group => group.Count() > 1)
+            .Select(group => group.Max(entry => entry.Window.ClientCpu) - group.Min(entry => entry.Window.ClientCpu))
+            .DefaultIfEmpty(0).Max();
+        if (drift > SceneDriftMax)
+        {
+            var busy = $"Inconclusive: the game itself got busier or quieter during the test (the same placement measured {drift:0.0} points apart). " +
+                       "Your current placement was kept. Run it again somewhere calm, with every client standing still.  " + string.Join("  Â·  ", lines);
+            return new PlacementTestResult(scores, winner.Mode, busy, Inconclusive: true);
+        }
         var others = windows.Select(entry => entry.Window.OtherCpu).ToList();
         var spread = others.Count == 0 ? 0 : others.Max() - others.Min();
         if (spread > OtherCpuMaxSpread)
@@ -207,7 +244,8 @@ internal sealed class PlacementTest
     // 4: windows timed from their own sample, starved/impossible runs rejected (a 1.0.122 run stored garbage).
     // 5: outside-load check and ties keep the default (a 1.0.125 run during a background analysis stored "No pinning").
     // 6: main-core reservation rules changed in 1.0.128 (floor of 2 cores, regrow after a minute).
-    public const int ScoringVersion = 6;
+    // 7: steadiness (5th percentile of per-second FPS) decides before CPU; scene drift makes a run inconclusive.
+    public const int ScoringVersion = 7;
 
     // The game's own 60 fps limiter delivers ~58.0-58.2, so a 2 FPS slack put clients on the threshold and 0.1 FPS of
     // noise decided the winner (seen on a 9800X3D). 3 FPS matches "at cap" everywhere else in the Optimizer.

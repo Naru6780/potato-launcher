@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.129 - 2026-10-07
+
+- Test placements ranks by steadiness: per-second FPS per client, 5th percentile (worst seconds) decides at-target and main FPS before CPU. Same placement measuring >5 points of client CPU apart between rounds = scene changed = inconclusive (current placement kept). Scoring v7.
+- New PlacementStrategyTests: every strategy x single/dual CCD x 2-16 clients x follower load 0-2 threads each x main load 0.5-5: main >= 2 own cores or a whole CCD; no follower straddles CCDs; Off = all cores.
+- Placement dropdown tooltip describes each option with measured results.
+
 ## 1.0.128 - 2026-10-07
 
 - Fixed the main being squeezed to one core (9950X3D: 60 -> 35 FPS) and stuck there by 1.0.126's regrow threshold. Main reservation: minimum 2 cores and enough for its own measured load (1.5x); kept while followers have 1.2x spare, else none (main shares the whole cache CCD, never a lane). Regrow is time-based: after 60 s of room. Verified by replaying the friend's recorded loads: 1.0.126 code reproduces 22/22 recorded placements; new code keeps 2-3 cores.

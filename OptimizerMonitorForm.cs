@@ -370,9 +370,16 @@ internal sealed class OptimizerMonitorForm : Form
         placementMode.Width = 210;
         placementMode.Height = 28;
         toolTip.SetToolTip(placementMode,
-            "Which CPU cores each client runs on.\n" +
-            "Auto: the winner of Test placements on this PC; before a test, the main gets its own cores only on CPUs\n" +
-            "with unequal cores (two CCDs such as a 9950X3D, or Intel P/E cores) and nothing is pinned otherwise.");
+            "Which CPU cores each client runs on. Goal: every client steady at its cap, the main first.\n\n" +
+            "Auto (recommended): the winner of Test placements on this PC, judged on each client's worst seconds, then CPU.\n" +
+            "    Until you test: Main gets its own cores.\n" +
+            "No pinning: Windows spreads every client over every core. Safe, but used the most CPU on both PCs measured.\n" +
+            "Main gets its own cores: the main keeps 2-4 cores no one else uses (on the 3D V-Cache CCD); followers share\n" +
+            "    the rest, each inside one CCD. Best measured on a 9800X3D and a 9950X3D.\n" +
+            "Two-core lanes: like the above, but followers are packed 2-3 per two-core lane. Lowest CPU when calm, but a\n" +
+            "    busy moment cannot borrow cores, so followers can dip.\n" +
+            "Main gets the cache CCD (2-CCD CPUs): the main gets the whole V-Cache CCD, followers the other one while they\n" +
+            "    fit. Measured no better than Main gets its own cores so far.");
         placementMode.SelectedIndexChanged += (_, _) =>
         {
             if (refreshing) return;

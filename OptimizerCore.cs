@@ -571,7 +571,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         if (stickyMainId is int sticky && !alive.Contains(sticky)) stickyMainId = null;
         if (placementTest is { } test)
         {
-            test.Tick(DateTime.UtcNow, clients.Select(client => new ClientRef(client.Id, SafeStartTime(client).ToUniversalTime())).ToList());
+            test.Tick(DateTime.UtcNow, clients.Select(client => new ClientRef(client.Id, SafeStartTime(client).ToUniversalTime())).ToList(), latestFps);
             if (test.Done) FinishPlacementTest(test);
         }
 
