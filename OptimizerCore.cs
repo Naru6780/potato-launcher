@@ -1648,6 +1648,8 @@ internal sealed class GpuUsageSampler : IDisposable
 
     public double? GetTotalUsage()
     {
+        // Prefer the driver's own figure; the 3D-engine counters miss DLSS and similar work.
+        if (NvidiaGpuUsage.GetUtilizationPercent() is double driverPercent) return driverPercent;
         if (lastTotalUsage.HasValue) return lastTotalUsage.Value;
         _ = GetUsageByProcessId([]);
         return lastTotalUsage;

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.112 - 2026-10-07
+
+- Optimizer: system GPU load now comes from the NVIDIA driver (NVML, the same figure as nvidia-smi and vendor dashboards). The Windows 3D-engine counters it used before under-reported work such as DLSS 5 (about 70% shown while the GPU was 97% busy). Other GPUs keep the counter-based value.
+
 ## 1.0.111 - 2026-10-07
 
 - Optimizer window redesigned around one goal: every client at its frame cap, as many clients as the PC can hold.
