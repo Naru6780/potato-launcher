@@ -80,14 +80,15 @@ public class CpuPlacementTests
         Assert.Equal(0xFFL, eight[1]);
         Assert.All(Enumerable.Range(2, 7), id => Assert.Equal(0xFF00L, eight[id]));
 
-        // 16 clients at the same cost: followers need ~11 threads, so the main keeps only 2 cores.
+        // 16 clients at the same cost: followers need 7.5 x 1.15 = 8.6 threads, so the main keeps 3 cores (10 left).
         var sixteen = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.ReserveMain, Enumerable.Range(1, 16).ToList(), 1, followerLoad: 15 * 0.5);
-        Assert.Equal(0xFL, sixteen[1]);
-        Assert.All(Enumerable.Range(2, 15), id => Assert.Equal(0xFFF0L, sixteen[id]));
+        Assert.Equal(0x3FL, sixteen[1]);
+        Assert.All(Enumerable.Range(2, 15), id => Assert.Equal(0xFFC0L, sixteen[id]));
 
-        // Followers that need the whole chip: no reservation at all.
+        // Followers that would need the whole chip: the main still keeps its 2-core floor, the followers the other 12 threads.
         var heavy = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.ReserveMain, Enumerable.Range(1, 16).ToList(), 1, followerLoad: 15 * 1.0);
-        Assert.All(heavy.Values, mask => Assert.Equal(0xFFFFL, mask));
+        Assert.Equal(0xFL, heavy[1]);
+        Assert.All(Enumerable.Range(2, 15), id => Assert.Equal(0xFFF0L, heavy[id]));
     }
 
     [Fact]
@@ -195,9 +196,15 @@ public class CpuPlacementTests
     public void MainCores_GiveUpAtOnceAndComeBackOnlyAfterAMinute()
     {
         // The 9800X3D case from 1.0.125's log: 7 followers at ~5.3-5.4 threads flipped the main between 0-7 and 0-5.
+        // Now 4 cores leave them 8 threads, enough up to 6.9 threads of load (1.15x); from 7.0 the main drops to 3...
         var topology = R9800X3D();
-        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.4));
-        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.3));
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.4));
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 6.9));
+        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 7.0));
+        // ...unless it already holds 4: those stay until the followers would have less than 1.05x (load over 7.6).
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 7.0, previous: 4));
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 7.6, previous: 4));
+        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 7.7, previous: 4));
         var t = new DateTime(2026, 10, 7, 20, 0, 0, DateTimeKind.Utc);
         DateTime? since = null;
         Assert.Equal(3, CpuPlacementPlanner.WithRegrowDelay(3, previous: 4, t, ref since));                 // give up: immediate
@@ -212,20 +219,53 @@ public class CpuPlacementTests
     public void MainIsNeverSqueezedToOneCore_FriendsRecordedSpike()
     {
         // 9950X3D, 15 followers. 1.0.126 pinned the main to 0-1 at 18.7 threads of follower load (60 -> 35 FPS) and kept it there.
+        // 1.0.129 gave it 2 cores (0-3) at 19.7 threads: 41-45 FPS while 8 threads idled. The main comes first: 4 cores
+        // leave the followers 24 threads, enough up to 20.8 threads of load (1.15x).
         var topology = R9950X3D();
-        Assert.Equal(2, CpuPlacementPlanner.MainCoreCount(topology, 15, 18.7, mainLoad: 2.2));
-        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 15, 17.0, mainLoad: 1.5));
-        Assert.Equal(2, CpuPlacementPlanner.MainCoreCount(topology, 15, 22.0, mainLoad: 2.4)); // main first while followers keep 20% spare
-        Assert.Equal(0, CpuPlacementPlanner.MainCoreCount(topology, 15, 25.0, mainLoad: 2.4)); // beyond that: share, never one core
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 15, 18.7, mainLoad: 2.2));
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 15, 19.7, mainLoad: 2.3)); // recorded 2026-10-07 16:59
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 15, 20.8, mainLoad: 2.3));
+        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 15, 22.0, mainLoad: 2.4)); // 26 threads left for 25.3 needed
+        Assert.Equal(2, CpuPlacementPlanner.MainCoreCount(topology, 15, 25.0, mainLoad: 2.4)); // overloaded: the floor, never one core, never none
+        Assert.Equal(2, CpuPlacementPlanner.MainCoreCount(topology, 15, 40.0, mainLoad: 2.4));
         Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 15, 12.0, mainLoad: 5.0)); // busy main (needs 4) with room: 4
-        Assert.Equal(0, CpuPlacementPlanner.MainCoreCount(topology, 15, 21.0, mainLoad: 5.0)); // needs 4, followers cannot spare them: share
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 15, 25.0, mainLoad: 5.0)); // needs 4: keeps them, main first
+        // Holding 4 at a load that would size 3 from scratch: kept while the followers have 1.05x (24 >= 22.86 at 21.77).
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 15, 22.0, mainLoad: 2.4, previous: 4));
+        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 15, 23.0, mainLoad: 2.4, previous: 4));
 
-        // With no reservation the main gets the whole cache CCD, not a follower lane.
+        // The plan on his recorded loads: main 0-7, followers on 8-15 and 16-31, never on the main's cores.
         var ids = Enumerable.Range(1, 16).ToList();
-        var plan = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.Lanes, ids, 1, 25.0, null, out _, mainLoad: 2.4);
-        Assert.Equal(0xFFFFL, plan[1]);
+        var plan = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.ReserveMain, ids, 1, 19.7, null, out var state, mainLoad: 2.3);
+        Assert.Equal(0xFFL, plan[1]);
+        Assert.Equal(4, state.MainCores);
+        Assert.All(ids.Skip(1), id => Assert.Equal(0, plan[id] & 0xFF));
+        // Overloaded followers still never put the main on one core or on a shared CCD.
+        var overloaded = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.Lanes, ids, 1, 25.0, null, out _, mainLoad: 2.4);
+        Assert.Equal(0xFL, overloaded[1]);
+        Assert.All(ids.Skip(1), id => Assert.Equal(0, overloaded[id] & 0xF));
         for (var cores = 1; cores <= 4; cores++)
             Assert.NotEqual(1, CpuPlacementPlanner.MainCoreCount(topology, 15, 15.0 + cores, mainLoad: 2.0));
+    }
+
+    [Fact]
+    public void CacheCcd_IsOnlyTestedWhenItCanEngage_AndFallsBackToOwnCores()
+    {
+        var topology = R9950X3D();
+        // 15 followers at 19.7 threads (recorded): 1.5x = 29.6 > 16 threads outside the cache CCD: not a candidate.
+        Assert.DoesNotContain(CpuPlacementMode.CacheCcdForMain, CpuPlacementPlanner.TestCandidates(topology, 15, 19.7));
+        // 8 followers at 10 threads: 15 <= 16: a candidate.
+        Assert.Contains(CpuPlacementMode.CacheCcdForMain, CpuPlacementPlanner.TestCandidates(topology, 8, 10.0));
+        // One CCD: never.
+        Assert.DoesNotContain(CpuPlacementMode.CacheCcdForMain, CpuPlacementPlanner.TestCandidates(R9800X3D(), 3, 2.0));
+        Assert.Equal(3, CpuPlacementPlanner.TestCandidates(R9800X3D(), 3, 2.0).Count);
+
+        // Chosen anyway with 15 followers: it runs as "Main gets its own cores" with 4 cores, and says so in its state.
+        var ids = Enumerable.Range(1, 16).ToList();
+        var plan = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.CacheCcdForMain, ids, 1, 19.7, null, out var state, mainLoad: 2.3);
+        Assert.False(state.CacheCcdEngaged);
+        Assert.Equal(4, state.MainCores);
+        Assert.Equal(0xFFL, plan[1]);
     }
     [Fact]
     public void CacheCcd_DoesNotFlipNearItsThreshold()

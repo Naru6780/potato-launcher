@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.130 - 2026-10-07
+
+- Main-first core sizing. The main keeps 4 cores (half the V-Cache CCD) and gives one up only while the followers would otherwise have less than 1.15x their measured load; never below 2 cores, and never "share everything" (measured worst: 36 FPS). Up to 1.0.129 the followers were required to keep 1.5x, which on a 9950X3D with 15 followers at 20 threads left the main 2 cores (41-45 FPS) while 8 threads idled. Replayed on that recording: 4 cores (0-7), followers on 8-15 and 16-31.
+- Shrink hysteresis: a core the main holds is only given up once the followers would drop below 1.05x (grow at 1.15x, after the existing 60 s), so a load sitting on the line no longer re-pins every client.
+- Follower load counts only after 5 s of readings (the first one-second snapshot after a Potato restart sized the main as if the followers were always that busy).
+- "Main gets the cache CCD" is honest: when the followers do not fit in the other CCD it runs as "Main gets its own cores" and the status says so (it used to show "cache CCD" with the main on 0-3). Test placements skips it in that case instead of measuring the same placement twice and picking one by noise.
+- Test placements ranks the main first: steady at target beats not; while neither is, 2+ FPS more on the main wins; then clients at target; then CPU (scoring v8, earlier results discarded). Status line shows the main's current core count; diagnostics records mainCores, cacheCcdEngaged and the main's load.
+
 ## 1.0.129 - 2026-10-07
 
 - Test placements ranks by steadiness: per-second FPS per client, 5th percentile (worst seconds) decides at-target and main FPS before CPU. Same placement measuring >5 points of client CPU apart between rounds = scene changed = inconclusive (current placement kept). Scoring v7.

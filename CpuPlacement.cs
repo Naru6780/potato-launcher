@@ -38,44 +38,53 @@ internal static class CpuPlacementPlanner
     public static CpuPlacementMode DefaultFor(CpuTopology topology) =>
         topology.IsSupported ? CpuPlacementMode.ReserveMain : CpuPlacementMode.Off;
 
-    // Followers keep at least this much room over what they actually use, so a busy moment never starves them.
-    internal const double FollowerHeadroom = 1.5;
+    // Followers keep this much room over their measured load before the main takes another core. Their load is bounded
+    // by their frame cap, so a small margin is enough; 1.5x (up to 1.0.129) left a 9950X3D's main 2 cores with 15
+    // followers at 20 threads, and it sat at 41-45 FPS while 8 of the 32 threads idled.
+    internal const double FollowerHeadroom = 1.15;
+    // A core the main already holds is given up only once the followers would drop below this margin (hysteresis).
+    internal const double FollowerShrinkHeadroom = 1.05;
     // Assumed per-follower load (logical CPUs) before Potato has measured any.
     internal const double UnmeasuredFollowerLoad = 1.0;
 
-    /// <summary>
-    /// Physical cores kept for the main client: up to half of the fastest CCD (at most 4), but never so many that the
-    /// followers' cores drop below their measured load plus headroom. 0 = the main shares cores with everyone.
-    /// </summary>
     // A reservation smaller than this starves the main instead of protecting it (seen on a 9950X3D in 1.0.126: followers
-    // got busier, the main was squeezed to one core = 2 threads and fell from 60 to 35 FPS).
+    // got busier, the main was squeezed to one core = 2 threads and fell from 60 to 35 FPS). Sharing every core instead
+    // measured worse still ("No pinning": 36 FPS on the same PC), so the main never goes below this.
     internal const int MinimumMainCores = 2;
     // The main's own measured load, with headroom, must fit in its reservation too.
     internal const double MainHeadroom = 1.5;
 
     /// <summary>
-    /// Physical cores kept for the main client: as many as the followers can spare (at most half the fastest CCD, max
-    /// 4), but at least <see cref="MinimumMainCores"/> and enough for the main's own load. When that minimum cannot be
-    /// met without squeezing the followers, nothing is reserved (0): everyone shares every core and the main keeps its
-    /// higher priority, which is far better for it than one starved core.
+    /// Physical cores kept for the main client, the main first: up to half of the fastest CCD (at most 4), reduced
+    /// only while the followers would otherwise drop below their measured load plus <see cref="FollowerHeadroom"/>,
+    /// never below <see cref="MinimumMainCores"/> or what the main's own load needs. <paramref name="previous"/> (the
+    /// count held now) is kept while the followers still have <see cref="FollowerShrinkHeadroom"/>.
     /// </summary>
-    public static int MainCoreCount(CpuTopology topology, int followers, double? followerLoad, double? mainLoad = null)
+    public static int MainCoreCount(CpuTopology topology, int followers, double? followerLoad, double? mainLoad = null, int? previous = null)
     {
         if (topology.Domains.Count == 0) return 0;
-        var allowed = MaxMainCores(topology, (followerLoad ?? followers * UnmeasuredFollowerLoad) * FollowerHeadroom);
+        var load = followerLoad ?? followers * UnmeasuredFollowerLoad;
         var first = topology.Domains[0].Cores;
         var threadsPerCore = Math.Max(1, System.Numerics.BitOperations.PopCount(unchecked((ulong)first[0].Mask)));
         var largest = Math.Clamp(first.Count / 2, 1, 4);
         var needed = Math.Min(largest, Math.Max(MinimumMainCores, (int)Math.Ceiling((mainLoad ?? 0) * MainHeadroom / threadsPerCore)));
-        if (allowed >= needed) return allowed;
-        // The main comes first: it keeps its minimum while followers still have MinimumFollowerHeadroom.
-        var load = followerLoad ?? followers * UnmeasuredFollowerLoad;
-        var minimumThreads = first.Take(needed).Sum(core => System.Numerics.BitOperations.PopCount(unchecked((ulong)core.Mask)));
-        return topology.LogicalCount - minimumThreads >= load * MinimumFollowerHeadroom ? needed : 0;
+        var count = Math.Max(needed, MaxMainCores(topology, load * FollowerHeadroom));
+        if (previous is int held && held > count && held <= largest)
+            count = Math.Max(count, Math.Min(held, MaxMainCores(topology, load * FollowerShrinkHeadroom)));
+        return count;
     }
 
-    // Followers' spare room below which even the main's minimum reservation is dropped.
-    internal const double MinimumFollowerHeadroom = 1.2;
+    /// <summary>
+    /// Placements worth measuring on this PC. "Main gets the cache CCD" is left out when the followers do not fit in
+    /// the other CCD(s): it would silently fall back to "Main gets its own cores" and win or lose by noise (seen on a
+    /// 9950X3D with 15 followers at 20 threads: identical placements, 43 vs 44 FPS).
+    /// </summary>
+    public static List<CpuPlacementMode> TestCandidates(CpuTopology topology, int followers, double? followerLoad)
+    {
+        List<CpuPlacementMode> modes = [CpuPlacementMode.Off, CpuPlacementMode.ReserveMain, CpuPlacementMode.Lanes];
+        if (FollowersFitOutsideCacheCcd(topology, followers, followerLoad, CacheCcdReenterHeadroom)) modes.Add(CpuPlacementMode.CacheCcdForMain);
+        return modes;
+    }
 
     // Cores only come back to the main once a bigger reservation has stayed possible this long. Giving cores up is
     // immediate. (1.0.126 used a stricter regrow threshold instead, which could leave the main stuck on one core.)
@@ -156,7 +165,7 @@ internal static class CpuPlacementPlanner
         }
         if (hasMain)
         {
-            var count = mainCores ?? MainCoreCount(topology, clientIds.Count - 1, followerLoad, mainLoad);
+            var count = mainCores ?? MainCoreCount(topology, clientIds.Count - 1, followerLoad, mainLoad, previous?.MainCores);
             used = new PlacementState(count, false);
             var reserved = remaining[0].Take(count).ToList();
             // Never leave followers with nothing.
@@ -167,7 +176,8 @@ internal static class CpuPlacementPlanner
             }
             else
             {
-                // No reservation: the main shares the whole fastest CCD instead of being dealt a follower pool or lane.
+                // Cannot happen with a readable layout (the main gets at most half a CCD); kept so the main is never
+                // dealt a follower pool or lane: it shares the whole fastest CCD.
                 plan[mainId!.Value] = topology.Domains[0].Mask;
             }
         }

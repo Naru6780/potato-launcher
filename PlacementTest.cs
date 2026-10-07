@@ -80,9 +80,9 @@ internal sealed record PlacementScore(CpuPlacementMode Mode, double SystemCpu, d
 internal sealed record PlacementTestResult(IReadOnlyList<PlacementScore> Scores, CpuPlacementMode Winner, string Summary, bool Inconclusive = false);
 
 /// <summary>
-/// Tries each placement on the running clients and keeps the one that holds the most clients at the target FPS, then
-/// the best main FPS, then the least CPU. Modes are interleaved over several rounds so a scene change in game does
-/// not favour one of them. Driven by a 1-second tick; it never blocks.
+/// Tries each placement on the running clients and keeps the one that holds the main steady at the target FPS (or
+/// closest to it), then the most clients at target, then the least CPU. Modes are interleaved over several rounds so
+/// a scene change in game does not favour one of them. Driven by a 1-second tick; it never blocks.
 /// </summary>
 internal sealed class PlacementTest
 {
@@ -210,7 +210,7 @@ internal sealed class PlacementTest
         }).OrderBy(score => score.Mode).ToList();
 
         var winner = scores.FirstOrDefault(score => score.Mode == preferred) ?? scores[0];
-        foreach (var candidate in scores.Where(score => score != winner)) if (Better(candidate, winner)) winner = candidate;
+        foreach (var candidate in scores.Where(score => score != winner)) if (Better(candidate, winner, targetFps)) winner = candidate;
         var lines = scores.Select(score =>
             $"{Label(score.Mode)}: CPU {score.SystemCpu:0.0}% (clients {score.ClientCpu:0.0}%), {score.AtTarget}/{score.Measured} at {targetFps}" +
             (score.MainAverage is double average ? $", main {average:0}" : "") +
@@ -245,7 +245,8 @@ internal sealed class PlacementTest
     // 5: outside-load check and ties keep the default (a 1.0.125 run during a background analysis stored "No pinning").
     // 6: main-core reservation rules changed in 1.0.128 (floor of 2 cores, regrow after a minute).
     // 7: steadiness (5th percentile of per-second FPS) decides before CPU; scene drift makes a run inconclusive.
-    public const int ScoringVersion = 7;
+    // 8: the main decides first (1.0.130); main-core sizing changed, so every placement measures differently.
+    public const int ScoringVersion = 8;
 
     // The game's own 60 fps limiter delivers ~58.0-58.2, so a 2 FPS slack put clients on the threshold and 0.1 FPS of
     // noise decided the winner (seen on a 9800X3D). 3 FPS matches "at cap" everywhere else in the Optimizer.
@@ -254,13 +255,21 @@ internal sealed class PlacementTest
     // Between runs on the same PC the CPU of one placement varied by up to ~1.7 points.
     internal const double CpuTolerance = 2.0;
 
-    // More clients at target wins; then a main FPS at least 2 higher; then less total CPU by more than the run-to-run
-    // noise. Total (system) CPU is what Task Manager shows and includes the scheduling cost of spreading clients over
-    // every core, which per-process CPU time does not. Otherwise the simpler placement (lower enum value) stays.
-    private static bool Better(PlacementScore candidate, PlacementScore current)
+    // The main decides first: steady at target beats not, and while neither is, 2+ FPS more on the main wins (a 9950X3D
+    // run with no placement at target picked "4/16 at 60, main 43" over "main 45"). Then more clients at target; then a
+    // main at least 2 higher; then less total CPU by more than the run-to-run noise. Total (system) CPU is what Task
+    // Manager shows and includes the scheduling cost of spreading clients over every core, which per-process CPU time
+    // does not. Otherwise the simpler placement (lower enum value) stays.
+    private static bool Better(PlacementScore candidate, PlacementScore current, int targetFps)
     {
+        if (candidate.MainFps is double a && current.MainFps is double b)
+        {
+            var (candidateAtTarget, currentAtTarget) = (a >= targetFps - AtTargetSlack, b >= targetFps - AtTargetSlack);
+            if (candidateAtTarget != currentAtTarget) return candidateAtTarget;
+            if (!candidateAtTarget && Math.Abs(a - b) >= 2) return a > b;
+        }
         if (candidate.AtTarget != current.AtTarget) return candidate.AtTarget > current.AtTarget;
-        if (candidate.MainFps is double a && current.MainFps is double b && Math.Abs(a - b) >= 2) return a > b;
+        if (candidate.MainFps is double x && current.MainFps is double y && Math.Abs(x - y) >= 2) return x > y;
         return candidate.SystemCpu <= current.SystemCpu - CpuTolerance;
     }
 

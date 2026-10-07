@@ -287,7 +287,10 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private int? stickyMainId;
     private int? livePlacementMainId;
     private readonly HashSet<int> runawayClientIds = [];
-    private readonly Dictionary<int, (DateTime At, TimeSpan Cpu)> placementLoad = [];
+    private readonly Dictionary<int, (DateTime At, TimeSpan Cpu, DateTime Since)> placementLoad = [];
+    // A client's load counts only after this long: the first readings after a (re)start are a one-second snapshot, and
+    // one taken in a busy second sized the main's cores as if the followers were always that busy.
+    internal static readonly TimeSpan LoadWarmup = TimeSpan.FromSeconds(5);
     private readonly Dictionary<int, double> clientLoad = [];
     private double? followerLoad;
     private (CpuPlacementMode Mode, int? MainId, PlacementState State)? placementMemory;
@@ -422,7 +425,10 @@ internal sealed class IntegratedOptimizerService : IDisposable
                     {
                         placement = EffectivePlacement.ToString(),
                         mainPid = livePlacementMainId,
+                        mainCores = placementMemory?.State.MainCores,
+                        cacheCcdEngaged = placementMemory?.State.CacheCcdEngaged,
                         followerLoadThreads = followerLoad is double load ? Math.Round(load, 2) : (double?)null,
+                        mainLoadThreads = livePlacementMainId is int live && clientLoad.TryGetValue(live, out var own) ? Math.Round(own, 2) : (double?)null,
                         externalPriorityChanges = ExternalChangesLastMinute.Priority,
                         externalAffinityChanges = ExternalChangesLastMinute.Affinity,
                         targetFps = Settings.TargetFps
@@ -497,7 +503,9 @@ internal sealed class IntegratedOptimizerService : IDisposable
             var source = Settings.CpuPlacement != CpuPlacementSetting.Auto ? "chosen by you"
                 : measured ? "measured best on this PC"
                 : Topology.HasUnequalCores ? "default for unequal cores; run Test placements" : "default for equal cores; run Test placements";
-            var text = $"CPU: {Topology.Describe()}.  Placement: {PlacementTest.Label(EffectivePlacement)} ({source}).";
+            var fallback = CacheCcdFallback is string why ? $", {why}" : "";
+            var cores = placementMemory is { State.MainCores: int held and > 0 } && EffectivePlacement != CpuPlacementMode.Off ? $"; main: {held} cores" : "";
+            var text = $"CPU: {Topology.Describe()}.  Placement: {PlacementTest.Label(EffectivePlacement)} ({source}{fallback}{cores}).";
             if (measured && Settings.TestedPlacementSummary.Length > 0) text += Environment.NewLine + "Last test: " + Settings.TestedPlacementSummary;
             return text;
         }
@@ -533,11 +541,14 @@ internal sealed class IntegratedOptimizerService : IDisposable
                    $"Set System Configuration → Display Settings → Frame Rate → {Settings.TargetFps} fps in {(runaway == 1 ? "it" : "them")} (Cap column shows \"game {Settings.TargetFps}\"), then run the test.";
         // Same main as live placement (configured main first), so the test measures what Auto will then apply.
         var main = livePlacementMainId ?? stickyMainId ?? lastForegroundClientId;
-        List<CpuPlacementMode> modes = [CpuPlacementMode.Off, CpuPlacementMode.ReserveMain, CpuPlacementMode.Lanes];
-        if (Topology.Domains.Count > 1) modes.Add(CpuPlacementMode.CacheCcdForMain);
+        var followers = Math.Max(1, placementLoad.Count - 1);
+        var modes = CpuPlacementPlanner.TestCandidates(Topology, followers, followerLoad);
         placementTest = new PlacementTest(modes, rounds: 2, TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(20), Settings.TargetFps, main,
             CpuPlacementPlanner.DefaultFor(Topology));
-        LogDecision($"Placement test started (main PID {main?.ToString() ?? "none"}).");
+        var skipped = Topology.Domains.Count > 1 && !modes.Contains(CpuPlacementMode.CacheCcdForMain)
+            ? $" Skipping Main gets the cache CCD: {followers} followers at {followerLoad ?? followers:0.0} threads do not fit in the other CCD ({Topology.Domains.Skip(1).Sum(domain => domain.LogicalCount)} threads)."
+            : "";
+        LogDecision($"Placement test started (main PID {main?.ToString() ?? "none"}).{skipped}");
         return null;
     }
 
@@ -589,7 +600,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
         int? mainCores = null;
         if (mainId is int main && mode is CpuPlacementMode.ReserveMain or CpuPlacementMode.Lanes or CpuPlacementMode.CacheCcdForMain)
         {
-            var target = CpuPlacementPlanner.MainCoreCount(topology, clients.Count - 1, followerLoad, clientLoad.TryGetValue(main, out var own) ? own : null);
+            var target = CpuPlacementPlanner.MainCoreCount(topology, clients.Count - 1, followerLoad, clientLoad.TryGetValue(main, out var own) ? own : null,
+                previous?.MainCores);
             mainCores = CpuPlacementPlanner.WithRegrowDelay(target, previous?.MainCores, DateTime.UtcNow, ref mainRegrowSince);
         }
         var plan = CpuPlacementPlanner.Plan(topology, mode, clients.Select(client => client.Id).ToList(), mainId, followerLoad, previous, out var used,
@@ -626,17 +638,33 @@ internal sealed class IntegratedOptimizerService : IDisposable
         {
             TimeSpan cpu;
             try { cpu = client.TotalProcessorTime; } catch { continue; }
-            if (placementLoad.TryGetValue(client.Id, out var last) && now > last.At)
+            var known = placementLoad.TryGetValue(client.Id, out var last);
+            var since = known ? last.Since : now;
+            if (known && now > last.At)
             {
                 var logical = Math.Max(0, (cpu - last.Cpu).TotalSeconds / (now - last.At).TotalSeconds);
                 clientLoad[client.Id] = clientLoad.TryGetValue(client.Id, out var smoothed) ? smoothed + (logical - smoothed) * 0.05 : logical;
             }
-            placementLoad[client.Id] = (now, cpu);
+            placementLoad[client.Id] = (now, cpu, since);
         }
         var alive = clients.Select(client => client.Id).ToHashSet();
         foreach (var gone in placementLoad.Keys.Where(id => !alive.Contains(id)).ToList()) { placementLoad.Remove(gone); clientLoad.Remove(gone); }
         var followers = clients.Where(client => client.Id != mainId).Select(client => client.Id).ToList();
-        followerLoad = followers.Count > 0 && followers.All(clientLoad.ContainsKey) ? followers.Sum(id => clientLoad[id]) : null;
+        var warm = followers.All(id => clientLoad.ContainsKey(id) && placementLoad.TryGetValue(id, out var seen) && now - seen.Since >= LoadWarmup);
+        followerLoad = followers.Count > 0 && warm ? followers.Sum(id => clientLoad[id]) : null;
+    }
+
+    /// <summary>Why "Main gets the cache CCD" is running as "Main gets its own cores" right now, or null.</summary>
+    public string? CacheCcdFallback
+    {
+        get
+        {
+            if (EffectivePlacement != CpuPlacementMode.CacheCcdForMain || placementMemory is not { } memory || memory.State.CacheCcdEngaged) return null;
+            var followers = Math.Max(0, placementLoad.Count - 1);
+            var outside = Topology.Domains.Skip(1).Sum(domain => domain.LogicalCount);
+            var load = followerLoad is double measured ? $"{followers} followers at {measured:0.0} threads" : $"{followers} followers";
+            return $"running as Main gets its own cores: {load} do not fit in the other CCD ({outside} threads)";
+        }
     }
 
     private void RestorePlacement()

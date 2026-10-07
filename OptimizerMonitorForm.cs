@@ -371,15 +371,16 @@ internal sealed class OptimizerMonitorForm : Form
         placementMode.Height = 28;
         toolTip.SetToolTip(placementMode,
             "Which CPU cores each client runs on. Goal: every client steady at its cap, the main first.\n\n" +
-            "Auto (recommended): the winner of Test placements on this PC, judged on each client's worst seconds, then CPU.\n" +
-            "    Until you test: Main gets its own cores.\n" +
-            "No pinning: Windows spreads every client over every core. Safe, but used the most CPU on both PCs measured.\n" +
-            "Main gets its own cores: the main keeps 2-4 cores no one else uses (on the 3D V-Cache CCD); followers share\n" +
-            "    the rest, each inside one CCD. Best measured on a 9800X3D and a 9950X3D.\n" +
+            "Auto (recommended): the winner of Test placements on this PC, judged on the main's worst seconds first, then\n" +
+            "    every client's, then CPU. Until you test: Main gets its own cores.\n" +
+            "No pinning: Windows spreads every client over every core. Safe, but the most CPU and the lowest main FPS on\n" +
+            "    both PCs measured (9950X3D with 16 clients: main 36 FPS).\n" +
+            "Main gets its own cores: the main keeps 4 cores no one else uses (on the 3D V-Cache CCD), fewer only while the\n" +
+            "    followers need them and never under 2; followers share the rest, each inside one CCD.\n" +
             "Two-core lanes: like the above, but followers are packed 2-3 per two-core lane. Lowest CPU when calm, but a\n" +
             "    busy moment cannot borrow cores, so followers can dip.\n" +
-            "Main gets the cache CCD (2-CCD CPUs): the main gets the whole V-Cache CCD, followers the other one while they\n" +
-            "    fit. Measured no better than Main gets its own cores so far.");
+            "Main gets the cache CCD (2-CCD CPUs): the main gets the whole V-Cache CCD, followers the other one. Only while\n" +
+            "    they fit there (about 10 followers on a 9950X3D); otherwise it runs as Main gets its own cores and says so.");
         placementMode.SelectedIndexChanged += (_, _) =>
         {
             if (refreshing) return;
@@ -389,7 +390,7 @@ internal sealed class OptimizerMonitorForm : Form
         };
         placementTestButton.Text = "Test placements";
         placementTestButton.Tag = "Secondary";
-        toolTip.SetToolTip(placementTestButton, "Tries each placement on your running clients for about 3 minutes and keeps the one that holds\nthe most clients at the target FPS, then the best main FPS, then the least CPU.");
+        toolTip.SetToolTip(placementTestButton, "Tries each placement on your running clients for about 3 minutes and keeps the one that holds\nthe main steady at the target FPS (or closest to it), then the most clients at target, then the least CPU.");
         placementTestButton.Click += (_, _) =>
         {
             if (optimizer.PlacementTestRunning)

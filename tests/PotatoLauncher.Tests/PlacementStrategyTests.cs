@@ -34,11 +34,19 @@ public class PlacementStrategyTests
                 Assert.All(plan.Values, mask => { Assert.NotEqual(0, mask); Assert.Equal(mask, mask & topology.AllMask); });
                 if (mode == CpuPlacementMode.Off) { Assert.All(plan.Values, mask => Assert.Equal(topology.AllMask, mask)); continue; }
 
-                // The main always has at least 2 full cores to itself, or shares a whole CCD: never one starved core.
+                // The main always has 2-4 full cores to itself on the fastest CCD; no follower ever shares them.
                 var main = plan[1];
                 var shared = ids.Skip(1).Any(id => (plan[id] & main) != 0);
-                Assert.True(shared ? main == topology.Domains[0].Mask || main == topology.AllMask : Bits(main) >= 4,
-                    $"load {load:0.0}, main {CpuTopology.FormatMask(main)}, shared {shared}");
+                Assert.False(shared, $"load {load:0.0}, main {CpuTopology.FormatMask(main)} shared with a follower");
+                Assert.Equal(main, main & topology.Domains[0].Mask);
+                // The cache-CCD mode engaged: the main owns the whole fastest CCD. Otherwise 2-4 cores: 4 whenever the
+                // followers fit on the rest at 1.15x, never fewer than 2 however busy they are.
+                var wholeCcd = mode == CpuPlacementMode.CacheCcdForMain && main == topology.Domains[0].Mask;
+                if (!wholeCcd)
+                {
+                    Assert.InRange(Bits(main), 4, 8);
+                    if (load * CpuPlacementPlanner.FollowerHeadroom <= topology.LogicalCount - 8) Assert.Equal(8, Bits(main));
+                }
 
                 // No follower straddles CCDs (crossing them costs more than sharing cores).
                 foreach (var id in ids.Skip(1))
@@ -60,6 +68,33 @@ public class PlacementStrategyTests
             (CpuPlacementMode.Lanes, Window(26, (1, steady), (2, dipping)))], 60, mainId: 1, preferred: CpuPlacementMode.ReserveMain);
         Assert.Equal(CpuPlacementMode.ReserveMain, result.Winner);
         Assert.Equal(1, result.Scores.Single(score => score.Mode == CpuPlacementMode.Lanes).AtTarget);
+    }
+
+    [Fact]
+    public void Score_TheMainDecidesFirst_FriendsRecordedRun()
+    {
+        static LoadWindow Window(double cpu, double main, int atTarget) =>
+            new(cpu, cpu - 12, new Dictionary<int, double>(),
+                Enumerable.Range(1, 16).ToDictionary(id => id, id => id == 1 ? main : id <= 1 + atTarget ? 58.0 : 50.0), 0);
+        // 2026-10-07 on a 9950X3D: no placement held the main at 60. 1.0.129 picked "4/16 at 60, main 43" over "main 45".
+        var result = PlacementTest.Score([
+            (CpuPlacementMode.Off, Window(92.0, 36, 0)),
+            (CpuPlacementMode.ReserveMain, Window(81.6, 44, 0)),
+            (CpuPlacementMode.Lanes, Window(77.3, 45, 0)),
+            (CpuPlacementMode.CacheCcdForMain, Window(81.1, 43, 4))], 60, mainId: 1, preferred: CpuPlacementMode.ReserveMain);
+        // 45 vs 44 is within noise, so the 4 points less CPU decide for lanes; both beat 43 with four followers at target,
+        // and 36 never comes close.
+        Assert.Equal(CpuPlacementMode.Lanes, result.Winner);
+        // A main steady at target beats one that is not, whatever the followers do.
+        var held = PlacementTest.Score([
+            (CpuPlacementMode.ReserveMain, Window(85.0, 58, 2)),
+            (CpuPlacementMode.Lanes, Window(70.0, 54, 15))], 60, mainId: 1, preferred: CpuPlacementMode.ReserveMain);
+        Assert.Equal(CpuPlacementMode.ReserveMain, held.Winner);
+        // Both mains at target: the followers decide.
+        var both = PlacementTest.Score([
+            (CpuPlacementMode.ReserveMain, Window(85.0, 58, 2)),
+            (CpuPlacementMode.Lanes, Window(84.0, 57.5, 15))], 60, mainId: 1, preferred: CpuPlacementMode.ReserveMain);
+        Assert.Equal(CpuPlacementMode.Lanes, both.Winner);
     }
 
     [Fact]
