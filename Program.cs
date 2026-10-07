@@ -5445,7 +5445,16 @@ internal sealed class MainForm : Form
             var zipPath = Path.Combine(tempRoot, ReleaseZipName);
             var extractPath = Path.Combine(tempRoot, "extract");
             Directory.CreateDirectory(tempRoot);
-            await using (var downloadStream = await http.GetStreamAsync(LatestReleaseDownloadUrl()))
+            // Ask the API which release is latest and download that tag's zip; the "latest/download" redirect lags
+            // minutes behind a new release. The redirect stays the fallback when the API is unreachable or rate-limited.
+            var downloadUrl = LatestReleaseDownloadUrl();
+            try
+            {
+                var latestJson = await http.GetStringAsync($"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases/latest");
+                downloadUrl = RollbackReleases.LatestZipUrl(latestJson) ?? downloadUrl;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { }
+            await using (var downloadStream = await http.GetStreamAsync(downloadUrl))
             await using (var fileStream = File.Create(zipPath))
             {
                 await downloadStream.CopyToAsync(fileStream);

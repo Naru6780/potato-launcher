@@ -51,6 +51,19 @@ public class AppTextTests
         Assert.DoesNotContain("api.github.com", MainForm.LatestReleaseDownloadUrl());
     }
 
+    [Fact]
+    public void UpdateUrl_PrefersTheTagTheApiCallsLatest_OverTheCachedRedirect()
+    {
+        // The API answer right after v1.0.130 was published, while latest/download still served v1.0.129.
+        var json = """{"tag_name":"v1.0.130","draft":false,"prerelease":false,"assets":[{"name":"PotatoLauncherSetup.exe"},{"name":"PotatoLauncher.zip"}]}""";
+        Assert.Equal("https://github.com/Naru6780/potato-launcher/releases/download/v1.0.130/PotatoLauncher.zip", RollbackReleases.LatestZipUrl(json));
+        // Anything odd falls back to the redirect: a draft, a tag that is not vX.Y.Z, or no zip.
+        Assert.Null(RollbackReleases.LatestZipUrl("""{"tag_name":"v1.0.130","draft":true,"assets":[{"name":"PotatoLauncher.zip"}]}"""));
+        Assert.Null(RollbackReleases.LatestZipUrl("""{"tag_name":"v1.0.130-rc1/../x","draft":false,"assets":[{"name":"PotatoLauncher.zip"}]}"""));
+        Assert.Null(RollbackReleases.LatestZipUrl("""{"tag_name":"v1.0.130","draft":false,"assets":[]}"""));
+        Assert.Null(RollbackReleases.LatestZipUrl("""{"message":"Not Found"}"""));
+    }
+
     [Theory]
     [InlineData("1.0.69.0", 1, 0, 69, 0)]
     [InlineData("1.0.69", 1, 0, 69, -1)]

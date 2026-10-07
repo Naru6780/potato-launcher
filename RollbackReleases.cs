@@ -12,6 +12,25 @@ internal sealed record RollbackRelease(string Tag, Version Version)
 
 internal static class RollbackReleases
 {
+    /// <summary>
+    /// The zip of the release GitHub's API calls latest (releases/latest JSON), or null when it has no canonical tag
+    /// or no zip. GitHub's "releases/latest/download" redirect is cached for minutes after a release is published:
+    /// Check for updates right after v1.0.130 went live downloaded the v1.0.129 zip and said "up to date".
+    /// </summary>
+    internal static string? LatestZipUrl(string latestJson)
+    {
+        using var document = JsonDocument.Parse(latestJson);
+        var release = document.RootElement;
+        if (release.ValueKind != JsonValueKind.Object) return null;
+        if (release.TryGetProperty("draft", out var draft) && draft.GetBoolean()) return null;
+        var tag = release.TryGetProperty("tag_name", out var name) ? name.GetString() ?? "" : "";
+        if (!tag.StartsWith('v') || !Version.TryParse(tag[1..], out var parsed) || parsed.Build < 0) return null;
+        if (tag != $"v{parsed.Major}.{parsed.Minor}.{parsed.Build}") return null;
+        if (!release.TryGetProperty("assets", out var assets) || !assets.EnumerateArray().Any(asset =>
+            asset.TryGetProperty("name", out var assetName) && assetName.GetString() == "PotatoLauncher.zip")) return null;
+        return new RollbackRelease(tag, parsed).DownloadUrl;
+    }
+
     internal static IReadOnlyList<RollbackRelease> Parse(string json, Version current)
     {
         using var document = JsonDocument.Parse(json);

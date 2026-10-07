@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.131 - 2026-10-07
+
+- Check for updates finds a release the minute it is published. It asks the GitHub API which release is latest and downloads that tag's zip; the "releases/latest/download" redirect it used before is cached for minutes after a release goes live (right after 1.0.130 it still served 1.0.129, so the button said "already up to date"). The redirect remains the fallback when the API is unreachable.
+
 ## 1.0.130 - 2026-10-07
 
 - Main-first core sizing. The main keeps 4 cores (half the V-Cache CCD) and gives one up only while the followers would otherwise have less than 1.15x their measured load; never below 2 cores, and never "share everything" (measured worst: 36 FPS). Up to 1.0.129 the followers were required to keep 1.5x, which on a 9950X3D with 15 followers at 20 threads left the main 2 cores (41-45 FPS) while 8 threads idled. Replayed on that recording: 4 cores (0-7), followers on 8-15 and 16-31.
