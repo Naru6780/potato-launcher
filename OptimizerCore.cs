@@ -86,6 +86,9 @@ internal sealed class OptimizerSettings
     public int TargetFps { get; set; } = 60;
     // Set the game's own frame limiter (FFXIV.cfg "Fps") to the option matching TargetFps before every launch.
     public bool EnforceInGameFrameLimit { get; set; } = true;
+    // The configured main launches with Frame Rate None so the NVIDIA cap holds it at an exact target, but only when
+    // Potato reads that cap at the target. Followers always keep the game's own limit.
+    public bool MainUsesDriverCap { get; set; } = true;
     // End Windows' TextInputHost when it spins (~5% CPU, harmless to restart; Windows recreates it idle).
     public bool ResetSpinningInputHost { get; set; } = true;
     public int MemoryPressureStartPercent { get; set; } = 85;

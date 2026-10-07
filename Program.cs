@@ -3989,10 +3989,18 @@ internal sealed class MainForm : Form
         AccountLaunchEnvironment.Apply(startInfo, AccountIconKey(account));
         if (optimizerService.Settings.EnforceInGameFrameLimit)
         {
-            // DLSS 5 clients rely on the NVIDIA driver cap; the in-game limiter collides with their loader (see FrameLimitEnforcer).
-            var frameLimitMessage = dlss5Client
-                ? FrameLimitEnforcer.ApplyOption(FrameLimitEnforcer.FpsNone)
-                : FrameLimitEnforcer.Apply(optimizerService.Settings.TargetFps);
+            // DLSS 5 clients, and the configured main when the NVIDIA cap is set, rely on the driver cap (see
+            // FrameLimitEnforcer.LaunchOption); every other client gets the game's own limit.
+            var optimizerSettings = optimizerService.Settings;
+            var character = settings.AccountIcons.TryGetValue(AccountIconKey(account), out var iconProfile)
+                            && !string.IsNullOrWhiteSpace(iconProfile.CharacterName) && !string.IsNullOrWhiteSpace(iconProfile.World)
+                ? $"{iconProfile.CharacterName.Trim()}@{iconProfile.World.Trim()}"
+                : "";
+            var isMain = character.Length > 0 && optimizerSettings.IsMainCandidate(character);
+            var frameLimitMessage = FrameLimitEnforcer.ApplyOption(FrameLimitEnforcer.LaunchOption(
+                dlss5Client, isMain, optimizerSettings.MainUsesDriverCap,
+                isMain && optimizerSettings.MainUsesDriverCap ? NvidiaFrameCap.ForGame() : null,
+                optimizerSettings.TargetFps));
             if (!string.IsNullOrEmpty(frameLimitMessage)) SetStatus(frameLimitMessage, force: true);
         }
         using var launcherProcess = Process.Start(startInfo);

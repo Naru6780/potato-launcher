@@ -2,6 +2,17 @@ namespace PotatoLauncher.Tests;
 
 public class FrameLimitEnforcerTests
 {
+    [Theory]
+    [InlineData(false, false, true, 60, FrameLimitEnforcer.Fps60)]   // follower: always the game's own limit
+    [InlineData(false, true, true, 60, FrameLimitEnforcer.FpsNone)]  // main + NVIDIA cap at 60: exact 60 from the driver
+    [InlineData(false, true, true, 0, FrameLimitEnforcer.Fps60)]     // NVIDIA cap off: never launch the main uncapped (121 FPS)
+    [InlineData(false, true, true, null, FrameLimitEnforcer.Fps60)]  // no NVIDIA driver readable
+    [InlineData(false, true, true, 144, FrameLimitEnforcer.Fps60)]   // NVIDIA cap not at the target
+    [InlineData(false, true, false, 60, FrameLimitEnforcer.Fps60)]   // option turned off
+    [InlineData(true, false, false, null, FrameLimitEnforcer.FpsNone)] // DLSS 5 clients keep their behaviour
+    public void LaunchOption_GivesTheMainTheDriverCapOnlyWhenItExists(bool dlss5, bool isMain, bool mainUsesDriverCap, int? driverCap, int expected) =>
+        Assert.Equal(expected, FrameLimitEnforcer.LaunchOption(dlss5, isMain, mainUsesDriverCap, driverCap, 60));
+
     private const string Sample = "\r\n<FINAL FANTASY XIV Config File>\r\n\r\n<Version>\r\nVersion\t1.0\r\n\r\n<Settings>\r\nScreenMode\t0\r\nFps\t0\r\nFPSInActive\t0\r\nFpsSomethingElse\t7\r\n";
 
     [Fact]

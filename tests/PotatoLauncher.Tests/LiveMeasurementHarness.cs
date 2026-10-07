@@ -37,7 +37,11 @@ public class LiveMeasurementHarness
         var topology = CpuTopology.Detect();
         log.AppendLine(topology.Describe());
 
-        if (mode == "status")
+        if (mode == "nvcap")
+        {
+            log.AppendLine(NvidiaFrameCap.Describe(NvidiaFrameCap.ForGame()));
+        }
+        else if (mode == "status")
         {
             var start = LoadSample.Take(clients, frames);
             Thread.Sleep(10_000);

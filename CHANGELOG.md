@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.124 - 2026-10-07
+
+- New "Main: exact 60 via NVIDIA cap" (on by default): the configured main launches with Frame Rate None so the NVIDIA Max Frame Rate paces it at an exact target; followers keep the game's own limit. Only when Potato reads an NVIDIA cap equal to the target (new read-only NvAPI reader), so the main never runs uncapped (seen: 121 FPS with the cap off). Costs ~0.8 point CPU on that client (measured).
+- Optimizer shows the NVIDIA cap and explains how to set it when the option is on but the cap is off.
+
 ## 1.0.123 - 2026-10-07
 
 - Clients without an in-game frame limit that run away above the target while not being played (render-cut or covered windows, which the NVIDIA cap cannot pace) are now held at the target with the minimized-client CPU cap. Never the played client or main; released once the in-game limit is set. Cap column: "held by Potato". Seen on a 9950X3D: 83-185 FPS followers, CPU 100%, others at 5-27.

@@ -41,6 +41,20 @@ internal static class FrameLimitEnforcer
     // Throws nothing: a failure to write only means this launch keeps the previous value.
     public static string Apply(int targetFps, string? configPath = null) => ApplyOption(OptionForTarget(targetFps), configPath);
 
+    /// <summary>
+    /// Frame Rate option to write before launching one client. Followers always get the game's own limit: render-cut,
+    /// covered and minimized windows present nothing for the NVIDIA cap to pace. The configured main may get None so
+    /// the NVIDIA cap holds it at an exact target (the game's limit lands at ~56-58; measured on a 9800X3D the NVIDIA
+    /// cap costs ~0.8 point of CPU more for that one client), but only when that cap is actually set to the target:
+    /// otherwise the main would run uncapped (seen: 121 FPS).
+    /// </summary>
+    internal static int LaunchOption(bool dlss5Client, bool isMain, bool mainUsesDriverCap, int? driverCapFps, int targetFps)
+    {
+        if (dlss5Client) return FpsNone;
+        if (isMain && mainUsesDriverCap && driverCapFps is int cap && cap == targetFps) return FpsNone;
+        return OptionForTarget(targetFps);
+    }
+
     // DLSS 5 clients get FpsNone: their loader (RenoDX) adds a fixed per-frame cost that serializes with the game's
     // limiter (60 fps limit + loader = ~48), while the NVIDIA driver cap paces them at 60 with that cost hidden inside
     // the frame. Measured 2026-10-07.
