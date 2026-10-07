@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.127 - 2026-10-07
+
+- New Export diagnostics button (Optimizer): Desktop zip with report.txt (Windows, CPU layout, RAM, power plan, parked cores, CPU clock, NVIDIA cap, other tools, per-client FPS/cap/role/actual cores/CPU/GPU/RAM/injected overlays), metrics/ (last 2 days), optimizer-decisions.log, optimizer.json, dlss5.json. settings.json (account details) is excluded. Local only.
+- DiagnosticsRecorder: one JSON line every 15 s to <data>\diagnostics\metrics-yyyyMMdd.jsonl (total CPU, power plan, parked processors, clock %, per-client FPS, limit, actual cores, CPU, priority, minimized, held, role), pruned after 2 days. Setting diagnosticsLogging (on).
+
 ## 1.0.126 - 2026-10-07
 
 - Fixed placement flapping: the main's reserved cores flipped (0-7 <-> 0-5) when follower load sat on the threshold, re-pinning every client each time. Hysteresis: shrink at 1.5x headroom, regrow only at 1.8x; cache-CCD mode enters at 1.5x, stays down to 1.25x.

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO;
 using System.Drawing.Drawing2D;
 
 namespace PotatoLauncher;
@@ -26,6 +28,7 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly Button saveButton = new NewsPillButton();
     private readonly Button trimButton = new NewsPillButton();
     private readonly Button placementTestButton = new NewsPillButton();
+    private readonly Button exportButton = new NewsPillButton();
     private readonly ComboBox placementMode = new();
     private readonly Label placementLabel = new();
     private static readonly string[] PlacementChoices = ["Auto (measured best)", "No pinning", "Main gets its own cores", "Two-core lanes", "Main gets the cache CCD (2-CCD CPUs)"];
@@ -313,7 +316,7 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.Controls.Add(Field("In-game frame limit", enforceFrameLimit), 4, 1);
         controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 0, 3);
         controlGrid.Controls.Add(mainClientsLabel, 1, 3);
-        controlGrid.SetColumnSpan(mainClientsLabel, 2);
+        controlGrid.SetColumnSpan(mainClientsLabel, 1);
 
         saveButton.Text = "Save";
         saveButton.Tag = "Secondary";
@@ -322,6 +325,37 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.SaveSettings();
             RefreshView();
             ShowFeedback("Optimizer settings saved.");
+        };
+        exportButton.Text = "Export diagnostics";
+        exportButton.Tag = "Secondary";
+        toolTip.SetToolTip(exportButton,
+            "Saves one zip on your Desktop: a report of this PC (power plan, parked cores, CPU clock, NVIDIA cap, other tools,\n" +
+            "overlays in each client), the last 2 days of Optimizer recordings, the decision log and the optimizer settings.\n" +
+            "Nothing is sent anywhere. Your account settings are not included.");
+        exportButton.Click += async (_, _) =>
+        {
+            exportButton.Enabled = false;
+            var text = exportButton.Text;
+            exportButton.Text = "Exporting…";
+            try
+            {
+                using var system = new SystemDiagnostics();
+                system.ProcessorPerformance(); // a rate counter needs two readings a moment apart
+                optimizer.GetSnapshots();      // same for per-client CPU in the report
+                await Task.Delay(1100);
+                var path = DiagnosticsExport.Create(optimizer, system);
+                try { Process.Start("explorer.exe", $"/select,\"{path}\""); } catch { }
+                ShowFeedback($"Diagnostics saved to your Desktop: {Path.GetFileName(path)}");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Could not export diagnostics: {ex.Message}", "Export diagnostics", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                exportButton.Text = text;
+                exportButton.Enabled = true;
+            }
         };
         trimButton.Text = "Optimize RAM Now";
         trimButton.Tag = "Secondary";
@@ -375,8 +409,8 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.SetColumnSpan(placementLabel, 4);
 
         var buttonRow = ButtonRow();
-        controlGrid.Controls.Add(buttonRow, 3, 3);
-        controlGrid.SetColumnSpan(buttonRow, 2);
+        controlGrid.Controls.Add(buttonRow, 2, 3);
+        controlGrid.SetColumnSpan(buttonRow, 3);
         UpdateModeControls();
     }
 
@@ -410,7 +444,7 @@ internal sealed class OptimizerMonitorForm : Form
     private FlowLayoutPanel ButtonRow()
     {
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Color.Transparent };
-        foreach (var button in new[] { placementTestButton, trimButton, saveButton })
+        foreach (var button in new[] { placementTestButton, trimButton, exportButton, saveButton })
         {
             button.Width = 116;
             button.Height = 36;

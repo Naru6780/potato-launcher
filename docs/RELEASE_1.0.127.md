@@ -1,0 +1,4 @@
+# Potato Launcher v1.0.127 — Export diagnostics
+
+- **Export diagnostics** (Optimizer): one zip on your Desktop to send to whoever helps you tune your PC. It holds a readable report (Windows, CPU and its layout, RAM, active power plan, parked cores, CPU clock, NVIDIA Max Frame Rate, other tools running, and per client: FPS, frame cap, role, real CPU cores, CPU, GPU, RAM and which overlays are injected into it), the last 2 days of recordings, the Optimizer's decision log and the optimizer/DLSS settings. Built on your PC and sent by you; nothing is uploaded. Your account settings are not included.
+- **Background recording:** every 15 seconds the Optimizer writes one line (total CPU, power plan, parked cores, clock, and each client's FPS, cap, cores, CPU, priority) to diagnostics\ in Potato's data folder, kept 2 days. Setting: diagnosticsLogging (on).

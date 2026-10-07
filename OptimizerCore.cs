@@ -93,6 +93,8 @@ internal sealed class OptimizerSettings
     public bool MainUsesNvidiaCap { get; set; }
     // End Windows' TextInputHost when it spins (~5% CPU, harmless to restart; Windows recreates it idle).
     public bool ResetSpinningInputHost { get; set; } = true;
+    // Local diagnostics recording (DiagnosticsRecorder): one line every 15 s, kept 2 days, read via Export diagnostics.
+    public bool DiagnosticsLogging { get; set; } = true;
     public int MemoryPressureStartPercent { get; set; } = 85;
     public int MemoryPressureStopPercent { get; set; } = 75;
     public int CriticalAvailableMemoryMB { get; set; } = 4096;
@@ -272,6 +274,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly ClientFpsTracker fpsTracker = new();
     private readonly MinimizedClientLimiter minimizedLimiter = new();
     private readonly InputHostWatchdog inputHostWatchdog = new();
+    private readonly DiagnosticsRecorder diagnostics = new();
     private readonly Dictionary<int, double> latestFps = [];
     private readonly Dictionary<int, short> latestEngineLimit = [];
     private int? lastForegroundClientId;
@@ -400,6 +403,30 @@ internal sealed class IntegratedOptimizerService : IDisposable
                 ApplyClientPolicy(clients, activeClientIds);
             }
             ApplyPlacement(clients, mainSelection, lastForegroundClientId);
+            if (Settings.DiagnosticsLogging && diagnostics.Due(DateTime.UtcNow))
+            {
+                var candidates = mainSelection.CandidateClientIds;
+                diagnostics.Record(DateTime.UtcNow, clients, (client, cpu) => new DiagnosticsClient(
+                        ResolveClientName(client),
+                        client.Id,
+                        latestFps.TryGetValue(client.Id, out var fps) ? fps : null,
+                        latestEngineLimit.TryGetValue(client.Id, out var limit) ? limit : null,
+                        SafeAffinity(client) is long actual ? CpuTopology.FormatMask(actual, Topology.AllMask) : "?",
+                        cpu,
+                        SafePriority(client),
+                        ClientPolicyNative.IsMinimized(client),
+                        minimizedLimiter.IsCapped(client.Id),
+                        client.Id == lastForegroundClientId ? "Playing" : candidates.Contains(client.Id) ? "Main" : "Background"),
+                    new
+                    {
+                        placement = EffectivePlacement.ToString(),
+                        mainPid = livePlacementMainId,
+                        followerLoadThreads = followerLoad is double load ? Math.Round(load, 2) : (double?)null,
+                        externalPriorityChanges = ExternalChangesLastMinute.Priority,
+                        externalAffinityChanges = ExternalChangesLastMinute.Affinity,
+                        targetFps = Settings.TargetFps
+                    });
+            }
 
             if (Settings.WorkingSetTrimEnabled)
             {
@@ -927,6 +954,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         timer.Stop();
         timer.Dispose();
         systemSampler.Dispose();
+        diagnostics.Dispose();
         gpuSampler.Dispose();
         placementTest = null;
         RestorePlacement();
@@ -966,6 +994,11 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private static int SafeThreadCount(Process process)
     {
         try { return process.HasExited ? 0 : process.Threads.Count; } catch { return 0; }
+    }
+
+    private static string SafePriority(Process process)
+    {
+        try { return process.HasExited ? "" : process.PriorityClass.ToString(); } catch { return "?"; }
     }
 
     private static int SafeHandleCount(Process process)
