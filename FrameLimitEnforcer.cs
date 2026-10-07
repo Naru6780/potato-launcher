@@ -39,14 +39,18 @@ internal static class FrameLimitEnforcer
 
     // Returns a message for the status bar when the file was changed, "" when it already matched or does not exist.
     // Throws nothing: a failure to write only means this launch keeps the previous value.
-    public static string Apply(int targetFps, string? configPath = null)
+    public static string Apply(int targetFps, string? configPath = null) => ApplyOption(OptionForTarget(targetFps), configPath);
+
+    // DLSS 5 clients get FpsNone: their loader (RenoDX) adds a fixed per-frame cost that serializes with the game's
+    // limiter (60 fps limit + loader = ~48), while the NVIDIA driver cap paces them at 60 with that cost hidden inside
+    // the frame. Measured 2026-10-07.
+    public static string ApplyOption(int desired, string? configPath = null)
     {
         try
         {
             configPath ??= DefaultConfigPath();
             if (!File.Exists(configPath)) return "";
             var text = File.ReadAllText(configPath);
-            var desired = OptionForTarget(targetFps);
             var updated = SetOption(text, "Fps", desired, out var previous);
             if (previous == desired) return "";
             if (previous < 0) return "";

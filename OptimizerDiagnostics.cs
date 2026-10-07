@@ -16,14 +16,15 @@ internal static class OptimizerDiagnostics
         if (below.Count > 0)
             findings.Add($"{below.Count} client{(below.Count == 1 ? " is" : "s are")} below {targetFps} FPS: {string.Join(", ", below.Select(client => client.ClientName).Take(4))}{(below.Count > 4 ? ", …" : "")}.");
 
-        var noEngineCap = clients.Where(client => client.EngineFrameLimit == 0).ToList();
-        if (noEngineCap.Count > 0)
-            findings.Add($"{noEngineCap.Count} client{(noEngineCap.Count == 1 ? " has" : "s have")} no in-game frame limit ({string.Join(", ", noEngineCap.Select(client => client.ClientName).Take(4))}{(noEngineCap.Count > 4 ? ", …" : "")}). " +
-                         $"Only the game's own limiter holds while a window is covered or minimized; without it a covered client runs ~110 and a minimized one 250-400. " +
-                         $"Fix: System Configuration → Display Settings → Frame Rate → {targetFps} fps in that client, or relaunch it (Potato sets it before each launch).");
-        var above = clients.Where(client => client.Fps is double fps && fps > targetFps * 1.5).ToList();
+        // A client with no in-game limit is fine while the NVIDIA driver cap paces it (DLSS 5 clients run that way on
+        // purpose); it is a problem once it actually runs above the target, which happens when covered or minimized.
+        var uncapped = clients.Where(client => client.EngineFrameLimit == 0 && client.Fps is double fps && fps > targetFps + 5).ToList();
+        if (uncapped.Count > 0)
+            findings.Add($"{uncapped.Count} client{(uncapped.Count == 1 ? " is" : "s are")} running above the target with no in-game frame limit ({string.Join(", ", uncapped.Select(client => $"{client.ClientName} {client.Fps:0} FPS").Take(4))}{(uncapped.Count > 4 ? ", …" : "")}). " +
+                         $"The driver cap only holds while the window is on screen. Fix: System Configuration → Display Settings → Frame Rate → {targetFps} fps in that client (not for a DLSS 5 client: keep it on screen instead).");
+        var above = clients.Where(client => client.EngineFrameLimit != 0 && client.Fps is double fps && fps > targetFps * 1.5).ToList();
         if (above.Count > 0)
-            findings.Add($"{above.Count} client{(above.Count == 1 ? " is" : "s are")} running far above the target ({above.Max(client => client.Fps)!.Value:0} FPS), wasting CPU and GPU.");
+            findings.Add($"{above.Count} client{(above.Count == 1 ? " is" : "s are")} running far above the target ({above.Max(client => client.Fps)!.Value:0} FPS) despite an in-game limit; check its Frame Rate setting.");
 
         if (DateTime.UtcNow - cache.At > TimeSpan.FromSeconds(30)) cache = (DateTime.UtcNow, SlowChecks());
         findings.AddRange(cache.Findings);

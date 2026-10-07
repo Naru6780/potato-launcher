@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.118 - 2026-10-07
+
+- DLSS 5 clients at 60 again. The RenoDX add-on retries its Streamline swap-chain discovery every frame (a DXGI factory plus 8 log lines per frame, ~500 KB/s), a fixed ~3.7 ms that serializes with the game's 60 fps limiter (= ~48 FPS) but hides inside the frame under the NVIDIA driver cap. Potato now sets the in-game Frame Rate to **None** before launching a DLSS 5 client and to the target option for every other client. Keep the NVIDIA profile Max Frame Rate at 60 (it is).
+- DLSS 5 clients launch with RESHADE_DISABLE_LOGGING=1 to stop that per-frame log spam (dlss5.json: disableReShadeLog).
+- Optimizer: "driver" instead of "none" in the Cap column; only flags a client with no in-game limit once it actually runs above the target (covered or minimized), and separately a capped client running far above its limit.
+
 ## 1.0.117 - 2026-10-07
 
 - "Turn ReShade off completely on the other clients" now also applies when no DLSS 5 client is selected at all. Before, clearing the DLSS 5 list made every client load full ReShade again (banner, overlay).

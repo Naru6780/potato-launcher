@@ -597,9 +597,11 @@ internal sealed class OptimizerMonitorForm : Form
         SetCell(row, "Client", snapshot.ClientName);
         SetCell(row, "Fps", snapshot.Fps.HasValue ? $"{snapshot.Fps.Value:0}" : "—");
         // The game's own limiter is the only cap that holds while covered or minimized.
-        SetCell(row, "Cap", snapshot.EngineFrameLimit switch { null => "—", 0 => "none", var limit => $"game {limit}" });
+        SetCell(row, "Cap", snapshot.EngineFrameLimit switch { null => "—", 0 => "driver", var limit => $"game {limit}" });
         var capCell = row.Cells["Cap"];
-        var capColor = snapshot.EngineFrameLimit == 0 ? Color.FromArgb(240, 170, 80) : grid.DefaultCellStyle.ForeColor;
+        // "driver" is fine while the client is on screen (DLSS 5 clients run that way); orange once it actually runs above target.
+        var capColor = snapshot.EngineFrameLimit == 0 && snapshot.Fps is double capFps && capFps > optimizer.Settings.TargetFps + 5
+            ? Color.FromArgb(240, 170, 80) : grid.DefaultCellStyle.ForeColor;
         if (capCell.Style.ForeColor != capColor) capCell.Style.ForeColor = capColor;
         var fpsCell = row.Cells["Fps"];
         var fpsColor = snapshot.Fps is double fps

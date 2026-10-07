@@ -21,6 +21,9 @@ internal sealed class Dlss5Config
     // When at least one DLSS 5 client is chosen: start every other client with ReShade switched off entirely
     // (no banner, overlay or effects) instead of ReShade without add-ons.
     public bool ReShadeOffForOtherClients { get; set; } = true;
+    // The RenoDX add-on retries its Streamline swap-chain discovery every frame and logs 8 lines each time
+    // (~500 KB/s, a 190k-line log in one session). ReShade honours RESHADE_DISABLE_LOGGING; off by default for DLSS clients.
+    public bool DisableReShadeLog { get; set; } = true;
 }
 
 internal sealed record Dlss5Status(string GameFolder, bool ReShadeFound, IReadOnlyList<string> AddOns)
@@ -186,6 +189,7 @@ internal static class Dlss5Clients
             return false;
         }
         startInfo.Environment[BasePathVariable] = DlssProfileFolder(dataRoot);
+        if (config.DisableReShadeLog) startInfo.Environment["RESHADE_DISABLE_LOGGING"] = "1";
         return true;
     }
 

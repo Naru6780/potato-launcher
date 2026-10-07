@@ -43,3 +43,21 @@ public class FrameLimitEnforcerTests
         finally { File.Delete(path); }
     }
 }
+
+public class FrameLimitEnforcerOptionTests
+{
+    [Fact]
+    public void DlssClientsGetNoneAndOthersGetTheTargetOption()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"ffxiv-{Guid.NewGuid():N}.cfg");
+        File.WriteAllText(path, "<Settings>\r\nFps\t2\r\n");
+        try
+        {
+            Assert.Contains("set to none", FrameLimitEnforcer.ApplyOption(FrameLimitEnforcer.FpsNone, path));
+            Assert.Equal(0, FrameLimitEnforcer.CurrentOption(path));
+            Assert.Contains("set to 60 fps", FrameLimitEnforcer.Apply(60, path));
+            Assert.Equal(2, FrameLimitEnforcer.CurrentOption(path));
+        }
+        finally { File.Delete(path); }
+    }
+}

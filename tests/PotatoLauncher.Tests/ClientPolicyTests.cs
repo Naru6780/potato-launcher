@@ -78,9 +78,13 @@ public class MinimizedClientLimiterTests
     {
         var clients = new List<OptimizerClientSnapshot>
         {
-            new(1, "A@W", "", false, false, 8, null, 0, 0, 0, 0, null, null, false, null, 244),
+            new(1, "A@W", "", false, false, 8, null, 0, 0, 0, 0, null, null, false, null, 244, "", 0),
             new(2, "B@W", "", false, false, 3, null, 0, 0, 0, 0, null, null, false, null, 60)
         };
-        Assert.Contains(OptimizerDiagnostics.Get(clients, 60), finding => finding.StartsWith("1 client is running far above the target (244 FPS)"));
+        Assert.Contains(OptimizerDiagnostics.Get(clients, 60), finding => finding.StartsWith("1 client is running above the target with no in-game frame limit (A@W 244 FPS)"));
+        var capped = new List<OptimizerClientSnapshot> { new(3, "C@W", "", false, false, 8, null, 0, 0, 0, 0, null, null, false, null, 244, "", 60) };
+        Assert.Contains(OptimizerDiagnostics.Get(capped, 60), finding => finding.Contains("despite an in-game limit"));
+        var driverPaced = new List<OptimizerClientSnapshot> { new(4, "D@W", "", false, false, 8, null, 0, 0, 0, 0, null, null, false, null, 60, "", 0) };
+        Assert.DoesNotContain(OptimizerDiagnostics.Get(driverPaced, 60), finding => finding.Contains("frame limit"));
     }
 }

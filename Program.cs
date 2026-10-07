@@ -3977,7 +3977,8 @@ internal sealed class MainForm : Form
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden
         };
-        if (Dlss5Clients.ApplyToLaunch(startInfo, AccountIconKey(account), settings.SharedProfileFolder, out var dlss5Message))
+        var dlss5Client = Dlss5Clients.ApplyToLaunch(startInfo, AccountIconKey(account), settings.SharedProfileFolder, out var dlss5Message);
+        if (dlss5Client)
         {
             SetStatus($"{AccountDisplayName(account)}: starting with DLSS 5.", force: true);
         }
@@ -3988,7 +3989,10 @@ internal sealed class MainForm : Form
         AccountLaunchEnvironment.Apply(startInfo, AccountIconKey(account));
         if (optimizerService.Settings.EnforceInGameFrameLimit)
         {
-            var frameLimitMessage = FrameLimitEnforcer.Apply(optimizerService.Settings.TargetFps);
+            // DLSS 5 clients rely on the NVIDIA driver cap; the in-game limiter collides with their loader (see FrameLimitEnforcer).
+            var frameLimitMessage = dlss5Client
+                ? FrameLimitEnforcer.ApplyOption(FrameLimitEnforcer.FpsNone)
+                : FrameLimitEnforcer.Apply(optimizerService.Settings.TargetFps);
             if (!string.IsNullOrEmpty(frameLimitMessage)) SetStatus(frameLimitMessage, force: true);
         }
         using var launcherProcess = Process.Start(startInfo);
