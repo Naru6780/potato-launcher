@@ -26,3 +26,22 @@ Windows 11 build 26200, FFXIV build hash 5BBC501D… (see `ExternalGameState.Sup
 ## Measurement
 - FPS: `ExternalGameState.ReadFrame` (Framework* static via `48 8B 1D ?? ?? ?? ?? 8B 7C 24`, FrameCounter @0x16D0).
 - GPU total: NVML (`NvidiaGpuUsage`); Windows 3D-engine counters under-report DLSS work.
+
+## Frame caps: what holds where (measured 2026-10-07, v1.0.115/116)
+- The NVIDIA driver cap (profile Max Frame Rate = 60) only paces frames that are actually presented. A window fully
+  covered by another window ran ~110 loops/s (5-6% CPU); minimized 250-400 (8%). With stacked clients, most windows
+  are covered most of the time, so the driver cap alone never carried the load.
+- The game's own limiter (System Configuration → Display → Frame Rate; FFXIV.cfg `Fps`) sleeps inside the loop and
+  holds in every state. Options on this build (config table min 0 / max 3): 0 none, 1 main display refresh rate,
+  2 = 60 fps, 3 = 30 fps. Engine state readable at Device (`48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 80 7B 08 00`,
+  pointer): IsFrameRateLimited @0xA8, FrameRateLimit @0xAE. `FrameLimitEnforcer` writes `Fps` before each launch.
+- With `Fps 2`: visible or covered client = 58-60 loops/s at ~2.5% CPU; minimized = ~49 (an extra ~3.5 ms per frame
+  appears only while minimized; not timer throttling: power-throttling state was 0 on every client). A covered window
+  is therefore the better "background" state than a minimized one.
+- The client that still loads ReShade + RenoDX (the DLSS 5 client) holds only ~48 with the 60 limiter and costs ~6%
+  CPU even with DLSS switched off in-game; the loader itself is the cost. Untick it in DLSS 5 clients when DLSS is not
+  in use.
+- Windows' TextInputHost repeatedly got stuck at ~5% CPU (equal to two clients); ending it brings it to 0% and Windows
+  recreates it idle. `InputHostWatchdog` does this automatically.
+- Per-client steady state now: ~2.5% CPU, ~0.3-2.5% GPU, ~0.9 GB VRAM, ~7 GB committed (plugins). CPU for 16 clients
+  ≈ 40%; the limits are RAM commit and VRAM.
