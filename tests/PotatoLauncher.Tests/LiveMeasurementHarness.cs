@@ -49,6 +49,45 @@ public class LiveMeasurementHarness
                 log.AppendLine($"{Name(c.ProcessId),-32} fps {(window.FpsByClient.TryGetValue(c.ProcessId, out var f) ? f.ToString("0.0") : "-"),6}  cpu {window.CpuByClient.GetValueOrDefault(c.ProcessId):0.00}%  limit {limit?.ToString() ?? "?"}");
             }
         }
+        else if (mode == "watch")
+        {
+            // Records one client every 2 s while the user toggles its Frame Rate setting; groups samples by the engine's
+            // live limit (0 = none, NVIDIA cap) and compares CPU per frame. Samples next to a switch are dropped.
+            var name = Environment.GetEnvironmentVariable("POTATO_HARNESS_MAIN") ?? "Artemis";
+            var seconds = int.TryParse(Environment.GetEnvironmentVariable("POTATO_HARNESS_SECONDS"), out var s) ? s : 300;
+            var target = clients.First(c => Name(c.ProcessId).StartsWith(name, StringComparison.OrdinalIgnoreCase));
+            var rows = new List<(DateTime At, short? Limit, double Fps, double Cpu, double System, double Dwm)>();
+            static TimeSpan DwmTime() { try { using var d = Process.GetProcessesByName("dwm").First(); return d.TotalProcessorTime; } catch { return TimeSpan.Zero; } }
+            var last = LoadSample.Take([target], frames);
+            var lastDwm = DwmTime();
+            var until = DateTime.UtcNow.AddSeconds(seconds);
+            while (DateTime.UtcNow < until)
+            {
+                Thread.Sleep(2000);
+                var now = LoadSample.Take([target], frames);
+                var dwm = DwmTime();
+                var window = LoadSample.Between(last, now);
+                var limit = frames.ReadFrame(target.ProcessId, target.StartUtc)?.EngineFrameLimit;
+                var dwmPct = (dwm - lastDwm).TotalSeconds / (now.TakenUtc - last.TakenUtc).TotalSeconds / Environment.ProcessorCount * 100;
+                rows.Add((DateTime.Now, limit, window.FpsByClient.GetValueOrDefault(target.ProcessId), window.CpuByClient.GetValueOrDefault(target.ProcessId), window.SystemCpu, dwmPct));
+                log.AppendLine($"{DateTime.Now:HH:mm:ss} limit={limit?.ToString() ?? "?"} fps={rows[^1].Fps:0.0} cpu={rows[^1].Cpu:0.00}% dwm={dwmPct:0.00}% system={window.SystemCpu:0.0}%");
+                last = now;
+                lastDwm = dwm;
+                File.WriteAllText(output, log.ToString());
+            }
+            // Keep only samples whose neighbours had the same limit (the switch happened outside them).
+            var stable = rows.Where((row, i) => i > 0 && i < rows.Count - 1 && rows[i - 1].Limit == row.Limit && rows[i + 1].Limit == row.Limit).ToList();
+            log.AppendLine($"== {Name(target.ProcessId)}: {rows.Count} samples, {stable.Count} away from a switch");
+            foreach (var group in stable.GroupBy(row => row.Limit).OrderBy(g => g.Key))
+            {
+                var fps = group.Average(row => row.Fps);
+                var cpu = group.Average(row => row.Cpu);
+                var cpuMsPerFrame = cpu / 100 * Environment.ProcessorCount * 1000 / Math.Max(1, fps);
+                var sd = Math.Sqrt(group.Average(row => Math.Pow(row.Cpu - cpu, 2)));
+                log.AppendLine($"limit {(group.Key == 0 ? "None (NVIDIA cap)" : $"game {group.Key}")}: n={group.Count()} fps {fps:0.0}  cpu {cpu:0.00}% (sd {sd:0.00})  " +
+                               $"cpu per frame {cpuMsPerFrame:0.00} ms  dwm {group.Average(row => row.Dwm):0.00}%  system {group.Average(row => row.System):0.0}%");
+            }
+        }
         else if (mode == "threads")
         {
             // CPU per thread over 10 s, grouped by the module its start address belongs to.

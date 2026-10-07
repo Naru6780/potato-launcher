@@ -237,7 +237,8 @@ internal sealed record OptimizerClientSnapshot(
     double? Fps = null,
     string Role = "",
     short? EngineFrameLimit = null,
-    string Cores = "");
+    string Cores = "",
+    bool HeldByPotato = false);
 
 internal sealed record SystemMetricsSnapshot(
     double CpuPercent,
@@ -277,6 +278,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly Dictionary<int, (DateTime Start, long Mask)> placedMasks = [];
     private int? stickyMainId;
     private int? livePlacementMainId;
+    private readonly HashSet<int> runawayClientIds = [];
     private readonly Dictionary<int, (DateTime At, TimeSpan Cpu)> placementLoad = [];
     private readonly Dictionary<int, double> clientLoad = [];
     private double? followerLoad;
@@ -369,18 +371,24 @@ internal sealed class IntegratedOptimizerService : IDisposable
             var foreground = ClientPolicyNative.ForegroundProcessId();
             lastForegroundClientId = foreground is int pid && clientIds.Contains(pid) ? pid : null;
             SampleFrameRates(clients);
-            if (Settings.ClientPolicyEnabled && Settings.LimitMinimizedClients) LimitMinimizedClients(clients);
-            if (Settings.ResetSpinningInputHost && clients.Count > 0)
-            {
-                var watchdogMessage = inputHostWatchdog.Tick(DateTime.UtcNow);
-                if (watchdogMessage.Length > 0) LogDecision(watchdogMessage);
-            }
-            else minimizedLimiter.Dispose();
             var activeClientIds = ClientPolicy.ActiveClientIds(
                 clientIds,
                 mainSelection.CandidateClientIds,
                 foreground,
                 Settings.FollowForegroundClient);
+            // Before 1.0.123 the else below belonged to the TextInputHost watchdog, so turning that off released
+            // every brake a moment after it was set.
+            if (Settings.ClientPolicyEnabled && Settings.LimitMinimizedClients) LimitRunawayClients(clients, activeClientIds);
+            else
+            {
+                minimizedLimiter.Dispose();
+                runawayClientIds.Clear();
+            }
+            if (Settings.ResetSpinningInputHost && clients.Count > 0)
+            {
+                var watchdogMessage = inputHostWatchdog.Tick(DateTime.UtcNow);
+                if (watchdogMessage.Length > 0) LogDecision(watchdogMessage);
+            }
             if (Settings.ClientPolicyEnabled)
             {
                 ApplyClientPolicy(clients, activeClientIds);
@@ -483,6 +491,12 @@ internal sealed class IntegratedOptimizerService : IDisposable
         if (PlacementTestRunning) return "A placement test is already running.";
         if (!Topology.IsSupported) return "This CPU's core layout cannot be read, so placement is not available.";
         if (latestFps.Count < 2) return "Start at least two clients and log them in first: Potato needs to read their FPS.";
+        // Runaway clients saturate the CPU and make every placement look the same; fix them first.
+        var runaway = latestEngineLimit.Where(entry => entry.Value == 0 && (runawayClientIds.Contains(entry.Key)
+            || latestFps.TryGetValue(entry.Key, out var fps) && fps > Settings.TargetFps + RunawayPolicy.RunawayMargin)).Count();
+        if (runaway > 0)
+            return $"{runaway} client{(runaway == 1 ? " has" : "s have")} no in-game frame limit and would run far above {Settings.TargetFps} without Potato holding {(runaway == 1 ? "it" : "them")}. " +
+                   $"Set System Configuration → Display Settings → Frame Rate → {Settings.TargetFps} fps in {(runaway == 1 ? "it" : "them")} (Cap column shows \"game {Settings.TargetFps}\"), then run the test.";
         // Same main as live placement (configured main first), so the test measures what Auto will then apply.
         var main = livePlacementMainId ?? stickyMainId ?? lastForegroundClientId;
         List<CpuPlacementMode> modes = [CpuPlacementMode.Off, CpuPlacementMode.ReserveMain, CpuPlacementMode.Lanes];
@@ -602,21 +616,37 @@ internal sealed class IntegratedOptimizerService : IDisposable
         try { return process.HasExited ? null : process.ProcessorAffinity.ToInt64(); } catch { return null; }
     }
 
-    private void LimitMinimizedClients(IReadOnlyList<Process> clients)
+    // Holds clients nothing else paces: minimized ones, and any client without an in-game frame limit that runs away
+    // above the target while it is not the one being played (render-cut or covered windows present no frames, so the
+    // NVIDIA cap cannot hold them). The game's own limit, once set, always takes over.
+    private void LimitRunawayClients(IReadOnlyList<Process> clients, IReadOnlySet<int> activeClientIds)
     {
         foreach (var client in clients)
         {
             DateTime start;
             try { start = client.StartTime.ToUniversalTime(); } catch { continue; }
-            minimizedLimiter.Update(client.Id, start, ClientPolicyNative.IsMinimized(client) && !HasEngineFrameLimit(client.Id),
-                latestFps.TryGetValue(client.Id, out var fps) ? fps : null, Settings.TargetFps);
+            var fps = latestFps.TryGetValue(client.Id, out var measured) ? measured : (double?)null;
+            var hasLimit = HasEngineFrameLimit(client.Id);
+            var wasRunaway = runawayClientIds.Contains(client.Id);
+            var runaway = RunawayPolicy.IsRunaway(wasRunaway, activeClientIds.Contains(client.Id), hasLimit, fps, Settings.TargetFps);
+            if (runaway != wasRunaway)
+            {
+                if (runaway) runawayClientIds.Add(client.Id); else runawayClientIds.Remove(client.Id);
+                LogDecision(runaway
+                    ? $"Holding PID {client.Id} ({ResolveClientName(client)}) at {Settings.TargetFps}: no in-game frame limit, running at {fps:0} FPS."
+                    : $"Released PID {client.Id}: {(hasLimit ? "in-game frame limit set" : "now the active client")}.");
+            }
+            minimizedLimiter.Update(client.Id, start, RunawayPolicy.ShouldBrake(ClientPolicyNative.IsMinimized(client), runaway, hasLimit), fps, Settings.TargetFps);
         }
-        minimizedLimiter.Forget(clients.Select(client => client.Id));
+        var alive = clients.Select(client => client.Id).ToList();
+        minimizedLimiter.Forget(alive);
+        runawayClientIds.IntersectWith(alive);
     }
 
     private void RestoreClientPolicies()
     {
         minimizedLimiter.Dispose();
+        runawayClientIds.Clear();
         if (appliedPolicies.Count == 0) return;
         var clients = GetFfxivClients();
         try
@@ -711,7 +741,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
             latestFps.TryGetValue(client.Id, out var fps) ? fps : null,
             client.Id == lastForegroundClientId ? "Playing" : mainSelection.CandidateClientIds.Contains(client.Id) ? "Main" : "Background",
             latestEngineLimit.TryGetValue(client.Id, out var engineLimit) ? engineLimit : null,
-            placedMasks.TryGetValue(client.Id, out var placed) ? CpuTopology.FormatMask(placed.Mask) : "all");
+            placedMasks.TryGetValue(client.Id, out var placed) ? CpuTopology.FormatMask(placed.Mask) : "all",
+            minimizedLimiter.IsCapped(client.Id));
     }
 
     public CapacityEstimate EstimateCapacity(IReadOnlyList<OptimizerClientSnapshot> snapshots, SystemMetricsSnapshot system) =>

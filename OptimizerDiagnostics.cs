@@ -38,6 +38,10 @@ internal static class OptimizerDiagnostics
         if (uncapped.Count > 0)
             findings.Add($"{uncapped.Count} client{(uncapped.Count == 1 ? " is" : "s are")} running above the target with no in-game frame limit ({string.Join(", ", uncapped.Select(client => $"{client.ClientName} {client.Fps:0} FPS").Take(4))}{(uncapped.Count > 4 ? ", …" : "")}). " +
                          $"The driver cap only holds while the window is on screen. Fix: System Configuration → Display Settings → Frame Rate → {targetFps} fps in that client (not for a DLSS 5 client: keep it on screen instead).");
+        var held = clients.Where(client => client.HeldByPotato && client.EngineFrameLimit == 0).ToList();
+        if (held.Count > 0)
+            findings.Add($"{held.Count} client{(held.Count == 1 ? " has" : "s have")} no in-game frame limit and would run away, so Potato is holding {(held.Count == 1 ? "it" : "them")} at {targetFps} with a CPU cap ({string.Join(", ", held.Select(client => client.ClientName).Take(3))}{(held.Count > 3 ? ", …" : "")}). " +
+                         $"The game's own limit is cheaper and steadier: System Configuration → Display Settings → Frame Rate → {targetFps} fps in {(held.Count == 1 ? "it" : "them")}.");
         var above = clients.Where(client => client.EngineFrameLimit != 0 && client.Fps is double fps && fps > targetFps * 1.5).ToList();
         if (above.Count > 0)
             findings.Add($"{above.Count} client{(above.Count == 1 ? " is" : "s are")} running far above the target ({above.Max(client => client.Fps)!.Value:0} FPS) despite an in-game limit; check its Frame Rate setting.");

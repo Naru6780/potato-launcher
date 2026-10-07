@@ -71,3 +71,9 @@ Windows 11 build 26200, FFXIV build hash 5BBC501D… (see `ExternalGameState.Sup
   recreates it idle. `InputHostWatchdog` does this automatically.
 - Per-client steady state now: ~2.5% CPU, ~0.3-2.5% GPU, ~0.9 GB VRAM, ~7 GB committed (plugins). CPU for 16 clients
   ≈ 40%; the limits are RAM commit and VRAM.
+
+## In-game cap vs NVIDIA cap on the main (2026-10-07, 9800X3D, Artemis, 175 samples of 2 s)
+- In-game 60: 57.9 FPS, 6.26% CPU (sd 0.64), 17.3 ms CPU per frame.
+- Frame Rate None + NVIDIA 60: 60.0 FPS, 7.07% CPU (sd 0.66), 18.9 ms CPU per frame.
+- The in-game limit is cheaper per frame too; the NVIDIA cap only buys an exact 60. Followers must use the in-game
+  limit regardless (render-cut/covered windows present nothing for the driver to pace).

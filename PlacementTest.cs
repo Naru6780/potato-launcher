@@ -78,6 +78,8 @@ internal sealed class PlacementTest
     private DateTime phaseStartUtc;
     private LoadSample? phaseSample;
     private HashSet<int>? clientIds;
+    private DateTime lastTickUtc;
+    internal static readonly TimeSpan MaxTickGap = TimeSpan.FromSeconds(5);
 
     public PlacementTest(IReadOnlyList<CpuPlacementMode> modes, int rounds, TimeSpan settle, TimeSpan measure, int targetFps, int? mainId)
     {
@@ -113,13 +115,28 @@ internal sealed class PlacementTest
         var ids = clients.Select(client => client.ProcessId).ToHashSet();
         clientIds ??= ids;
         if (!clientIds.SetEquals(ids)) { Cancel("Placement test stopped: a client started or closed. Run it again with every client in game."); return; }
+        // A CPU starved by runaway clients delays Potato's own timer; a phase measured across such a gap is meaningless
+        // (seen: one tick 20+ s late gave a near-zero window, "clients 649%" and "main 1155 FPS").
+        if (lastTickUtc != default && nowUtc - lastTickUtc > MaxTickGap)
+        {
+            Cancel($"Placement test stopped: Potato itself got no CPU time for {(nowUtc - lastTickUtc).TotalSeconds:0} s, so the CPU is saturated. Make sure every client has its in-game frame limit (Cap column: game 60), then run it again.");
+            return;
+        }
+        lastTickUtc = nowUtc;
         if (phaseStartUtc == default) phaseStartUtc = nowUtc;
 
         var elapsed = nowUtc - phaseStartUtc;
         if (phaseSample is null && elapsed >= settle) phaseSample = LoadSample.Take(clients, frames);
-        if (phaseSample is null || elapsed < settle + measure) return;
+        // The window is timed from its own first sample, so it always spans the full measuring time.
+        if (phaseSample is null || nowUtc - phaseSample.TakenUtc < measure) return;
 
-        windows.Add((order[phase], LoadSample.Between(phaseSample, LoadSample.Take(clients, frames))));
+        var window = LoadSample.Between(phaseSample, LoadSample.Take(clients, frames));
+        if (window.SystemCpu > 100.5 || window.ClientCpu > 100.5)
+        {
+            Cancel("Placement test stopped: a measurement came out impossible (over 100% CPU). Run it again.");
+            return;
+        }
+        windows.Add((order[phase], window));
         phaseSample = null;
         phaseStartUtc = nowUtc;
         if (++phase < order.Count) return;
@@ -156,7 +173,8 @@ internal sealed class PlacementTest
 
     /// <summary>Bumped when the scoring changes, so results stored by an older version are measured again.</summary>
     // 3: the test now uses the configured main (1.0.120/121 measured without it when no window had been clicked).
-    public const int ScoringVersion = 3;
+    // 4: windows timed from their own sample, starved/impossible runs rejected (a 1.0.122 run stored garbage).
+    public const int ScoringVersion = 4;
 
     // The game's own 60 fps limiter delivers ~58.0-58.2, so a 2 FPS slack put clients on the threshold and 0.1 FPS of
     // noise decided the winner (seen on a 9800X3D). 3 FPS matches "at cap" everywhere else in the Optimizer.

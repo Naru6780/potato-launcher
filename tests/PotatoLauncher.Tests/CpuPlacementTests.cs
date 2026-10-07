@@ -191,6 +191,40 @@ public class CpuPlacementTests
     }
 
     [Fact]
+    public void Test_RejectsAStarvedRunInsteadOfScoringIt()
+    {
+        var test = new PlacementTest([CpuPlacementMode.Off, CpuPlacementMode.ReserveMain], rounds: 1, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), 60, null);
+        var clients = new List<ClientRef> { new(Environment.ProcessId, DateTime.UtcNow) };
+        var start = DateTime.UtcNow;
+        test.Tick(start, clients);
+        test.Tick(start.AddSeconds(1), clients);
+        // Potato's timer then stalls for 25 s, as it did with 16 runaway clients at 100% CPU.
+        test.Tick(start.AddSeconds(26), clients);
+        Assert.True(test.Done);
+        Assert.Null(test.Result);
+        Assert.Contains("got no CPU time", test.Error);
+    }
+
+    [Theory]
+    [InlineData(false, false, false, 185.0, true)]   // Frame Rate None, render-cut follower at 185: hold it
+    [InlineData(false, false, false, 61.0, false)]   // None but paced by the NVIDIA cap at 60: leave it
+    [InlineData(false, true, false, 185.0, false)]   // the client being played is never held
+    [InlineData(true, false, false, 60.0, true)]     // once held it stays held (its FPS now sits at the target)
+    [InlineData(true, false, true, 58.0, false)]     // in-game limit set: the game takes over
+    [InlineData(true, true, false, 60.0, false)]     // became the active client: released
+    public void Runaway_DetectionIsStickyAndNeverTouchesTheActiveClient(bool was, bool active, bool hasLimit, double fps, bool expected) =>
+        Assert.Equal(expected, RunawayPolicy.IsRunaway(was, active, hasLimit, fps, 60));
+
+    [Fact]
+    public void Brake_AppliesToMinimizedOrRunawayClientsWithoutAnInGameLimit()
+    {
+        Assert.True(RunawayPolicy.ShouldBrake(minimized: true, runaway: false, hasEngineLimit: false));
+        Assert.True(RunawayPolicy.ShouldBrake(minimized: false, runaway: true, hasEngineLimit: false));
+        Assert.False(RunawayPolicy.ShouldBrake(minimized: true, runaway: true, hasEngineLimit: true));
+        Assert.False(RunawayPolicy.ShouldBrake(minimized: false, runaway: false, hasEngineLimit: false));
+    }
+
+    [Fact]
     public void Settings_RoundTripPlacementAndIgnoreOldLaneKeys()
     {
         var settings = OptimizerSettings.DeserializeCompatible("""

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.123 - 2026-10-07
+
+- Clients without an in-game frame limit that run away above the target while not being played (render-cut or covered windows, which the NVIDIA cap cannot pace) are now held at the target with the minimized-client CPU cap. Never the played client or main; released once the in-game limit is set. Cap column: "held by Potato". Seen on a 9950X3D: 83-185 FPS followers, CPU 100%, others at 5-27.
+- Placement test: windows timed from their own sample; stalled (timer gap > 5 s) or impossible (> 100% CPU) runs are stopped; refuses to start while clients run without their in-game limit. Earlier results discarded.
+- Fixed: disabling the TextInputHost reset disabled the minimized-client CPU cap.
+- Measured on the 9800X3D main: in-game 60 limit 6.26% CPU at 57.9 FPS vs NVIDIA cap 7.07% at 60.0 (17.3 vs 18.9 ms CPU per frame).
+
 ## 1.0.122 - 2026-10-07
 
 - Fixed Test placements ignoring the main client set in the Optimizer (it used the last clicked window, or no main at all). It now measures with the same main as live placement. Earlier results are discarded.

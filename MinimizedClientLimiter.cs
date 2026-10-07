@@ -8,6 +8,25 @@ namespace PotatoLauncher;
 // job object) and steers that cap from the measured loop rate so the client keeps running at the target (60).
 // Restoring the window removes the cap immediately. Measured on a 9800X3D: 271 loops/s at 7.5% CPU -> 87 at 3.5% with
 // a fixed 3% cap; the feedback loop below lands it on the target instead.
+// Since 1.0.123 it also holds any client that has no in-game frame limit and runs away above the target while not
+// being played: render-cut or covered windows present no frames, so the NVIDIA cap cannot pace them either (seen on a
+// 9950X3D: Frame Rate None followers at 83-185 FPS, CPU at 100%, other clients starved to 5-27 FPS).
+internal static class RunawayPolicy
+{
+    // Above target by this much with no in-game limit = nothing is pacing the client.
+    internal const double RunawayMargin = 10;
+
+    /// <summary>Whether the client stays marked as running away (sticky: once held, its FPS sits at the target).</summary>
+    public static bool IsRunaway(bool wasRunaway, bool active, bool hasEngineLimit, double? fps, int targetFps)
+    {
+        if (hasEngineLimit || active) return false;
+        return wasRunaway || fps is double measured && measured > targetFps + RunawayMargin;
+    }
+
+    /// <summary>Whether the CPU brake applies. A minimized client is held even when it is a main (it is not seen).</summary>
+    public static bool ShouldBrake(bool minimized, bool runaway, bool hasEngineLimit) => !hasEngineLimit && (minimized || runaway);
+}
+
 internal sealed class MinimizedClientLimiter : IDisposable
 {
     // Job CPU rate is in 1/100 of a percent of the whole machine.

@@ -1,0 +1,10 @@
+1 CCD, 8 cores / 16 threads, 96 MB L3: every core is equal
+system CPU 36.0%  clients 26.0%
+Hermes Potato@Sargatanas         fps   58.2  cpu 2.82%  limit 60
+Athena Potato@Sargatanas         fps   58.4  cpu 2.83%  limit 60
+Gaia Potato@Sargatanas           fps   58.3  cpu 2.50%  limit 60
+Nyx Potato@Sargatanas            fps   58.3  cpu 3.00%  limit 60
+Apollo Potato@Sargatanas         fps   58.5  cpu 2.76%  limit 60
+Hephaestus Potato@Sargatanas     fps   58.4  cpu 2.69%  limit 60
+Poseidon Potato@Sargatanas       fps   58.3  cpu 2.66%  limit 60
+Artemis Potato@Sargatanas        fps   57.7  cpu 6.78%  limit 60
