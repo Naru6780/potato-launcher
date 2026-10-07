@@ -1,5 +1,10 @@
 # Changelog
 
+
+## 1.0.121 - 2026-10-07
+
+- Fixed Test placements: a client counted as at target only from 58.0 FPS, while the game's own 60 fps limiter delivers ~58.0-58.2, so 0.1 FPS of noise picked the winner (seen on a 9800X3D: No pinning won at 44.9% CPU over 40.9% and 39.2%). It now allows 3 FPS, like the rest of the Optimizer.
+- The test compares total CPU and ignores differences under 2 points (run-to-run noise). Results stored by 1.0.120 are discarded.
 ## 1.0.120 - 2026-10-07
 
 - New **CPU placement**, on by default (Auto). The main client (your configured main, or the FFXIV window you used last) gets cores of its own, on the 3D V-Cache CCD when the CPU has two (9950X3D, 7950X3D), and every other client stays inside one CCD. The main's share shrinks automatically when the followers need the room, so 16 clients are never squeezed. Measured on a 9800X3D with 8 clients: 43.7% -> 40.0% total CPU at the same FPS.

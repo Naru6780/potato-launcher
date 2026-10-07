@@ -140,7 +140,7 @@ internal sealed class PlacementTest
                 group.Average(entry => entry.Window.ClientCpu),
                 mainId is int main && fpsByClient.TryGetValue(main, out var mainFps) ? mainFps : null,
                 fpsByClient.Count == 0 ? null : fpsByClient.Values.Min(),
-                fpsByClient.Values.Count(fps => fps >= targetFps - 2),
+                fpsByClient.Values.Count(fps => fps >= targetFps - AtTargetSlack),
                 fpsByClient.Count);
         }).OrderBy(score => score.Mode).ToList();
 
@@ -154,13 +154,24 @@ internal sealed class PlacementTest
         return new PlacementTestResult(scores, winner.Mode, summary);
     }
 
-    // More clients at target wins; then a main FPS at least 2 higher; then at least 1 point less CPU. Otherwise the
-    // simpler placement (lower enum value) stays.
+    /// <summary>Bumped when the scoring changes, so results stored by an older version are measured again.</summary>
+    public const int ScoringVersion = 2;
+
+    // The game's own 60 fps limiter delivers ~58.0-58.2, so a 2 FPS slack put clients on the threshold and 0.1 FPS of
+    // noise decided the winner (seen on a 9800X3D). 3 FPS matches "at cap" everywhere else in the Optimizer.
+    internal const int AtTargetSlack = 3;
+
+    // Between runs on the same PC the CPU of one placement varied by up to ~1.7 points.
+    internal const double CpuTolerance = 2.0;
+
+    // More clients at target wins; then a main FPS at least 2 higher; then less total CPU by more than the run-to-run
+    // noise. Total (system) CPU is what Task Manager shows and includes the scheduling cost of spreading clients over
+    // every core, which per-process CPU time does not. Otherwise the simpler placement (lower enum value) stays.
     private static bool Better(PlacementScore candidate, PlacementScore current)
     {
         if (candidate.AtTarget != current.AtTarget) return candidate.AtTarget > current.AtTarget;
         if (candidate.MainFps is double a && current.MainFps is double b && Math.Abs(a - b) >= 2) return a > b;
-        return candidate.ClientCpu <= current.ClientCpu - 1.0;
+        return candidate.SystemCpu <= current.SystemCpu - CpuTolerance;
     }
 
     public static string Label(CpuPlacementMode mode) => mode switch

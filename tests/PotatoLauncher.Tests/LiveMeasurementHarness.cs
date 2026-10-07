@@ -11,6 +11,18 @@ public class LiveMeasurementHarness
         .Select(p => { using (p) return new ClientRef(p.Id, p.StartTime.ToUniversalTime()); })
         .OrderBy(c => c.StartUtc).ToList();
 
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern IntPtr OpenThread(int access, bool inherit, int id);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+    [System.Runtime.InteropServices.DllImport("ntdll.dll")] private static extern int NtQueryInformationThread(IntPtr thread, int infoClass, out long info, int length, IntPtr returned);
+
+    private static long StartAddress(int threadId)
+    {
+        var handle = OpenThread(0x0040 /* QUERY_INFORMATION */, false, threadId);
+        if (handle == IntPtr.Zero) return 0;
+        try { return NtQueryInformationThread(handle, 9 /* Win32StartAddress */, out var address, 8, IntPtr.Zero) == 0 ? address : 0; }
+        finally { CloseHandle(handle); }
+    }
+
     private static string Name(int pid) { try { using var p = Process.GetProcessById(pid); return p.MainWindowTitle; } catch { return "?"; } }
 
     [Fact]
@@ -35,6 +47,38 @@ public class LiveMeasurementHarness
             {
                 var limit = frames.ReadFrame(c.ProcessId, c.StartUtc)?.EngineFrameLimit;
                 log.AppendLine($"{Name(c.ProcessId),-32} fps {(window.FpsByClient.TryGetValue(c.ProcessId, out var f) ? f.ToString("0.0") : "-"),6}  cpu {window.CpuByClient.GetValueOrDefault(c.ProcessId):0.00}%  limit {limit?.ToString() ?? "?"}");
+            }
+        }
+        else if (mode == "threads")
+        {
+            // CPU per thread over 10 s, grouped by the module its start address belongs to.
+            foreach (var c in clients.Where(c => Name(c.ProcessId).StartsWith("Artemis") || Name(c.ProcessId).StartsWith("Hermes")))
+            {
+                using var p = Process.GetProcessById(c.ProcessId);
+                var modules = p.Modules.Cast<ProcessModule>().Select(m => (Start: (long)m.BaseAddress, End: (long)m.BaseAddress + m.ModuleMemorySize, m.ModuleName)).ToList();
+                string ModuleOf(long address) => modules.FirstOrDefault(m => address >= m.Start && address < m.End).ModuleName ?? "(jit/anon)";
+                Dictionary<int, (TimeSpan Cpu, string Module)> Snap()
+                {
+                    var map = new Dictionary<int, (TimeSpan, string)>();
+                    p.Refresh();
+                    foreach (ProcessThread t in p.Threads)
+                    {
+                        try { map[t.Id] = (t.TotalProcessorTime, ModuleOf(StartAddress(t.Id))); } catch { }
+                    }
+                    return map;
+                }
+                var a = Snap();
+                Thread.Sleep(10_000);
+                var b = Snap();
+                var rows = b.Where(e => a.ContainsKey(e.Key))
+                    .Select(e => (e.Key, e.Value.Module, Ms: (e.Value.Cpu - a[e.Key].Cpu).TotalMilliseconds / 10.0))
+                    .ToList();
+                var total = rows.Sum(r => r.Ms);
+                log.AppendLine($"== {Name(c.ProcessId)}: {total / 10.0:0.0}% of one core-second per second ({total / 10.0 / Environment.ProcessorCount:0.00}% of CPU), {rows.Count} threads");
+                foreach (var g in rows.GroupBy(r => r.Module).OrderByDescending(g => g.Sum(r => r.Ms)))
+                    log.AppendLine($"   {g.Key,-28} {g.Sum(r => r.Ms) / total * 100,5:0.0}%  threads={g.Count()}  busiest={g.Max(r => r.Ms) / 10.0:0.0}% core");
+                foreach (var r in rows.OrderByDescending(r => r.Ms).Take(8))
+                    log.AppendLine($"     tid {r.Key,-6} {r.Module,-24} {r.Ms / 10.0:0.0}% of a core");
             }
         }
         else if (mode == "placement")

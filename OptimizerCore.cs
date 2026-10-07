@@ -429,6 +429,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
     }
 
     public CpuTopology Topology => CpuTopology.Current;
+    // A stored test result counts only for this CPU layout and this scoring version.
+    private string MeasuredKey => $"{Topology.Signature}#v{PlacementTest.ScoringVersion}";
     public bool PlacementTestRunning => placementTest is { Done: false };
     public CpuPlacementMode EffectivePlacement => placementTest is { Done: false, CurrentMode: CpuPlacementMode testing }
         ? testing
@@ -437,7 +439,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
             CpuPlacementSetting.Off => CpuPlacementMode.Off,
             CpuPlacementSetting.ReserveMain => CpuPlacementMode.ReserveMain,
             CpuPlacementSetting.Lanes => CpuPlacementMode.Lanes,
-            _ => Settings.TestedPlacement is CpuPlacementMode tested && Settings.TestedPlacementTopology == Topology.Signature
+            _ => Settings.TestedPlacement is CpuPlacementMode tested && Settings.TestedPlacementTopology == MeasuredKey
                 ? tested
                 : CpuPlacementPlanner.DefaultFor(Topology)
         };
@@ -447,7 +449,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         get
         {
             if (placementTest is { Done: false } running) return running.Status;
-            var measured = Settings.TestedPlacement.HasValue && Settings.TestedPlacementTopology == Topology.Signature;
+            var measured = Settings.TestedPlacement.HasValue && Settings.TestedPlacementTopology == MeasuredKey;
             var source = Settings.CpuPlacement != CpuPlacementSetting.Auto ? "chosen by you"
                 : measured ? "measured best on this PC"
                 : Topology.HasUnequalCores ? "default for unequal cores; run Test placements" : "default for equal cores; run Test placements";
@@ -500,7 +502,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         if (test.Result is { } result)
         {
             Settings.TestedPlacement = result.Winner;
-            Settings.TestedPlacementTopology = Topology.Signature;
+            Settings.TestedPlacementTopology = MeasuredKey;
             Settings.TestedPlacementSummary = result.Summary;
             Settings.Save();
         }

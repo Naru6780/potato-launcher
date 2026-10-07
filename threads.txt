@@ -1,0 +1,45 @@
+1 CCD, 8 cores / 16 threads, 96 MB L3: every core is equal
+== Hermes Potato@Sargatanas: 41.6% of one core-second per second (2.60% of CPU), 143 threads
+   ffxiv_dx11.exe                88.3%  threads=46  busiest=23.1% core
+   nvwgf2umx.dll                  6.4%  threads=55  busiest=2.7% core
+   coreclr.dll                    4.1%  threads=22  busiest=1.1% core
+   WINMM.dll                      1.1%  threads=1  busiest=0.5% core
+   inputhost.dll                  0.0%  threads=1  busiest=0.0% core
+   ntdll.dll                      0.0%  threads=5  busiest=0.0% core
+   NvMessageBus.dll               0.0%  threads=4  busiest=0.0% core
+   DINPUT8.dll                    0.0%  threads=1  busiest=0.0% core
+   NvTelemetryAPI64.dll           0.0%  threads=1  busiest=0.0% core
+   nvdiagclt64.dll                0.0%  threads=2  busiest=0.0% core
+   nvcuda64.dll                   0.0%  threads=3  busiest=0.0% core
+   medal-hook64.dll               0.0%  threads=2  busiest=0.0% core
+     tid 24704  ffxiv_dx11.exe           23.1% of a core
+     tid 25476  ffxiv_dx11.exe           5.5% of a core
+     tid 26192  nvwgf2umx.dll            2.7% of a core
+     tid 18140  ffxiv_dx11.exe           1.1% of a core
+     tid 4188   ffxiv_dx11.exe           1.1% of a core
+     tid 23928  coreclr.dll              1.1% of a core
+     tid 22164  ffxiv_dx11.exe           0.9% of a core
+     tid 4304   coreclr.dll              0.6% of a core
+== Artemis Potato@Sargatanas: 155.2% of one core-second per second (9.70% of CPU), 144 threads
+   ffxiv_dx11.exe                85.0%  threads=46  busiest=39.4% core
+   nvwgf2umx.dll                 13.2%  threads=55  busiest=18.9% core
+   coreclr.dll                    1.4%  threads=21  busiest=1.1% core
+   WINMM.dll                      0.3%  threads=1  busiest=0.5% core
+   nvcuda64.dll                   0.1%  threads=3  busiest=0.2% core
+   inputhost.dll                  0.0%  threads=1  busiest=0.0% core
+   ntdll.dll                      0.0%  threads=5  busiest=0.0% core
+   NvMessageBus.dll               0.0%  threads=4  busiest=0.0% core
+   NvTelemetryAPI64.dll           0.0%  threads=1  busiest=0.0% core
+   nvdiagclt64.dll                0.0%  threads=2  busiest=0.0% core
+   mswsock.dll                    0.0%  threads=1  busiest=0.0% core
+   DINPUT8.dll                    0.0%  threads=1  busiest=0.0% core
+   DiscordHook64.dll              0.0%  threads=1  busiest=0.0% core
+   medal-hook64.dll               0.0%  threads=2  busiest=0.0% core
+     tid 31560  ffxiv_dx11.exe           39.4% of a core
+     tid 5504   nvwgf2umx.dll            18.9% of a core
+     tid 26820  ffxiv_dx11.exe           17.3% of a core
+     tid 30368  ffxiv_dx11.exe           10.0% of a core
+     tid 8472   ffxiv_dx11.exe           7.8% of a core
+     tid 27300  ffxiv_dx11.exe           7.2% of a core
+     tid 16352  ffxiv_dx11.exe           7.2% of a core
+     tid 8308   ffxiv_dx11.exe           7.2% of a core

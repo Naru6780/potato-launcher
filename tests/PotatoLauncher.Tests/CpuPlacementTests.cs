@@ -144,11 +144,27 @@ public class CpuPlacementTests
             (CpuPlacementMode.ReserveMain, Window(30.5, (1, 57), (2, 60)))], 60, mainId: 1);
         Assert.Equal(CpuPlacementMode.ReserveMain, faster.Winner);
 
-        // Within 1 point of CPU and 2 FPS: the simpler placement stays.
+        // Within the CPU noise and 2 FPS: the simpler placement stays.
         var tie = PlacementTest.Score([
             (CpuPlacementMode.Off, Window(30, (1, 60))),
-            (CpuPlacementMode.ReserveMain, Window(29.5, (1, 60)))], 60, mainId: 1);
+            (CpuPlacementMode.ReserveMain, Window(28.5, (1, 60)))], 60, mainId: 1);
         Assert.Equal(CpuPlacementMode.Off, tie.Winner);
+    }
+
+    [Fact]
+    public void Score_UserRunOn9800X3D_ClientsAt58AreAtTargetAndTotalCpuDecides()
+    {
+        // The real run: every client at ~58 under the game's own limiter; one at 57.9 must not flip the result.
+        static LoadWindow Window(double system, double clients, double lowest) =>
+            new(system, clients, new Dictionary<int, double>(),
+                Enumerable.Range(1, 8).ToDictionary(id => id, id => id == 8 ? lowest : 58.1));
+        var result = PlacementTest.Score([
+            (CpuPlacementMode.Off, Window(44.9, 29.4, 58.0)),
+            (CpuPlacementMode.ReserveMain, Window(40.9, 29.7, 57.9)),
+            (CpuPlacementMode.Lanes, Window(39.2, 28.9, 57.9))], 60, mainId: 1);
+        Assert.All(result.Scores, score => Assert.Equal(8, score.AtTarget));
+        // 4 points below no pinning; lanes are only 1.7 lower again, inside the noise, so the simpler one stays.
+        Assert.Equal(CpuPlacementMode.ReserveMain, result.Winner);
     }
 
     [Fact]
