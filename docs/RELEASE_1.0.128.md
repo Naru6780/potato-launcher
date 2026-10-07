@@ -1,0 +1,5 @@
+# Potato Launcher v1.0.128 — the main client is never squeezed onto one core
+
+- **Fixed: the main client could be pinned to a single core.** When followers got busier, CPU placement kept taking cores from the main, down to one core (2 threads). On a 9950X3D with 16 clients the main fell from 60 to 35 FPS, capped at the CPU those two threads allow, and 1.0.126's anti-flapping rule then kept it there even after the load eased. Diagnosed from an exported diagnostics zip; a replay of the recorded loads through the 1.0.126 code reproduced all 22 recorded placements.
+- **New rules:** the main gets at least 2 cores, and enough for its own measured load. It keeps that minimum as long as the followers still have 20% spare; only beyond that does Potato stop reserving, and the main then shares the whole cache CCD (never a follower lane). Cores given up come back after the load has allowed it for a full minute, so placement cannot flip back and forth or get stuck.
+- Earlier "Test placements" results are discarded (measured with the old rules); run the test again on Auto if you use it.

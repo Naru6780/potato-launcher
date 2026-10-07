@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.128 - 2026-10-07
+
+- Fixed the main being squeezed to one core (9950X3D: 60 -> 35 FPS) and stuck there by 1.0.126's regrow threshold. Main reservation: minimum 2 cores and enough for its own measured load (1.5x); kept while followers have 1.2x spare, else none (main shares the whole cache CCD, never a lane). Regrow is time-based: after 60 s of room. Verified by replaying the friend's recorded loads: 1.0.126 code reproduces 22/22 recorded placements; new code keeps 2-3 cores.
+- Placement test results discarded (scoring v6).
+
 ## 1.0.127 - 2026-10-07
 
 - New Export diagnostics button (Optimizer): Desktop zip with report.txt (Windows, CPU layout, RAM, power plan, parked cores, CPU clock, NVIDIA cap, other tools, per-client FPS/cap/role/actual cores/CPU/GPU/RAM/injected overlays), metrics/ (last 2 days), optimizer-decisions.log, optimizer.json, dlss5.json. settings.json (account details) is excluded. Local only.

@@ -291,6 +291,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly Dictionary<int, double> clientLoad = [];
     private double? followerLoad;
     private (CpuPlacementMode Mode, int? MainId, PlacementState State)? placementMemory;
+    private DateTime? mainRegrowSince;
     private string lastPlacementSignature = "";
     private PlacementTest? placementTest;
     private readonly Queue<DateTime> externalPriorityChanges = new();
@@ -584,7 +585,15 @@ internal sealed class IntegratedOptimizerService : IDisposable
         if (mode != CpuPlacementMode.Off && followerLoad is null && clients.Count > 1) return;
         // The previous decision only carries over while the mode and the main stay the same.
         var previous = placementMemory is { } memory && memory.Mode == mode && memory.MainId == mainId ? memory.State : null;
-        var plan = CpuPlacementPlanner.Plan(topology, mode, clients.Select(client => client.Id).ToList(), mainId, followerLoad, previous, out var used);
+        // The main's core count: target from both loads, given up at once, taken back only after RegrowAfter.
+        int? mainCores = null;
+        if (mainId is int main && mode is CpuPlacementMode.ReserveMain or CpuPlacementMode.Lanes or CpuPlacementMode.CacheCcdForMain)
+        {
+            var target = CpuPlacementPlanner.MainCoreCount(topology, clients.Count - 1, followerLoad, clientLoad.TryGetValue(main, out var own) ? own : null);
+            mainCores = CpuPlacementPlanner.WithRegrowDelay(target, previous?.MainCores, DateTime.UtcNow, ref mainRegrowSince);
+        }
+        var plan = CpuPlacementPlanner.Plan(topology, mode, clients.Select(client => client.Id).ToList(), mainId, followerLoad, previous, out var used,
+            mainCores: mainCores);
         placementMemory = (mode, mainId, used);
         foreach (var client in clients)
         {

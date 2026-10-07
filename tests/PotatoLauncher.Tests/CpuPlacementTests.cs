@@ -192,23 +192,41 @@ public class CpuPlacementTests
     }
 
     [Fact]
-    public void MainCores_DoNotFlipWhenFollowerLoadSitsOnTheThreshold()
+    public void MainCores_GiveUpAtOnceAndComeBackOnlyAfterAMinute()
     {
         // The 9800X3D case from 1.0.125's log: 7 followers at ~5.3-5.4 threads flipped the main between 0-7 and 0-5.
         var topology = R9800X3D();
-        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.4, previous: 4)); // followers need room: give it now
-        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.3, previous: 3)); // back under the line: not enough to regrow
-        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.0, previous: 3));
-        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 4.0, previous: 3)); // clearly room again
-        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.3, previous: null)); // first decision: plain threshold
-
-        var ids = Enumerable.Range(1, 8).ToList();
-        var first = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.ReserveMain, ids, 1, 5.4, previous: null, out var state);
-        Assert.Equal(0x3FL, first[1]);
-        var next = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.ReserveMain, ids, 1, 5.3, state, out state);
-        Assert.Equal(0x3FL, next[1]);
+        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.4));
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.3));
+        var t = new DateTime(2026, 10, 7, 20, 0, 0, DateTimeKind.Utc);
+        DateTime? since = null;
+        Assert.Equal(3, CpuPlacementPlanner.WithRegrowDelay(3, previous: 4, t, ref since));                 // give up: immediate
+        Assert.Equal(3, CpuPlacementPlanner.WithRegrowDelay(4, previous: 3, t.AddSeconds(1), ref since));  // back under the line: wait
+        Assert.Equal(3, CpuPlacementPlanner.WithRegrowDelay(4, previous: 3, t.AddSeconds(40), ref since));
+        Assert.Equal(4, CpuPlacementPlanner.WithRegrowDelay(4, previous: 3, t.AddSeconds(62), ref since)); // a full minute: take it back
+        Assert.Equal(3, CpuPlacementPlanner.WithRegrowDelay(3, previous: 4, t.AddSeconds(63), ref since));
+        Assert.Null(since);
     }
 
+    [Fact]
+    public void MainIsNeverSqueezedToOneCore_FriendsRecordedSpike()
+    {
+        // 9950X3D, 15 followers. 1.0.126 pinned the main to 0-1 at 18.7 threads of follower load (60 -> 35 FPS) and kept it there.
+        var topology = R9950X3D();
+        Assert.Equal(2, CpuPlacementPlanner.MainCoreCount(topology, 15, 18.7, mainLoad: 2.2));
+        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 15, 17.0, mainLoad: 1.5));
+        Assert.Equal(2, CpuPlacementPlanner.MainCoreCount(topology, 15, 22.0, mainLoad: 2.4)); // main first while followers keep 20% spare
+        Assert.Equal(0, CpuPlacementPlanner.MainCoreCount(topology, 15, 25.0, mainLoad: 2.4)); // beyond that: share, never one core
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 15, 12.0, mainLoad: 5.0)); // busy main (needs 4) with room: 4
+        Assert.Equal(0, CpuPlacementPlanner.MainCoreCount(topology, 15, 21.0, mainLoad: 5.0)); // needs 4, followers cannot spare them: share
+
+        // With no reservation the main gets the whole cache CCD, not a follower lane.
+        var ids = Enumerable.Range(1, 16).ToList();
+        var plan = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.Lanes, ids, 1, 25.0, null, out _, mainLoad: 2.4);
+        Assert.Equal(0xFFFFL, plan[1]);
+        for (var cores = 1; cores <= 4; cores++)
+            Assert.NotEqual(1, CpuPlacementPlanner.MainCoreCount(topology, 15, 15.0 + cores, mainLoad: 2.0));
+    }
     [Fact]
     public void CacheCcd_DoesNotFlipNearItsThreshold()
     {

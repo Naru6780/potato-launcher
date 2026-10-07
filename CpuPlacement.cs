@@ -47,23 +47,50 @@ internal static class CpuPlacementPlanner
     /// Physical cores kept for the main client: up to half of the fastest CCD (at most 4), but never so many that the
     /// followers' cores drop below their measured load plus headroom. 0 = the main shares cores with everyone.
     /// </summary>
-    public static int MainCoreCount(CpuTopology topology, int followers, double? followerLoad) =>
-        MaxMainCores(topology, (followerLoad ?? followers * UnmeasuredFollowerLoad) * FollowerHeadroom);
-
-    // Taking cores back for the main needs this much room: with one threshold, a follower load sitting on it made the
-    // reservation flip every few seconds and re-pin every client each time (seen in 1.0.125: 0-7 <-> 0-5).
-    internal const double RegrowHeadroom = 1.8;
+    // A reservation smaller than this starves the main instead of protecting it (seen on a 9950X3D in 1.0.126: followers
+    // got busier, the main was squeezed to one core = 2 threads and fell from 60 to 35 FPS).
+    internal const int MinimumMainCores = 2;
+    // The main's own measured load, with headroom, must fit in its reservation too.
+    internal const double MainHeadroom = 1.5;
 
     /// <summary>
-    /// Same as MainCoreCount, with hysteresis: the main gives cores up as soon as followers need them, but only takes
-    /// them back once followers clearly have room (RegrowHeadroom), so a load near the threshold cannot flip it.
+    /// Physical cores kept for the main client: as many as the followers can spare (at most half the fastest CCD, max
+    /// 4), but at least <see cref="MinimumMainCores"/> and enough for the main's own load. When that minimum cannot be
+    /// met without squeezing the followers, nothing is reserved (0): everyone shares every core and the main keeps its
+    /// higher priority, which is far better for it than one starved core.
     /// </summary>
-    public static int MainCoreCount(CpuTopology topology, int followers, double? followerLoad, int? previous)
+    public static int MainCoreCount(CpuTopology topology, int followers, double? followerLoad, double? mainLoad = null)
     {
+        if (topology.Domains.Count == 0) return 0;
+        var allowed = MaxMainCores(topology, (followerLoad ?? followers * UnmeasuredFollowerLoad) * FollowerHeadroom);
+        var first = topology.Domains[0].Cores;
+        var threadsPerCore = Math.Max(1, System.Numerics.BitOperations.PopCount(unchecked((ulong)first[0].Mask)));
+        var largest = Math.Clamp(first.Count / 2, 1, 4);
+        var needed = Math.Min(largest, Math.Max(MinimumMainCores, (int)Math.Ceiling((mainLoad ?? 0) * MainHeadroom / threadsPerCore)));
+        if (allowed >= needed) return allowed;
+        // The main comes first: it keeps its minimum while followers still have MinimumFollowerHeadroom.
         var load = followerLoad ?? followers * UnmeasuredFollowerLoad;
-        var allowed = MaxMainCores(topology, load * FollowerHeadroom);
-        if (previous is not int current || current > allowed) return allowed;
-        return Math.Min(allowed, Math.Max(current, MaxMainCores(topology, load * RegrowHeadroom)));
+        var minimumThreads = first.Take(needed).Sum(core => System.Numerics.BitOperations.PopCount(unchecked((ulong)core.Mask)));
+        return topology.LogicalCount - minimumThreads >= load * MinimumFollowerHeadroom ? needed : 0;
+    }
+
+    // Followers' spare room below which even the main's minimum reservation is dropped.
+    internal const double MinimumFollowerHeadroom = 1.2;
+
+    // Cores only come back to the main once a bigger reservation has stayed possible this long. Giving cores up is
+    // immediate. (1.0.126 used a stricter regrow threshold instead, which could leave the main stuck on one core.)
+    internal static readonly TimeSpan RegrowAfter = TimeSpan.FromSeconds(60);
+
+    /// <summary>Applies the regrow delay to a target core count. <paramref name="regrowSince"/> is caller state.</summary>
+    public static int WithRegrowDelay(int target, int? previous, DateTime nowUtc, ref DateTime? regrowSince)
+    {
+        if (previous is not int current || target <= current)
+        {
+            regrowSince = null;
+            return target;
+        }
+        regrowSince ??= nowUtc;
+        return nowUtc - regrowSince.Value >= RegrowAfter ? target : current;
     }
 
     private static int MaxMainCores(CpuTopology topology, double neededForFollowers)
@@ -90,7 +117,7 @@ internal static class CpuPlacementPlanner
     /// placement flip back and forth. Pass the returned state back in on the next call.
     /// </summary>
     public static Dictionary<int, long> Plan(CpuTopology topology, CpuPlacementMode mode, IReadOnlyList<int> clientIds, int? mainId,
-        double? followerLoad, PlacementState? previous, out PlacementState used)
+        double? followerLoad, PlacementState? previous, out PlacementState used, double? mainLoad = null, int? mainCores = null)
     {
         used = new PlacementState(null, false);
         var plan = new Dictionary<int, long>();
@@ -129,7 +156,7 @@ internal static class CpuPlacementPlanner
         }
         if (hasMain)
         {
-            var count = MainCoreCount(topology, clientIds.Count - 1, followerLoad, previous?.MainCores);
+            var count = mainCores ?? MainCoreCount(topology, clientIds.Count - 1, followerLoad, mainLoad);
             used = new PlacementState(count, false);
             var reserved = remaining[0].Take(count).ToList();
             // Never leave followers with nothing.
@@ -137,6 +164,11 @@ internal static class CpuPlacementPlanner
             {
                 plan[mainId!.Value] = reserved.Aggregate(0L, (mask, core) => mask | core.Mask);
                 remaining[0].RemoveRange(0, reserved.Count);
+            }
+            else
+            {
+                // No reservation: the main shares the whole fastest CCD instead of being dealt a follower pool or lane.
+                plan[mainId!.Value] = topology.Domains[0].Mask;
             }
         }
 

@@ -206,7 +206,8 @@ internal sealed class PlacementTest
     // 3: the test now uses the configured main (1.0.120/121 measured without it when no window had been clicked).
     // 4: windows timed from their own sample, starved/impossible runs rejected (a 1.0.122 run stored garbage).
     // 5: outside-load check and ties keep the default (a 1.0.125 run during a background analysis stored "No pinning").
-    public const int ScoringVersion = 5;
+    // 6: main-core reservation rules changed in 1.0.128 (floor of 2 cores, regrow after a minute).
+    public const int ScoringVersion = 6;
 
     // The game's own 60 fps limiter delivers ~58.0-58.2, so a 2 FPS slack put clients on the threshold and 0.1 FPS of
     // noise decided the winner (seen on a 9800X3D). 3 FPS matches "at cap" everywhere else in the Optimizer.
