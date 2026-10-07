@@ -451,7 +451,7 @@ internal sealed class OptimizerMonitorForm : Form
         if (!force && (moveOrResizeActive || WindowState == FormWindowState.Minimized || IsEditorActive())) return;
 
         var now = DateTime.UtcNow;
-        if (!force && now - lastPeriodicRefreshUtc < TimeSpan.FromMilliseconds(1500)) return;
+        if (!force && now - lastPeriodicRefreshUtc < TimeSpan.FromMilliseconds(2000)) return;
 
         refreshQueued = true;
         try

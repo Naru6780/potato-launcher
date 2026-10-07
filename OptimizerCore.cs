@@ -95,6 +95,8 @@ internal sealed class OptimizerSettings
     public ProcessPriorityClass BackgroundClientPriority { get; set; } = ProcessPriorityClass.Normal;
     public bool PreventWindowsThrottling { get; set; } = true;
     public bool LowMemoryPriorityForBackground { get; set; } = true;
+    // Minimized clients stop presenting and spin far above their cap; coarsen their timer while minimized.
+    public bool LimitMinimizedClients { get; set; } = true;
     // The frame cap every client should hold; used for "at cap" status and the capacity estimate.
     public int TargetFps { get; set; } = 60;
     public int MemoryPressureStartPercent { get; set; } = 85;
@@ -525,7 +527,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         {
             var start = SafeStartTime(client);
             var role = activeClientIds.Contains(client.Id) ? ClientRole.Active : ClientRole.Background;
-            var desired = ClientPolicy.Desired(role, Settings);
+            var desired = ClientPolicy.Desired(role, Settings, ClientPolicyNative.IsMinimized(client));
             var changed = !appliedPolicies.TryGetValue(client.Id, out var applied) || applied.Start != start || applied.State != desired;
             ClientPolicyNative.Apply(client, desired, changed);
             if (changed)
@@ -1603,13 +1605,26 @@ internal sealed class GpuUsageSampler : IDisposable
     public bool IsAvailable { get; private set; }
     public string LastError { get; private set; } = "";
 
+    private IReadOnlyDictionary<int, double> cachedUsage = new Dictionary<int, double>();
+    private DateTime cachedUsageUtc = DateTime.MinValue;
+    private HashSet<int> cachedFor = [];
+
     public IReadOnlyDictionary<int, double> GetUsageByProcessId(IEnumerable<int> processIds)
     {
         var wanted = processIds.ToHashSet();
+        // Per-client GPU % is display-only; sampling it more than every 3 s costs more CPU than it is worth.
+        if (DateTime.UtcNow - cachedUsageUtc < TimeSpan.FromSeconds(3) && wanted.SetEquals(cachedFor)) return cachedUsage;
+        cachedUsage = Sample(wanted);
+        cachedUsageUtc = DateTime.UtcNow;
+        cachedFor = wanted;
+        return cachedUsage;
+    }
 
+    private IReadOnlyDictionary<int, double> Sample(HashSet<int> wanted)
+    {
         try
         {
-            RefreshCountersIfNeeded();
+            RefreshCountersIfNeeded(wanted);
             var usage = new Dictionary<int, double>();
             var total = 0d;
             foreach (var (instance, counter) in countersByInstance.ToList())
@@ -1655,14 +1670,18 @@ internal sealed class GpuUsageSampler : IDisposable
         return lastTotalUsage;
     }
 
-    private void RefreshCountersIfNeeded()
+    private void RefreshCountersIfNeeded(HashSet<int> wanted)
     {
         if ((DateTime.UtcNow - lastRefreshUtc).TotalSeconds < 10) return;
         lastRefreshUtc = DateTime.UtcNow;
 
+        // With the driver providing the system total (NVML), only the game clients' engines are needed: that is a
+        // handful of counters instead of one per GPU engine of every process on the PC.
+        var clientsOnly = NvidiaGpuUsage.GetUtilizationPercent().HasValue && wanted.Count > 0;
         var category = new PerformanceCounterCategory("GPU Engine");
         var instances = category.GetInstanceNames()
             .Where(name => name.Contains("engtype_3D", StringComparison.OrdinalIgnoreCase))
+            .Where(name => !clientsOnly || TryParseGpuEngineProcessId(name) is int pid && wanted.Contains(pid))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var stale in countersByInstance.Keys.Where(key => !instances.Contains(key)).ToList())

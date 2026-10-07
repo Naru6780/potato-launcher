@@ -16,6 +16,10 @@ internal static class OptimizerDiagnostics
         if (below.Count > 0)
             findings.Add($"{below.Count} client{(below.Count == 1 ? " is" : "s are")} below {targetFps} FPS: {string.Join(", ", below.Select(client => client.ClientName).Take(4))}{(below.Count > 4 ? ", …" : "")}.");
 
+        var above = clients.Where(client => client.Fps is double fps && fps > targetFps * 1.5).ToList();
+        if (above.Count > 0)
+            findings.Add($"{above.Count} client{(above.Count == 1 ? " is" : "s are")} running uncapped ({above.Max(client => client.Fps)!.Value:0} FPS), which wastes CPU and GPU. Minimized clients do this; keep \"Keep every client at its FPS cap\" on (it limits minimized clients) or restore the window.");
+
         if (DateTime.UtcNow - cache.At > TimeSpan.FromSeconds(30)) cache = (DateTime.UtcNow, SlowChecks());
         findings.AddRange(cache.Findings);
         return findings;

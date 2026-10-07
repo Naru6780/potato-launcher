@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.113 - 2026-10-07
+
+- Minimized clients no longer run uncapped. A minimized FFXIV stops presenting, so neither the display nor the GPU driver frame cap paces it: its loop spun at 240-400 iterations per second and pushed CPU and GPU to 100%. While a client is minimized, Potato now lets Windows coarsen only its timer (CPU speed is never throttled), bringing it back to about 60; restoring the window lifts it immediately. Setting: LimitMinimizedClients (on).
+- Optimizer diagnostics warn when a client runs far above the target FPS.
+- Lighter monitoring: per-client GPU usage is sampled every 3 s and, when the NVIDIA driver provides the total, only the game clients' GPU counters are read; the monitor refreshes every 2 s.
+
 ## 1.0.112 - 2026-10-07
 
 - Optimizer: system GPU load now comes from the NVIDIA driver (NVML, the same figure as nvidia-smi and vendor dashboards). The Windows 3D-engine counters it used before under-reported work such as DLSS 5 (about 70% shown while the GPU was 97% busy). Other GPUs keep the counter-based value.
