@@ -106,6 +106,29 @@ public class CpuPlacementTests
     }
 
     [Fact]
+    public void CacheCcdForMain_GivesTheMainTheWholeVCacheCcdWhileFollowersFitElsewhere()
+    {
+        var topology = R9950X3D();
+        var clients = Enumerable.Range(1, 16).ToList();
+        // His measured load: ~2.3% of 32 threads = ~0.74 thread per follower, 11 in total; fits in 16 with 25% spare.
+        var plan = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.CacheCcdForMain, clients, mainId: 1, followerLoad: 15 * 0.74);
+        Assert.Equal(0xFFFFL, plan[1]);
+        Assert.All(clients.Skip(1), id => Assert.Equal(unchecked((long)0xFFFF0000), plan[id]));
+
+        // Followers busier than the other CCD can hold: back to the main's own cores, followers on both CCDs.
+        var busy = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.CacheCcdForMain, clients, mainId: 1, followerLoad: 15 * 1.0);
+        Assert.Equal(0xFFL, busy[1]);
+        Assert.Contains(clients.Skip(1), id => busy[id] == 0xFF00L);
+
+        // One CCD (9800X3D): nothing to give, same as Main gets its own cores.
+        var single = R9800X3D();
+        var ids = Enumerable.Range(1, 8).ToList();
+        Assert.Equal(
+            CpuPlacementPlanner.Plan(single, CpuPlacementMode.ReserveMain, ids, 1, 7 * 0.5),
+            CpuPlacementPlanner.Plan(single, CpuPlacementMode.CacheCcdForMain, ids, 1, 7 * 0.5));
+    }
+
+    [Fact]
     public void WithoutAMain_FollowersStillStayInsideOneCcd()
     {
         var plan = CpuPlacementPlanner.Plan(R9950X3D(), CpuPlacementMode.ReserveMain, [1, 2, 3], mainId: null);

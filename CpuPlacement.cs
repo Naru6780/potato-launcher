@@ -8,7 +8,12 @@ internal enum CpuPlacementMode
     /// <summary>The main client gets fast cores of its own (on the 3D V-Cache CCD); each other client stays on one CCD.</summary>
     ReserveMain,
     /// <summary>Like ReserveMain, but followers are packed into two-core lanes instead of a whole CCD.</summary>
-    Lanes
+    Lanes,
+    /// <summary>
+    /// Two-CCD chips only: the main gets the whole 3D V-Cache CCD so no follower shares its cache, and followers use the
+    /// other CCD(s) while they fit there. Falls back to ReserveMain when they do not.
+    /// </summary>
+    CacheCcdForMain
 }
 
 /// <summary>The user's choice. Auto uses the measured winner of "Test placements", or a topology-based default.</summary>
@@ -17,7 +22,8 @@ internal enum CpuPlacementSetting
     Auto,
     Off,
     ReserveMain,
-    Lanes
+    Lanes,
+    CacheCcdForMain
 }
 
 internal static class CpuPlacementPlanner
@@ -68,6 +74,25 @@ internal static class CpuPlacementPlanner
         // Cores left for followers, per cache domain.
         var remaining = topology.Domains.Select(domain => domain.Cores.ToList()).ToList();
         var hasMain = mainId is int main && clientIds.Contains(main);
+        if (mode == CpuPlacementMode.CacheCcdForMain)
+        {
+            if (hasMain && FollowersFitOutsideCacheCcd(topology, clientIds.Count - 1, followerLoad))
+            {
+                plan[mainId!.Value] = topology.Domains[0].Mask;
+                var others = topology.Domains.Skip(1).Select(domain => domain.Mask).ToList();
+                var load = new int[others.Count];
+                foreach (var id in clientIds.Where(id => id != mainId))
+                {
+                    var best = 0;
+                    for (var index = 1; index < others.Count; index++)
+                        if ((load[index] + 1d) / Threads(others[index]) < (load[best] + 1d) / Threads(others[best])) best = index;
+                    plan[id] = others[best];
+                    load[best]++;
+                }
+                return plan;
+            }
+            mode = CpuPlacementMode.ReserveMain;
+        }
         if (hasMain)
         {
             var reserved = remaining[0].Take(MainCoreCount(topology, clientIds.Count - 1, followerLoad)).ToList();
@@ -111,6 +136,18 @@ internal static class CpuPlacementPlanner
             assigned[best]++;
         }
         return plan;
+    }
+
+    // The followers' measured load must fit in the non-cache CCD(s) with 25% to spare. Re-checked every second, so a
+    // crowded area moves them back to ReserveMain on its own. Looser than the 1.5x used to size the main's share,
+    // because Test placements verifies FPS before Auto ever picks this mode.
+    internal const double CacheCcdHeadroom = 1.25;
+
+    internal static bool FollowersFitOutsideCacheCcd(CpuTopology topology, int followers, double? followerLoad)
+    {
+        if (topology.Domains.Count < 2 || followers == 0) return false;
+        var outside = topology.Domains.Skip(1).Sum(domain => domain.LogicalCount);
+        return (followerLoad ?? followers * UnmeasuredFollowerLoad) * CacheCcdHeadroom <= outside;
     }
 
     private static int Threads(long mask) => Math.Max(1, System.Numerics.BitOperations.PopCount(unchecked((ulong)mask)));

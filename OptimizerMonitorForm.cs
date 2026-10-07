@@ -26,7 +26,7 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly Button placementTestButton = new NewsPillButton();
     private readonly ComboBox placementMode = new();
     private readonly Label placementLabel = new();
-    private static readonly string[] PlacementChoices = ["Auto (measured best)", "No pinning", "Main gets its own cores", "Two-core lanes"];
+    private static readonly string[] PlacementChoices = ["Auto (measured best)", "No pinning", "Main gets its own cores", "Two-core lanes", "Main gets the cache CCD (2-CCD CPUs)"];
     private bool refreshing;
     private bool refreshQueued;
     private bool moveOrResizeActive;

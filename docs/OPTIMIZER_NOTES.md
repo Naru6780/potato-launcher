@@ -36,6 +36,14 @@ Windows 11 build 26200, FFXIV build hash 5BBC501D… (see `ExternalGameState.Sup
   `tests/.../LiveMeasurementHarness.cs` runs the same test from the command line (POTATO_HARNESS=placement).
 - Process Lasso's ProBalance demotes the busiest client (the main): Potato now counts priority/affinity changes made by
   other programs and reports them.
+- 9950X3D, 16 clients (user's friend, 1.0.121 test, no main reserved because of the test bug fixed in 1.0.122):
+  no pinning 65.1% total CPU (clients 53.5%), 15/16 at target, lowest 54; main gets its own cores 53.9% (43.1%),
+  16/16, lowest 57; two-core lanes 51.1% (41.1%), 16/16, lowest 57. Pinning matters far more on two CCDs.
+  With lanes live, his main rose from 46 to 56 FPS while 6 followers still shared its V-Cache CCD; 1.0.122 adds
+  "Main gets the cache CCD" to test giving the main that whole CCD.
+- Render-cut followers (Master of Puppets) and NoNPC: followers use ~0.3% GPU and ~0.4 thread each on the 9800X3D.
+  Plugin code hooked on the game's frame runs on the game's main thread, so per-thread start-address attribution
+  counts it as "game": Dalamud's own threads (~4%) are not the whole plugin cost.
 - A client carrying the DLSS 5 loader with the in-game 60 limit holds ~49 in every placement: it is the loader's
   per-frame cost, not CPU contention.
 - An "FPS rescue" priority loop: zero-sum when the CPU is saturated.

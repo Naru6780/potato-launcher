@@ -1,0 +1,5 @@
+# Potato Launcher v1.0.122 — placement test uses your main, new cache-CCD option
+
+- Fixed: Test placements took the last clicked window as the main and ignored the main client set in the Optimizer. When no FFXIV window had been clicked since Potato started, it measured every placement without reserving anything for the main. It now uses the same main as live placement, so it measures exactly what Auto then applies. Earlier results are discarded.
+- New placement for two-CCD CPUs (9950X3D, 7950X3D): **Main gets the cache CCD**. The main gets the whole 3D V-Cache CCD so no follower shares its cache, and the followers run on the other CCD while their measured load fits there with 25% to spare. When it does not fit, for example in a crowded area, it falls back to "Main gets its own cores" by itself. Test placements tries it automatically on those CPUs.
+- Measured on a 9950X3D with 16 clients (1.0.121 test): no pinning 65.1% total CPU with one client at 54 FPS; two-core lanes 51.1% with all 16 at target.

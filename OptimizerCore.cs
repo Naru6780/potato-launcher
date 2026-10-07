@@ -276,6 +276,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private bool memoryPressureActive;
     private readonly Dictionary<int, (DateTime Start, long Mask)> placedMasks = [];
     private int? stickyMainId;
+    private int? livePlacementMainId;
     private readonly Dictionary<int, (DateTime At, TimeSpan Cpu)> placementLoad = [];
     private readonly Dictionary<int, double> clientLoad = [];
     private double? followerLoad;
@@ -439,6 +440,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
             CpuPlacementSetting.Off => CpuPlacementMode.Off,
             CpuPlacementSetting.ReserveMain => CpuPlacementMode.ReserveMain,
             CpuPlacementSetting.Lanes => CpuPlacementMode.Lanes,
+            CpuPlacementSetting.CacheCcdForMain => CpuPlacementMode.CacheCcdForMain,
             _ => Settings.TestedPlacement is CpuPlacementMode tested && Settings.TestedPlacementTopology == MeasuredKey
                 ? tested
                 : CpuPlacementPlanner.DefaultFor(Topology)
@@ -481,10 +483,11 @@ internal sealed class IntegratedOptimizerService : IDisposable
         if (PlacementTestRunning) return "A placement test is already running.";
         if (!Topology.IsSupported) return "This CPU's core layout cannot be read, so placement is not available.";
         if (latestFps.Count < 2) return "Start at least two clients and log them in first: Potato needs to read their FPS.";
-        var main = stickyMainId ?? lastForegroundClientId;
-        placementTest = new PlacementTest(
-            [CpuPlacementMode.Off, CpuPlacementMode.ReserveMain, CpuPlacementMode.Lanes],
-            rounds: 2, TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(20), Settings.TargetFps, main);
+        // Same main as live placement (configured main first), so the test measures what Auto will then apply.
+        var main = livePlacementMainId ?? stickyMainId ?? lastForegroundClientId;
+        List<CpuPlacementMode> modes = [CpuPlacementMode.Off, CpuPlacementMode.ReserveMain, CpuPlacementMode.Lanes];
+        if (Topology.Domains.Count > 1) modes.Add(CpuPlacementMode.CacheCcdForMain);
+        placementTest = new PlacementTest(modes, rounds: 2, TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(20), Settings.TargetFps, main);
         LogDecision($"Placement test started (main PID {main?.ToString() ?? "none"}).");
         return null;
     }
@@ -524,8 +527,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
         }
 
         // The main is your configured main client if one runs, otherwise the FFXIV window you used last.
-        var mainId = placementTest is { Done: false } running ? running.MainId
-            : mainSelection.CandidateClientIds.Count > 0 ? mainSelection.ActiveMainClientIds.FirstOrDefault() : stickyMainId;
+        livePlacementMainId = mainSelection.CandidateClientIds.Count > 0 ? mainSelection.ActiveMainClientIds.FirstOrDefault() : stickyMainId;
+        var mainId = placementTest is { Done: false } running ? running.MainId : livePlacementMainId;
         var topology = Topology;
         var mode = EffectivePlacement;
         UpdateFollowerLoad(clients, mainId);

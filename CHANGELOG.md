@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.122 - 2026-10-07
+
+- Fixed Test placements ignoring the main client set in the Optimizer (it used the last clicked window, or no main at all). It now measures with the same main as live placement. Earlier results are discarded.
+- New placement for two-CCD CPUs: **Main gets the cache CCD**. The main gets the whole V-Cache CCD and followers run on the other CCD while their measured load fits there with 25% spare, otherwise it falls back to Main gets its own cores. Test placements includes it on those CPUs.
+- Measured on a 9950X3D with 16 clients: no pinning 65.1% total CPU (one client at 54 FPS), two-core lanes 51.1% (all 16 at target).
 
 ## 1.0.121 - 2026-10-07
 
