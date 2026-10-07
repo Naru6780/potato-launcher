@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.111 - 2026-10-07
+
+- Optimizer window redesigned around one goal: every client at its frame cap, as many clients as the PC can hold.
+  - **Live FPS per client**, read out-of-process and read-only from the game's frame counter (same pinned-build approach as the readiness detector; no injection, no admin). Green at cap, red below.
+  - Headline: clients, how many are at the target FPS, system CPU / GPU / RAM.
+  - **Capacity estimate**: how many more clients fit and what runs out first (CPU, RAM in use, or RAM + pagefile commit), from the median cost of the running clients.
+  - **Diagnostics**: clients below the target, Process Lasso ProBalance demoting clients, Dalamud plugin collections loaded in every client.
+  - **Target FPS** setting (default 60). Roles shown as Playing / Main / Background. RAM shown as "in use" and "committed".
+  - CPU lanes are now labelled advanced and their controls are greyed out while off; PID/Threads columns hidden, affinity columns shown only with lanes on.
+
 ## 1.0.110 - 2026-10-07
 
 - Optimizer: new **Keep every client at its FPS cap** policy (on by default, toggle in the Optimizer window header), independent of CPU affinity:

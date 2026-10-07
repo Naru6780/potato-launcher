@@ -12,6 +12,43 @@ namespace PotatoLauncher;
 
 internal enum WorldReadiness { Unknown, NotInWorld, Loading, InWorld }
 
+internal sealed record FrameSample(uint FrameCounter, float? GameFrameRate, DateTime TakenUtc);
+
+// Turns two frame-counter samples into a real FPS (frames actually completed over wall time). The game's own
+// FrameRate is smoothed, so it is only a fallback until a second sample exists.
+internal sealed class ClientFpsTracker
+{
+    private readonly Dictionary<int, FrameSample> previous = [];
+    private readonly Dictionary<int, double> latest = [];
+
+    public double? Update(int processId, FrameSample? sample)
+    {
+        if (sample is null) { previous.Remove(processId); latest.Remove(processId); return null; }
+        if (previous.TryGetValue(processId, out var last))
+        {
+            var seconds = (sample.TakenUtc - last.TakenUtc).TotalSeconds;
+            if (seconds >= 0.5)
+            {
+                var frames = unchecked(sample.FrameCounter - last.FrameCounter);
+                if (frames < 100_000) latest[processId] = Math.Round(frames / seconds, 1);
+                previous[processId] = sample;
+            }
+        }
+        else
+        {
+            previous[processId] = sample;
+            if (sample.GameFrameRate is float rate) latest[processId] = Math.Round(rate, 1);
+        }
+        return latest.TryGetValue(processId, out var fps) ? fps : null;
+    }
+
+    public void Forget(IEnumerable<int> aliveProcessIds)
+    {
+        var alive = aliveProcessIds.ToHashSet();
+        foreach (var id in previous.Keys.Where(id => !alive.Contains(id)).ToList()) { previous.Remove(id); latest.Remove(id); }
+    }
+}
+
 internal sealed record ExternalGameSnapshot(WorldReadiness State, string Detail,
     string CharacterName = "", ulong ContentId = 0, uint TerritoryId = 0, ushort HomeWorld = 0);
 
@@ -21,7 +58,45 @@ internal sealed class ExternalGameState
     // Deliberately pinned: never apply an old struct layout to a newly patched executable.
     internal const string SupportedSha256 = "5BBC501DD5C7F22FD61A11D08C25356041D878DB7CD83203ADAE393E4DFACC44";
     private static readonly ConcurrentDictionary<string, Lazy<Addresses>> Profiles = new(StringComparer.OrdinalIgnoreCase);
-    private sealed record Addresses(int PlayerState, int LocalPlayer, int GameMain, int Conditions);
+    private sealed record Addresses(int PlayerState, int LocalPlayer, int GameMain, int Conditions, int FrameworkPointer);
+    private readonly ConcurrentDictionary<int, (DateTime Start, long ModuleBase, Addresses Addresses)> frameTargets = new();
+
+    // Framework fields (FFXIVClientStructs, verified on this build): FrameCounter @0x16D0 (uint), FrameRate @0x17CC (float).
+    private const int FrameworkBlockOffset = 0x16C0;
+    private const int FrameworkBlockSize = 0x11C;
+
+    /// <summary>Frame counter and the game's own (smoothed) frame rate. Read-only; null when unavailable.</summary>
+    public FrameSample? ReadFrame(int processId, DateTime expectedStartUtc)
+    {
+        try
+        {
+            if (!frameTargets.TryGetValue(processId, out var target) || target.Start != expectedStartUtc)
+            {
+                using var process = Process.GetProcessById(processId);
+                if (process.ProcessName != "ffxiv_dx11" || process.StartTime.ToUniversalTime() != expectedStartUtc || process.HasExited) return null;
+                var module = process.MainModule ?? throw new IOException("Game module is unavailable.");
+                var file = new FileInfo(module.FileName);
+                var key = $"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+                target = (expectedStartUtc, module.BaseAddress.ToInt64(), Profiles.GetOrAdd(key, _ => new(() => Resolve(file.FullName))).Value);
+                frameTargets[processId] = target;
+            }
+            using var handle = OpenProcess(0x0010 | 0x1000, false, processId);
+            if (handle.IsInvalid) return null;
+            GameProcessIdentity.Verify(handle, expectedStartUtc);
+            var framework = BinaryPrimitives.ReadInt64LittleEndian(ReadBytes(handle, target.ModuleBase + target.Addresses.FrameworkPointer, 8));
+            if (framework < 0x10000 || framework > 0x00007FFFFFFFFFFF) return null;
+            var block = ReadBytes(handle, framework + FrameworkBlockOffset, FrameworkBlockSize);
+            var counter = BinaryPrimitives.ReadUInt32LittleEndian(block.AsSpan(0x16D0 - FrameworkBlockOffset));
+            var rate = BinaryPrimitives.ReadSingleLittleEndian(block.AsSpan(0x17CC - FrameworkBlockOffset));
+            return new FrameSample(counter, float.IsFinite(rate) && rate is > 0 and <= 1000 ? rate : null, DateTime.UtcNow);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or
+                                   System.ComponentModel.Win32Exception or UnauthorizedAccessException or NotSupportedException)
+        {
+            frameTargets.TryRemove(processId, out _);
+            return null;
+        }
+    }
 
     public ExternalGameSnapshot Read(int processId, DateTime expectedStartUtc)
     {
@@ -108,7 +183,9 @@ internal sealed class ExternalGameState
         }
         return new(Find("48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 75 06 F6 43 18 02"),
             Find("48 8B 2D ?? ?? ?? ?? 75"), Find("48 8D 0D ?? ?? ?? ?? 0F 28 F2 48 89 44 24 ??"),
-            Find("48 8D 0D ?? ?? ?? ?? 66 2B D8"));
+            Find("48 8D 0D ?? ?? ?? ?? 66 2B D8"),
+            // mov rbx, [rip+rel32]: the static holds a Framework* (one dereference).
+            Find("48 8B 1D ?? ?? ?? ?? 8B 7C 24"));
     }
 
     internal static int FindUnique(byte[] data, string pattern)

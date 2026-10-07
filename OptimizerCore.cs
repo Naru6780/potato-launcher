@@ -95,6 +95,8 @@ internal sealed class OptimizerSettings
     public ProcessPriorityClass BackgroundClientPriority { get; set; } = ProcessPriorityClass.Normal;
     public bool PreventWindowsThrottling { get; set; } = true;
     public bool LowMemoryPriorityForBackground { get; set; } = true;
+    // The frame cap every client should hold; used for "at cap" status and the capacity estimate.
+    public int TargetFps { get; set; } = 60;
     public int MemoryPressureStartPercent { get; set; } = 85;
     public int MemoryPressureStopPercent { get; set; } = 75;
     public int CriticalAvailableMemoryMB { get; set; } = 4096;
@@ -251,6 +253,7 @@ internal sealed class OptimizerSettings
         // Never High/RealTime (can starve input, audio and the OS) and never Idle (starves the game's network thread).
         ActiveClientPriority = ClampClientPriority(ActiveClientPriority, ProcessPriorityClass.AboveNormal);
         BackgroundClientPriority = ClampClientPriority(BackgroundClientPriority, ProcessPriorityClass.Normal);
+        TargetFps = Math.Clamp(TargetFps, 15, 360);
 
         ManualMainClientIds = (ManualMainClientIds ?? []).Where(id => id > 0).Distinct().ToList();
         var normalizedMainReservations = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -308,7 +311,9 @@ internal sealed record OptimizerClientSnapshot(
     long? AffinityMask,
     long? PlannedAffinityMask,
     bool IsRescued,
-    DateTime? LastTrimUtc);
+    DateTime? LastTrimUtc,
+    double? Fps = null,
+    string Role = "");
 
 internal sealed record SystemMetricsSnapshot(
     double CpuPercent,
@@ -316,7 +321,9 @@ internal sealed record SystemMetricsSnapshot(
     long UsedMemoryBytes,
     long TotalMemoryBytes,
     long AvailableMemoryBytes,
-    bool MemoryPressureActive);
+    bool MemoryPressureActive,
+    long CommitLimitBytes = 0,
+    long CommitAvailableBytes = 0);
 
 internal sealed class OptimizerAlertEventArgs(string message) : EventArgs
 {
@@ -333,6 +340,10 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly Dictionary<int, DateTime> unresponsiveSinceByClientId = [];
     private readonly Dictionary<int, DateTime> rescueUntilByClientId = [];
     private readonly Dictionary<int, (DateTime Start, ClientPolicyState State)> appliedPolicies = [];
+    private readonly ExternalGameState frameReader = new();
+    private readonly ClientFpsTracker fpsTracker = new();
+    private readonly Dictionary<int, double> latestFps = [];
+    private int? lastForegroundClientId;
     private readonly HashSet<int> unresponsiveNotificationsSent = [];
     private readonly GpuUsageSampler gpuSampler = new();
     private readonly SystemUsageSampler systemSampler = new();
@@ -480,10 +491,14 @@ internal sealed class IntegratedOptimizerService : IDisposable
                 ApplyCpuLanes(clients);
             }
 
+            var clientIds = clients.Select(client => client.Id).ToList();
+            var foreground = ClientPolicyNative.ForegroundProcessId();
+            lastForegroundClientId = foreground is int pid && clientIds.Contains(pid) ? pid : null;
+            SampleFrameRates(clients);
             var activeClientIds = ClientPolicy.ActiveClientIds(
-                clients.Select(client => client.Id).ToList(),
+                clientIds,
                 mainSelection.CandidateClientIds,
-                ClientPolicyNative.ForegroundProcessId(),
+                foreground,
                 Settings.FollowForegroundClient);
             if (Settings.ClientPolicyEnabled)
             {
@@ -667,7 +682,29 @@ internal sealed class IntegratedOptimizerService : IDisposable
             SafeAffinityMask(client),
             plannedAffinitiesByClientId.GetValueOrDefault(client.Id) is var plannedMask && plannedMask != 0 ? plannedMask : null,
             rescueUntilByClientId.ContainsKey(client.Id),
-            lastTrimByClientId.TryGetValue(client.Id, out var lastTrimUtc) ? lastTrimUtc : null);
+            lastTrimByClientId.TryGetValue(client.Id, out var lastTrimUtc) ? lastTrimUtc : null,
+            latestFps.TryGetValue(client.Id, out var fps) ? fps : null,
+            client.Id == lastForegroundClientId ? "Playing" : mainSelection.CandidateClientIds.Contains(client.Id) ? "Main" : "Background");
+    }
+
+    public CapacityEstimate EstimateCapacity(IReadOnlyList<OptimizerClientSnapshot> snapshots, SystemMetricsSnapshot system) =>
+        CapacityPlanner.Estimate(
+            snapshots.Select(snapshot => new CapacityClientSample(snapshot.CpuPercent, snapshot.WorkingSetBytes, snapshot.PrivateBytes, snapshot.Fps)).ToList(),
+            system.CpuPercent, system.AvailableMemoryBytes, system.CommitAvailableBytes, Settings.TargetFps);
+
+    private void SampleFrameRates(IReadOnlyList<Process> clients)
+    {
+        foreach (var client in clients)
+        {
+            DateTime start;
+            try { start = client.StartTime.ToUniversalTime(); } catch { continue; }
+            var fps = fpsTracker.Update(client.Id, frameReader.ReadFrame(client.Id, start));
+            if (fps.HasValue) latestFps[client.Id] = fps.Value;
+            else latestFps.Remove(client.Id);
+        }
+        var alive = clients.Select(client => client.Id).ToList();
+        fpsTracker.Forget(alive);
+        foreach (var gone in latestFps.Keys.Except(alive).ToList()) latestFps.Remove(gone);
     }
 
     private void RefreshPlannedAssignments(IReadOnlyList<Process> clients, IReadOnlySet<int> mainClientIds)
@@ -949,7 +986,9 @@ internal sealed class SystemUsageSampler : IDisposable
             Math.Max(0, (long)(memory.TotalPhysical - memory.AvailablePhysical)),
             Math.Max(0, (long)memory.TotalPhysical),
             Math.Max(0, (long)memory.AvailablePhysical),
-            false);
+            false,
+            Math.Max(0, (long)memory.CommitLimit),
+            Math.Max(0, (long)memory.CommitAvailable));
     }
 
     private double GetCpuPercent()
@@ -1517,8 +1556,8 @@ internal static class NativeMethods
         var status = new MemoryStatusEx();
         status.Length = (uint)Marshal.SizeOf<MemoryStatusEx>();
         return GlobalMemoryStatusEx(ref status)
-            ? new MemoryStatus(status.TotalPhysical, status.AvailablePhysical)
-            : new MemoryStatus(0, 0);
+            ? new MemoryStatus(status.TotalPhysical, status.AvailablePhysical, status.TotalPageFile, status.AvailablePageFile)
+            : new MemoryStatus(0, 0, 0, 0);
     }
 
     public static bool IsWindowHung(IntPtr windowHandle)
@@ -1526,7 +1565,8 @@ internal static class NativeMethods
         try { return windowHandle != IntPtr.Zero && IsHungAppWindow(windowHandle); } catch { return false; }
     }
 
-    public readonly record struct MemoryStatus(ulong TotalPhysical, ulong AvailablePhysical);
+    // TotalPageFile/AvailablePageFile are the system commit limit/available commit (RAM + pagefile).
+    public readonly record struct MemoryStatus(ulong TotalPhysical, ulong AvailablePhysical, ulong CommitLimit, ulong CommitAvailable);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MemoryStatusEx
