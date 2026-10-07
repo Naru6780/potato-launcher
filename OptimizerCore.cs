@@ -99,6 +99,8 @@ internal sealed class OptimizerSettings
     public bool LimitMinimizedClients { get; set; } = true;
     // The frame cap every client should hold; used for "at cap" status and the capacity estimate.
     public int TargetFps { get; set; } = 60;
+    // Set the game's own frame limiter (FFXIV.cfg "Fps") to the option matching TargetFps before every launch.
+    public bool EnforceInGameFrameLimit { get; set; } = true;
     public int MemoryPressureStartPercent { get; set; } = 85;
     public int MemoryPressureStopPercent { get; set; } = 75;
     public int CriticalAvailableMemoryMB { get; set; } = 4096;
@@ -315,7 +317,8 @@ internal sealed record OptimizerClientSnapshot(
     bool IsRescued,
     DateTime? LastTrimUtc,
     double? Fps = null,
-    string Role = "");
+    string Role = "",
+    short? EngineFrameLimit = null);
 
 internal sealed record SystemMetricsSnapshot(
     double CpuPercent,
@@ -346,6 +349,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly ClientFpsTracker fpsTracker = new();
     private readonly MinimizedClientLimiter minimizedLimiter = new();
     private readonly Dictionary<int, double> latestFps = [];
+    private readonly Dictionary<int, short> latestEngineLimit = [];
     private int? lastForegroundClientId;
     private readonly HashSet<int> unresponsiveNotificationsSent = [];
     private readonly GpuUsageSampler gpuSampler = new();
@@ -557,7 +561,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         {
             DateTime start;
             try { start = client.StartTime.ToUniversalTime(); } catch { continue; }
-            minimizedLimiter.Update(client.Id, start, ClientPolicyNative.IsMinimized(client),
+            minimizedLimiter.Update(client.Id, start, ClientPolicyNative.IsMinimized(client) && !HasEngineFrameLimit(client.Id),
                 latestFps.TryGetValue(client.Id, out var fps) ? fps : null, Settings.TargetFps);
         }
         minimizedLimiter.Forget(clients.Select(client => client.Id));
@@ -702,7 +706,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
             rescueUntilByClientId.ContainsKey(client.Id),
             lastTrimByClientId.TryGetValue(client.Id, out var lastTrimUtc) ? lastTrimUtc : null,
             latestFps.TryGetValue(client.Id, out var fps) ? fps : null,
-            client.Id == lastForegroundClientId ? "Playing" : mainSelection.CandidateClientIds.Contains(client.Id) ? "Main" : "Background");
+            client.Id == lastForegroundClientId ? "Playing" : mainSelection.CandidateClientIds.Contains(client.Id) ? "Main" : "Background",
+            latestEngineLimit.TryGetValue(client.Id, out var engineLimit) ? engineLimit : null);
     }
 
     public CapacityEstimate EstimateCapacity(IReadOnlyList<OptimizerClientSnapshot> snapshots, SystemMetricsSnapshot system) =>
@@ -716,14 +721,21 @@ internal sealed class IntegratedOptimizerService : IDisposable
         {
             DateTime start;
             try { start = client.StartTime.ToUniversalTime(); } catch { continue; }
-            var fps = fpsTracker.Update(client.Id, frameReader.ReadFrame(client.Id, start));
+            var sample = frameReader.ReadFrame(client.Id, start);
+            var fps = fpsTracker.Update(client.Id, sample);
             if (fps.HasValue) latestFps[client.Id] = fps.Value;
             else latestFps.Remove(client.Id);
+            if (sample?.EngineFrameLimit is short limit) latestEngineLimit[client.Id] = limit;
+            else latestEngineLimit.Remove(client.Id);
         }
         var alive = clients.Select(client => client.Id).ToList();
         fpsTracker.Forget(alive);
         foreach (var gone in latestFps.Keys.Except(alive).ToList()) latestFps.Remove(gone);
+        foreach (var gone in latestEngineLimit.Keys.Except(alive).ToList()) latestEngineLimit.Remove(gone);
     }
+
+    // The game's own limiter holds while minimized; only clients without one need the CPU-cap governor.
+    private bool HasEngineFrameLimit(int processId) => latestEngineLimit.TryGetValue(processId, out var limit) && limit > 0;
 
     private void RefreshPlannedAssignments(IReadOnlyList<Process> clients, IReadOnlySet<int> mainClientIds)
     {

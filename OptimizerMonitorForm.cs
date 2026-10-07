@@ -14,6 +14,7 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly CheckBox trimEnabled = new();
     private readonly CheckBox clientPolicyEnabled = new();
     private readonly NumericUpDown targetFps = new();
+    private readonly CheckBox enforceFrameLimit = new();
     private readonly ToolTip toolTip = new();
     private readonly ComboBox trimMode = new();
     private readonly ComboBox cpuOperationMode = new();
@@ -224,6 +225,7 @@ internal sealed class OptimizerMonitorForm : Form
         grid.MultiSelect = false;
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Client", HeaderText = "Client", ReadOnly = true, FillWeight = 175 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Fps", HeaderText = "FPS", ReadOnly = true, FillWeight = 60 });
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Cap", HeaderText = "Cap", ReadOnly = true, FillWeight = 80 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Role", HeaderText = "Role", ReadOnly = true, FillWeight = 78 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Pid", HeaderText = "PID", ReadOnly = true, FillWeight = 60, Visible = false });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Cpu", HeaderText = "CPU", ReadOnly = true, FillWeight = 70 });
@@ -326,6 +328,19 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.SaveSettings();
         };
         controlGrid.Controls.Add(Field("Target FPS (every client)", targetFps), 3, 2);
+        enforceFrameLimit.Text = "Set it in-game at each launch";
+        enforceFrameLimit.AutoSize = true;
+        enforceFrameLimit.BackColor = Color.Transparent;
+        toolTip.SetToolTip(enforceFrameLimit,
+            "Before each launch, sets FFXIV's own Frame Rate limit (FFXIV.cfg) to the option matching the target.\n" +
+            "The game's limiter is the only cap that holds while a window is covered or minimized.\nRunning clients pick it up when relaunched.");
+        enforceFrameLimit.CheckedChanged += (_, _) =>
+        {
+            if (refreshing) return;
+            optimizer.Settings.EnforceInGameFrameLimit = enforceFrameLimit.Checked;
+            optimizer.SaveSettings();
+        };
+        controlGrid.Controls.Add(Field("In-game frame limit", enforceFrameLimit), 4, 2);
         controlGrid.Controls.Add(mainClientsLabel, 0, 3);
         controlGrid.SetColumnSpan(mainClientsLabel, 2);
 
@@ -507,6 +522,7 @@ internal sealed class OptimizerMonitorForm : Form
             SetStepperValueIfIdle(reservedProcessors, settings.SystemReservedLogicalProcessors);
             SetStepperValueIfIdle(trimTrigger, settings.TrimTriggerMBPerClient);
             SetStepperValueIfIdle(targetFps, settings.TargetFps);
+            enforceFrameLimit.Checked = settings.EnforceInGameFrameLimit;
 
             var snapshots = optimizer.GetSnapshots();
             UpdateRoleControls(snapshots);
@@ -580,6 +596,11 @@ internal sealed class OptimizerMonitorForm : Form
         row.Tag = snapshot;
         SetCell(row, "Client", snapshot.ClientName);
         SetCell(row, "Fps", snapshot.Fps.HasValue ? $"{snapshot.Fps.Value:0}" : "—");
+        // The game's own limiter is the only cap that holds while covered or minimized.
+        SetCell(row, "Cap", snapshot.EngineFrameLimit switch { null => "—", 0 => "none", var limit => $"game {limit}" });
+        var capCell = row.Cells["Cap"];
+        var capColor = snapshot.EngineFrameLimit == 0 ? Color.FromArgb(240, 170, 80) : grid.DefaultCellStyle.ForeColor;
+        if (capCell.Style.ForeColor != capColor) capCell.Style.ForeColor = capColor;
         var fpsCell = row.Cells["Fps"];
         var fpsColor = snapshot.Fps is double fps
             ? fps < optimizer.Settings.TargetFps - 3 ? Color.FromArgb(232, 84, 104) : Color.FromArgb(76, 200, 130)

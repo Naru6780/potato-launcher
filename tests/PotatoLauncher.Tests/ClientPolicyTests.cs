@@ -81,6 +81,6 @@ public class MinimizedClientLimiterTests
             new(1, "A@W", "", false, false, 8, null, 0, 0, 0, 0, null, null, false, null, 244),
             new(2, "B@W", "", false, false, 3, null, 0, 0, 0, 0, null, null, false, null, 60)
         };
-        Assert.Contains(OptimizerDiagnostics.Get(clients, 60), finding => finding.StartsWith("1 client is running uncapped (244 FPS)"));
+        Assert.Contains(OptimizerDiagnostics.Get(clients, 60), finding => finding.StartsWith("1 client is running far above the target (244 FPS)"));
     }
 }

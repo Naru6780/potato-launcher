@@ -12,7 +12,9 @@ namespace PotatoLauncher;
 
 internal enum WorldReadiness { Unknown, NotInWorld, Loading, InWorld }
 
-internal sealed record FrameSample(uint FrameCounter, float? GameFrameRate, DateTime TakenUtc);
+// EngineFrameLimit: the game's own frame limiter (System Configuration > Frame Rate): 0 = none, else the cap in FPS;
+// null when it could not be read. Unlike the driver cap, it holds while the window is covered or minimized.
+internal sealed record FrameSample(uint FrameCounter, float? GameFrameRate, DateTime TakenUtc, short? EngineFrameLimit = null);
 
 // Turns two frame-counter samples into a real FPS (frames actually completed over wall time). The game's own
 // FrameRate is smoothed, so it is only a fallback until a second sample exists.
@@ -58,7 +60,7 @@ internal sealed class ExternalGameState
     // Deliberately pinned: never apply an old struct layout to a newly patched executable.
     internal const string SupportedSha256 = "5BBC501DD5C7F22FD61A11D08C25356041D878DB7CD83203ADAE393E4DFACC44";
     private static readonly ConcurrentDictionary<string, Lazy<Addresses>> Profiles = new(StringComparer.OrdinalIgnoreCase);
-    private sealed record Addresses(int PlayerState, int LocalPlayer, int GameMain, int Conditions, int FrameworkPointer);
+    private sealed record Addresses(int PlayerState, int LocalPlayer, int GameMain, int Conditions, int FrameworkPointer, int DevicePointer);
     private readonly ConcurrentDictionary<int, (DateTime Start, long ModuleBase, Addresses Addresses)> frameTargets = new();
 
     // Framework fields (FFXIVClientStructs, verified on this build): FrameCounter @0x16D0 (uint), FrameRate @0x17CC (float).
@@ -88,7 +90,15 @@ internal sealed class ExternalGameState
             var block = ReadBytes(handle, framework + FrameworkBlockOffset, FrameworkBlockSize);
             var counter = BinaryPrimitives.ReadUInt32LittleEndian(block.AsSpan(0x16D0 - FrameworkBlockOffset));
             var rate = BinaryPrimitives.ReadSingleLittleEndian(block.AsSpan(0x17CC - FrameworkBlockOffset));
-            return new FrameSample(counter, float.IsFinite(rate) && rate is > 0 and <= 1000 ? rate : null, DateTime.UtcNow);
+            short? engineLimit = null;
+            var device = BinaryPrimitives.ReadInt64LittleEndian(ReadBytes(handle, target.ModuleBase + target.Addresses.DevicePointer, 8));
+            if (device >= 0x10000 && device <= 0x00007FFFFFFFFFFF)
+            {
+                var deviceBlock = ReadBytes(handle, device + 0xA8, 8);
+                var limit = BinaryPrimitives.ReadInt16LittleEndian(deviceBlock.AsSpan(0xAE - 0xA8));
+                engineLimit = deviceBlock[0] != 0 && limit is > 0 and <= 1000 ? limit : (short)0;
+            }
+            return new FrameSample(counter, float.IsFinite(rate) && rate is > 0 and <= 1000 ? rate : null, DateTime.UtcNow, engineLimit);
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or
                                    System.ComponentModel.Win32Exception or UnauthorizedAccessException or NotSupportedException)
@@ -185,7 +195,9 @@ internal sealed class ExternalGameState
             Find("48 8B 2D ?? ?? ?? ?? 75"), Find("48 8D 0D ?? ?? ?? ?? 0F 28 F2 48 89 44 24 ??"),
             Find("48 8D 0D ?? ?? ?? ?? 66 2B D8"),
             // mov rbx, [rip+rel32]: the static holds a Framework* (one dereference).
-            Find("48 8B 1D ?? ?? ?? ?? 8B 7C 24"));
+            Find("48 8B 1D ?? ?? ?? ?? 8B 7C 24"),
+            // Kernel::Device static (Device*): IsFrameRateLimited @0xA8, FrameRateLimit @0xAE (the game's own limiter).
+            Find("48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 80 7B 08 00"));
     }
 
     internal static int FindUnique(byte[] data, string pattern)

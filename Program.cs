@@ -3986,6 +3986,11 @@ internal sealed class MainForm : Form
             SetStatus(dlss5Message, force: true);
         }
         AccountLaunchEnvironment.Apply(startInfo, AccountIconKey(account));
+        if (optimizerService.Settings.EnforceInGameFrameLimit)
+        {
+            var frameLimitMessage = FrameLimitEnforcer.Apply(optimizerService.Settings.TargetFps);
+            if (!string.IsNullOrEmpty(frameLimitMessage)) SetStatus(frameLimitMessage, force: true);
+        }
         using var launcherProcess = Process.Start(startInfo);
         var launcherProcessId = launcherProcess?.Id;
         SetStatus(IsSharedLaunchMode()

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.115 - 2026-10-07
+
+- The real reason covered and minimized clients ran hot: the NVIDIA driver frame cap only paces frames that are actually presented, so a covered window ran ~110 loops/s and a minimized one 250-400. Only the game's own limiter (System Configuration → Display → Frame Rate) sleeps inside the loop and holds in every state. Potato now sets that limiter in FFXIV.cfg before each launch to the option matching Target FPS (60 fps on this build; options are none / display refresh / 60 / 30). Running clients pick it up when relaunched. Toggle: Optimizer → "In-game frame limit".
+- Optimizer reads each client's engine frame limiter (new **Cap** column: "game 60" or "none") and warns, with the fix, when a client has no in-game limit.
+- The minimized CPU-cap governor now only acts on clients without an in-game limit.
+- Measured: covered client with the in-game limit holds 58-60 at ~2.5% CPU (was ~110 at 5-6%).
+
 ## 1.0.114 - 2026-10-07
 
 - Minimized clients really are held near 60 now. v1.0.113 coarsened their timer, which was measured to have no effect on a minimized FFXIV (it stops presenting and spins at 230-400 loops/s). Potato now puts a hard CPU-time cap on a client only while it is minimized (Windows job object) and steers it from the measured loop rate to the target FPS; restoring the window removes the cap at once. Live test with 7 minimized clients: 250-400 -> ~57-71 loops/s.
