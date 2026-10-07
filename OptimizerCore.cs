@@ -101,6 +101,8 @@ internal sealed class OptimizerSettings
     public int TargetFps { get; set; } = 60;
     // Set the game's own frame limiter (FFXIV.cfg "Fps") to the option matching TargetFps before every launch.
     public bool EnforceInGameFrameLimit { get; set; } = true;
+    // End Windows' TextInputHost when it spins (~5% CPU, harmless to restart; Windows recreates it idle).
+    public bool ResetSpinningInputHost { get; set; } = true;
     public int MemoryPressureStartPercent { get; set; } = 85;
     public int MemoryPressureStopPercent { get; set; } = 75;
     public int CriticalAvailableMemoryMB { get; set; } = 4096;
@@ -348,6 +350,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly ExternalGameState frameReader = new();
     private readonly ClientFpsTracker fpsTracker = new();
     private readonly MinimizedClientLimiter minimizedLimiter = new();
+    private readonly InputHostWatchdog inputHostWatchdog = new();
     private readonly Dictionary<int, double> latestFps = [];
     private readonly Dictionary<int, short> latestEngineLimit = [];
     private int? lastForegroundClientId;
@@ -503,6 +506,11 @@ internal sealed class IntegratedOptimizerService : IDisposable
             lastForegroundClientId = foreground is int pid && clientIds.Contains(pid) ? pid : null;
             SampleFrameRates(clients);
             if (Settings.ClientPolicyEnabled && Settings.LimitMinimizedClients) LimitMinimizedClients(clients);
+            if (Settings.ResetSpinningInputHost && clients.Count > 0)
+            {
+                var watchdogMessage = inputHostWatchdog.Tick(DateTime.UtcNow);
+                if (watchdogMessage.Length > 0) LogDecision(watchdogMessage);
+            }
             else minimizedLimiter.Dispose();
             var activeClientIds = ClientPolicy.ActiveClientIds(
                 clientIds,

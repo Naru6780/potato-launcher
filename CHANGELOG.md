@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.116 - 2026-10-07
+
+- Optimizer resets Windows' TextInputHost when it spins (it was repeatedly stuck at ~5% CPU, as much as two clients; a restart brings it to 0% and Windows recreates it on demand). Acts only after 30 s above 2%, then waits 5 minutes. Setting: resetSpinningInputHost (on).
+
 ## 1.0.115 - 2026-10-07
 
 - The real reason covered and minimized clients ran hot: the NVIDIA driver frame cap only paces frames that are actually presented, so a covered window ran ~110 loops/s and a minimized one 250-400. Only the game's own limiter (System Configuration → Display → Frame Rate) sleeps inside the loop and holds in every state. Potato now sets that limiter in FFXIV.cfg before each launch to the option matching Target FPS (60 fps on this build; options are none / display refresh / 60 / 30). Running clients pick it up when relaunched. Toggle: Optimizer → "In-game frame limit".
