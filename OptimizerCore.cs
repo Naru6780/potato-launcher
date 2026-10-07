@@ -88,6 +88,13 @@ internal sealed class OptimizerSettings
     public List<int> ManualMainClientIds { get; set; } = [];
     public Dictionary<string, int> MainReservedLogicalProcessorsByName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<MainClientRule> MainClientRules { get; set; } = [];
+    // Client policy (see ClientPolicy.cs): keeps every client at its frame cap.
+    public bool ClientPolicyEnabled { get; set; } = true;
+    public bool FollowForegroundClient { get; set; } = true;
+    public ProcessPriorityClass ActiveClientPriority { get; set; } = ProcessPriorityClass.AboveNormal;
+    public ProcessPriorityClass BackgroundClientPriority { get; set; } = ProcessPriorityClass.Normal;
+    public bool PreventWindowsThrottling { get; set; } = true;
+    public bool LowMemoryPriorityForBackground { get; set; } = true;
     public int MemoryPressureStartPercent { get; set; } = 85;
     public int MemoryPressureStopPercent { get; set; } = 75;
     public int CriticalAvailableMemoryMB { get; set; } = 4096;
@@ -223,6 +230,9 @@ internal sealed class OptimizerSettings
         Normalize(Environment.ProcessorCount);
     }
 
+    internal static ProcessPriorityClass ClampClientPriority(ProcessPriorityClass value, ProcessPriorityClass fallback) =>
+        value is ProcessPriorityClass.BelowNormal or ProcessPriorityClass.Normal or ProcessPriorityClass.AboveNormal ? value : fallback;
+
     internal void Normalize(int logicalProcessorCount)
     {
         var supportedLogicalProcessorCount = ProcessorAffinity.GetSupportedLogicalProcessorCount(logicalProcessorCount);
@@ -238,6 +248,9 @@ internal sealed class OptimizerSettings
         MemoryPressureStartPercent = Math.Clamp(MemoryPressureStartPercent, 50, 99);
         MemoryPressureStopPercent = Math.Clamp(MemoryPressureStopPercent, 25, MemoryPressureStartPercent - 1);
         CriticalAvailableMemoryMB = Math.Clamp(CriticalAvailableMemoryMB, 512, 32768);
+        // Never High/RealTime (can starve input, audio and the OS) and never Idle (starves the game's network thread).
+        ActiveClientPriority = ClampClientPriority(ActiveClientPriority, ProcessPriorityClass.AboveNormal);
+        BackgroundClientPriority = ClampClientPriority(BackgroundClientPriority, ProcessPriorityClass.Normal);
 
         ManualMainClientIds = (ManualMainClientIds ?? []).Where(id => id > 0).Distinct().ToList();
         var normalizedMainReservations = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -255,6 +268,9 @@ internal sealed class OptimizerSettings
 
         MainClientRules = (MainClientRules ?? [])
             .Where(rule => rule is not null && !string.IsNullOrWhiteSpace(NormalizeClientName(rule.ClientName)))
+            // Rules saved from a temporary "Potato Launcher — account — Loading/Client running" window title never
+            // identify a character again; drop them.
+            .Where(rule => !NormalizeClientName(rule.ClientName).StartsWith("Potato Launcher —", StringComparison.Ordinal))
             .GroupBy(rule => NormalizeClientName(rule.ClientName), StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderBy(rule => Math.Max(1, rule.Priority)).First())
             .OrderBy(rule => Math.Max(1, rule.Priority))
@@ -316,6 +332,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly Dictionary<int, long> plannedAffinitiesByClientId = [];
     private readonly Dictionary<int, DateTime> unresponsiveSinceByClientId = [];
     private readonly Dictionary<int, DateTime> rescueUntilByClientId = [];
+    private readonly Dictionary<int, (DateTime Start, ClientPolicyState State)> appliedPolicies = [];
     private readonly HashSet<int> unresponsiveNotificationsSent = [];
     private readonly GpuUsageSampler gpuSampler = new();
     private readonly SystemUsageSampler systemSampler = new();
@@ -463,12 +480,68 @@ internal sealed class IntegratedOptimizerService : IDisposable
                 ApplyCpuLanes(clients);
             }
 
+            var activeClientIds = ClientPolicy.ActiveClientIds(
+                clients.Select(client => client.Id).ToList(),
+                mainSelection.CandidateClientIds,
+                ClientPolicyNative.ForegroundProcessId(),
+                Settings.FollowForegroundClient);
+            if (Settings.ClientPolicyEnabled)
+            {
+                ApplyClientPolicy(clients, activeClientIds);
+            }
+
             if (Settings.WorkingSetTrimEnabled)
             {
-                TrimWorkingSets(clients, mainSelection.ActiveMainClientIds);
+                // Never trim the client being played or a configured main client.
+                TrimWorkingSets(clients, mainSelection.ActiveMainClientIds.Union(activeClientIds).ToHashSet());
             }
 
             Updated?.Invoke(this, EventArgs.Empty);
+        }
+        finally
+        {
+            DisposeProcesses(clients);
+        }
+    }
+
+    private void ApplyClientPolicy(IReadOnlyList<Process> clients, HashSet<int> activeClientIds)
+    {
+        foreach (var client in clients)
+        {
+            var start = SafeStartTime(client);
+            var role = activeClientIds.Contains(client.Id) ? ClientRole.Active : ClientRole.Background;
+            var desired = ClientPolicy.Desired(role, Settings);
+            var changed = !appliedPolicies.TryGetValue(client.Id, out var applied) || applied.Start != start || applied.State != desired;
+            ClientPolicyNative.Apply(client, desired, changed);
+            if (changed)
+            {
+                appliedPolicies[client.Id] = (start, desired);
+                LogDecision($"Client policy: PID {client.Id} {role} priority={desired.Priority} lowMemoryPriority={desired.LowMemoryPriority} preventThrottling={desired.PreventThrottling}");
+            }
+        }
+
+        var alive = clients.Select(client => client.Id).ToHashSet();
+        foreach (var gone in appliedPolicies.Keys.Where(id => !alive.Contains(id)).ToList()) appliedPolicies.Remove(gone);
+    }
+
+    public void SetClientPolicyEnabled(bool enabled)
+    {
+        Settings.ClientPolicyEnabled = enabled;
+        Settings.Save();
+        if (!enabled) RestoreClientPolicies();
+    }
+
+    private void RestoreClientPolicies()
+    {
+        if (appliedPolicies.Count == 0) return;
+        var clients = GetFfxivClients();
+        try
+        {
+            foreach (var client in clients.Where(client => appliedPolicies.ContainsKey(client.Id)))
+            {
+                ClientPolicyNative.Restore(client);
+            }
+            appliedPolicies.Clear();
         }
         finally
         {
@@ -784,6 +857,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
         systemSampler.Dispose();
         gpuSampler.Dispose();
         if (appliedClientScheduling) RestoreClients();
+        RestoreClientPolicies();
     }
 
     private static void DisposeProcesses(IEnumerable<Process> processes)

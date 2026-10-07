@@ -12,6 +12,7 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly Label gpuStatusLabel = new();
     private readonly CheckBox optimizerEnabled = new();
     private readonly CheckBox trimEnabled = new();
+    private readonly CheckBox clientPolicyEnabled = new();
     private readonly ToolTip toolTip = new();
     private readonly ComboBox trimMode = new();
     private readonly ComboBox cpuOperationMode = new();
@@ -116,7 +117,7 @@ internal sealed class OptimizerMonitorForm : Form
         root.Controls.Add(header, 0, 0);
         var headerLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(18, 12, 18, 12), BackColor = Color.Transparent };
         headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230));
+        headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));
         header.Controls.Add(headerLayout);
 
         var title = new Label
@@ -187,7 +188,24 @@ internal sealed class OptimizerMonitorForm : Form
         gpuStatusLabel.TextAlign = ContentAlignment.MiddleRight;
         gpuStatusLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
         gpuStatusLabel.BackColor = Color.Transparent;
-        headerLayout.Controls.Add(gpuStatusLabel, 1, 0);
+        clientPolicyEnabled.Text = "Keep every client at its FPS cap";
+        clientPolicyEnabled.Dock = DockStyle.Top;
+        clientPolicyEnabled.Height = 26;
+        clientPolicyEnabled.BackColor = Color.Transparent;
+        toolTip.SetToolTip(clientPolicyEnabled,
+            "Stops Windows from throttling covered or minimized clients (which drops them below their frame cap),\n" +
+            "gives the client you are playing and your main clients Above Normal priority, keeps the others at Normal,\n" +
+            "and gives background clients low memory priority so Windows reclaims their RAM first.\nNever lowers any client's frame rate.");
+        clientPolicyEnabled.CheckedChanged += (_, _) =>
+        {
+            if (refreshing) return;
+            optimizer.SetClientPolicyEnabled(clientPolicyEnabled.Checked);
+            RefreshView();
+        };
+        var headerRight = new Panel { Dock = DockStyle.Fill, BackColor = Color.Transparent };
+        headerRight.Controls.Add(gpuStatusLabel);
+        headerRight.Controls.Add(clientPolicyEnabled);
+        headerLayout.Controls.Add(headerRight, 1, 0);
 
         grid.AllowUserToAddRows = false;
         grid.AllowUserToDeleteRows = false;
@@ -461,6 +479,7 @@ internal sealed class OptimizerMonitorForm : Form
             settings.Normalize();
             optimizerEnabled.Checked = settings.OptimizerEnabled && settings.CpuAffinityOptimizationEnabled;
             trimEnabled.Checked = settings.WorkingSetTrimEnabled;
+            clientPolicyEnabled.Checked = settings.ClientPolicyEnabled;
             SetSelectedItemIfIdle(trimMode, settings.MemoryTrimMode == MemoryTrimMode.Threshold
                 ? "Auto trim at threshold"
                 : "Pressure-aware");

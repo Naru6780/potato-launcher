@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.110 - 2026-10-07
+
+- Optimizer: new **Keep every client at its FPS cap** policy (on by default, toggle in the Optimizer window header), independent of CPU affinity:
+  - Opts every client out of Windows power throttling (EcoQoS and timer-resolution throttling). Windows 11 otherwise throttles minimized or covered windows, which made their frame limiter oversleep and drop below the cap.
+  - The client you are playing (foreground) and your main clients run at Above Normal CPU priority and Above Normal GPU scheduling priority; every other client stays at Normal (never lowered), so other apps cannot take their CPU time.
+  - Background clients get low memory priority, so under memory pressure Windows reclaims their RAM first instead of the played client's.
+  - Priority is re-asserted every second (other tools such as Process Lasso ProBalance may change it); everything is restored when the policy is turned off or Potato exits.
+- Optimizer: working-set trimming never touches the client being played; stale main-client rules saved from temporary "Potato Launcher — …" window titles are removed.
+
 ## 1.0.109 - 2026-10-07
 
 - DLSS 5 clients: new option **Turn ReShade off completely on the other clients** (on by default once at least one DLSS 5 client is chosen). Clients without DLSS 5 start with no ReShade banner, overlay or effects.
