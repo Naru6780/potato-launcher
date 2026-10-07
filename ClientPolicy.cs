@@ -55,14 +55,16 @@ internal static class ClientPolicyNative
 
     // Priority is cheap to check, so it is re-asserted every tick (other tools such as Process Lasso's ProBalance may
     // change it). Memory priority and throttling are only written when the desired state changes.
-    public static void Apply(Process process, ClientPolicyState state, bool stateChanged)
+    // Returns true when the priority had to be corrected.
+    public static bool Apply(Process process, ClientPolicyState state, bool stateChanged)
     {
-        TrySetPriority(process, state.Priority);
-        if (!stateChanged) return;
+        var corrected = TrySetPriority(process, state.Priority);
+        if (!stateChanged) return corrected;
         TrySetMemoryPriority(process.Id, state.LowMemoryPriority ? MemoryPriorityLow : MemoryPriorityNormal);
         TrySetThrottling(process.Id, preventThrottling: state.PreventThrottling);
         // GPU scheduling follows the CPU role: the client being played gets its frames scheduled first on the GPU.
         TrySetGpuPriority(process.Id, state.Priority == ProcessPriorityClass.AboveNormal ? GpuPriorityAboveNormal : GpuPriorityNormal);
+        return corrected;
     }
 
     public static void Restore(Process process)
@@ -85,13 +87,15 @@ internal static class ClientPolicyNative
     [DllImport("gdi32.dll")]
     private static extern int D3DKMTSetProcessSchedulingPriorityClass(IntPtr process, int priorityClass);
 
-    private static void TrySetPriority(Process process, ProcessPriorityClass priority)
+    private static bool TrySetPriority(Process process, ProcessPriorityClass priority)
     {
         try
         {
-            if (!process.HasExited && process.PriorityClass != priority) process.PriorityClass = priority;
+            if (process.HasExited || process.PriorityClass == priority) return false;
+            process.PriorityClass = priority;
+            return true;
         }
-        catch { }
+        catch { return false; }
     }
 
     private static void TrySetMemoryPriority(int processId, uint priority)

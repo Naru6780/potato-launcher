@@ -19,10 +19,25 @@ Windows 11 build 26200, FFXIV build hash 5BBC501D… (see `ExternalGameState.Sup
 - Windows timer throttling of covered/minimized windows is opted out (`PreventWindowsThrottling`) for all clients.
 
 ## Things measured to NOT help (don't re-add)
-- Hard CPU affinity lanes on a single-CCD CPU: only removes cores from clients (every core is the same, and each
-  client runs several threads that then queue on the same core); priority already protects the main. Removed in
-  1.0.119. On a CPU with unequal cores (dual-CCD X3D, Intel P/E) the right tool would be a simple "keep clients
-  off the slow cores" mask, not a per-client lane allocator.
+- The 1.0.118 lane allocator with fixed defaults (main 6 threads, follower lanes of 4, 4 reserved): on 16 threads it
+  left 6 threads for every follower, which starved them. Removed in 1.0.119; replaced in 1.0.120 (below).
+
+## CPU placement (1.0.120), measured 2026-10-07 on the 9800X3D, 8 clients, in-game 60 limit
+| Placement | System CPU | Clients' CPU | At 60 | Main (DLSS loader) |
+|---|---|---|---|---|
+| No pinning | 43.7% | 31.2% | 7/8 | 49 |
+| Main gets its own cores (0-7 / followers 8-15) | 40.0% | 28.4% | 7/8 | 50 |
+| Two-core lanes | 40.7% | 28.4% | 7/8 | 50 |
+- Pinning lowers CPU even on one CCD (fewer cores woken per client), with no FPS cost while the followers have room.
+- The main's reserved cores are sized from the followers' measured load with 1.5x headroom (`CpuPlacementPlanner`),
+  so 16 clients shrink the reservation instead of starving followers.
+- Dual-CCD X3D (9950X3D/7950X3D): the main goes on the V-Cache CCD; a follower never straddles CCDs.
+- `Test placements` measures all three on the user's PC (interleaved, 2 rounds x 28 s) and Auto keeps the winner.
+  `tests/.../LiveMeasurementHarness.cs` runs the same test from the command line (POTATO_HARNESS=placement).
+- Process Lasso's ProBalance demotes the busiest client (the main): Potato now counts priority/affinity changes made by
+  other programs and reports them.
+- A client carrying the DLSS 5 loader with the in-game 60 limit holds ~49 in every placement: it is the loader's
+  per-frame cost, not CPU contention.
 - An "FPS rescue" priority loop: zero-sum when the CPU is saturated.
 - Constant working-set trimming at a fixed threshold: re-faults; pressure-aware trimming is fine (user keeps it on).
 

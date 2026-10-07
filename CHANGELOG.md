@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.120 - 2026-10-07
+
+- New **CPU placement**, on by default (Auto). The main client (your configured main, or the FFXIV window you used last) gets cores of its own, on the 3D V-Cache CCD when the CPU has two (9950X3D, 7950X3D), and every other client stays inside one CCD. The main's share shrinks automatically when the followers need the room, so 16 clients are never squeezed. Measured on a 9800X3D with 8 clients: 43.7% -> 40.0% total CPU at the same FPS.
+- **Test placements** (Optimizer): tries no pinning, main-gets-its-own-cores and two-core lanes on your running clients for about 3 minutes and keeps the one that holds the most clients at the target, then the best main FPS, then the least CPU. Results are shown under CPU placement.
+- New CPUs column shows where each client runs when pinned.
+- Optimizer reports when another program keeps changing client priority or CPU cores (Process Lasso's ProBalance demotes the busiest client, usually your main), and when a client loads the DLSS 5 add-on with the in-game frame limit on (it then holds only ~49).
+
 ## 1.0.119 - 2026-10-07
 
 - Removed CPU lanes (advanced) and everything behind it: the Split Lanes / Adaptive Shared Pools / One core per client / All cores allocator, main and follower logical-processor counts, reserved processors, per-main reservations, Live/Planning mode, the Affinity and Planned columns, "Optimize CPU Now", "Restore clients" and "Rescue selected". Measured on a single-CCD CPU, pinning only took cores away from the followers (they dropped to 48-58 FPS) and could not make the main any faster; "Keep every client at its FPS cap" (priorities + in-game frame limit) holds every client at 60 at ~2.5% CPU each. Old optimizer.json keys are ignored.

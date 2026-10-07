@@ -7,11 +7,27 @@ namespace PotatoLauncher;
 // Things outside Potato's control that cost clients frames, with what to do about them. Cheap checks, cached.
 internal static class OptimizerDiagnostics
 {
-    private static (DateTime At, IReadOnlyList<string> Findings) cache = (DateTime.MinValue, []);
+    private static (DateTime At, IReadOnlyList<string> Findings, IReadOnlySet<int> LoaderClients) cache = (DateTime.MinValue, [], new HashSet<int>());
 
-    public static IReadOnlyList<string> Get(IReadOnlyList<OptimizerClientSnapshot> clients, int targetFps)
+    public static IReadOnlyList<string> Get(IReadOnlyList<OptimizerClientSnapshot> clients, int targetFps, (int Priority, int Affinity) externalChanges = default)
+    {
+        if (DateTime.UtcNow - cache.At > TimeSpan.FromSeconds(30)) cache = SlowChecks(clients.Select(client => client.ProcessId));
+        return Evaluate(clients, targetFps, externalChanges, cache.LoaderClients, cache.Findings);
+    }
+
+    internal static IReadOnlyList<string> Evaluate(IReadOnlyList<OptimizerClientSnapshot> clients, int targetFps,
+        (int Priority, int Affinity) externalChanges, IReadOnlySet<int> loaderClients, IReadOnlyList<string> slowFindings)
     {
         var findings = new List<string>();
+        // Measured: the DLSS 5 loader (ReShade + RenoDX) adds ~3.7 ms per frame on top of the game's own limiter.
+        var loaded = clients.Where(client => loaderClients.Contains(client.ProcessId) && client.EngineFrameLimit > 0 && client.Fps is double fps && fps < targetFps - 3).ToList();
+        foreach (var client in loaded.Take(2))
+            findings.Add($"{client.ClientName} loads the DLSS 5 add-on and has the in-game {client.EngineFrameLimit} fps limit, so it holds only ~{client.Fps:0}. Not using DLSS: untick it in DLSS 5 clients and relaunch it. Using DLSS: set its Frame Rate to None.");
+        if (externalChanges.Priority >= 3)
+            findings.Add($"Another program changed client priorities {externalChanges.Priority} times in the last minute (Process Lasso's ProBalance does this to the busiest client, usually your main). Close Process Lasso, or exclude ffxiv_dx11.exe from ProBalance.");
+        if (externalChanges.Affinity >= 2)
+            findings.Add($"Another program keeps changing client CPU cores ({externalChanges.Affinity} times in the last minute), which undoes Potato's placement. Remove ffxiv_dx11.exe CPU affinity / CPU set rules in Process Lasso or similar tools.");
+
         var below = clients.Where(client => client.Fps is double fps && fps < targetFps - 3).ToList();
         if (below.Count > 0)
             findings.Add($"{below.Count} client{(below.Count == 1 ? " is" : "s are")} below {targetFps} FPS: {string.Join(", ", below.Select(client => client.ClientName).Take(4))}{(below.Count > 4 ? ", …" : "")}.");
@@ -26,24 +42,34 @@ internal static class OptimizerDiagnostics
         if (above.Count > 0)
             findings.Add($"{above.Count} client{(above.Count == 1 ? " is" : "s are")} running far above the target ({above.Max(client => client.Fps)!.Value:0} FPS) despite an in-game limit; check its Frame Rate setting.");
 
-        if (DateTime.UtcNow - cache.At > TimeSpan.FromSeconds(30)) cache = (DateTime.UtcNow, SlowChecks());
-        findings.AddRange(cache.Findings);
+        findings.AddRange(slowFindings);
         return findings;
     }
 
-    private static IReadOnlyList<string> SlowChecks()
+    private static (DateTime, IReadOnlyList<string>, IReadOnlySet<int>) SlowChecks(IEnumerable<int> clientIds)
     {
         var findings = new List<string>();
         try
         {
             if (Process.GetProcessesByName("ProcessGovernor").Length > 0)
-                findings.Add("Process Lasso: exclude ffxiv_dx11.exe from ProBalance so it stops demoting clients.");
+                findings.Add("Process Lasso is running. Potato already does its job for FFXIV, and its ProBalance and CPU rules fight Potato's priorities and core placement. Close it, or exclude ffxiv_dx11.exe from ProBalance and remove its ffxiv_dx11.exe rules.");
         }
         catch { }
+        var loaderClients = new HashSet<int>();
+        foreach (var id in clientIds)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(id);
+                if (process.Modules.Cast<ProcessModule>().Any(module => module.ModuleName.Contains("renodx", StringComparison.OrdinalIgnoreCase)))
+                    loaderClients.Add(id);
+            }
+            catch { }
+        }
         var heavy = GloballyEnabledDalamudCollections();
         if (heavy.Plugins >= 15)
             findings.Add($"Dalamud collection{(heavy.Names.Count == 1 ? "" : "s")} {string.Join(", ", heavy.Names.Select(name => $"\"{name}\""))} load {heavy.Plugins} plugins in every client. Bind them to the characters that need them (Dalamud → Plugin Collections) to cut RAM and CPU per client.");
-        return findings;
+        return (DateTime.UtcNow, findings, loaderClients);
     }
 
     // Collections that are enabled and not tied to specific characters are loaded by every client.

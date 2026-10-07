@@ -23,6 +23,10 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly NumericUpDown trimTrigger = new();
     private readonly Button saveButton = new NewsPillButton();
     private readonly Button trimButton = new NewsPillButton();
+    private readonly Button placementTestButton = new NewsPillButton();
+    private readonly ComboBox placementMode = new();
+    private readonly Label placementLabel = new();
+    private static readonly string[] PlacementChoices = ["Auto (measured best)", "No pinning", "Main gets its own cores", "Two-core lanes"];
     private bool refreshing;
     private bool refreshQueued;
     private bool moveOrResizeActive;
@@ -36,13 +40,14 @@ internal sealed class OptimizerMonitorForm : Form
         this.palette = palette;
         Text = "Potato Optimizer";
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(1120, 720);
-        MinimumSize = new Size(940, 620);
+        Size = new Size(1120, 790);
+        MinimumSize = new Size(940, 690);
         Font = new Font("Segoe UI", 10F);
         DoubleBuffered = true;
         BuildUi();
         ApplyTheme(palette);
         optimizer.Updated += OptimizerUpdated;
+        optimizer.PlacementTestFinished += PlacementTestFinished;
         ResizeBegin += (_, _) => moveOrResizeActive = true;
         ResizeEnd += (_, _) =>
         {
@@ -65,6 +70,7 @@ internal sealed class OptimizerMonitorForm : Form
         closing = true;
         refreshQueued = false;
         optimizer.Updated -= OptimizerUpdated;
+        optimizer.PlacementTestFinished -= PlacementTestFinished;
     }
 
     public void ApplyTheme(ThemePalette themePalette)
@@ -103,7 +109,7 @@ internal sealed class OptimizerMonitorForm : Form
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 122));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 192));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 252));
         Controls.Add(root);
 
         var header = new OptimizerPanel { Dock = DockStyle.Fill, Radius = 20 };
@@ -197,6 +203,7 @@ internal sealed class OptimizerMonitorForm : Form
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Fps", HeaderText = "FPS", ReadOnly = true, FillWeight = 60 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Cap", HeaderText = "Cap", ReadOnly = true, FillWeight = 80 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Role", HeaderText = "Role", ReadOnly = true, FillWeight = 78 });
+        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Cores", HeaderText = "CPUs", ReadOnly = true, FillWeight = 78, Visible = false });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Pid", HeaderText = "PID", ReadOnly = true, FillWeight = 60, Visible = false });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Cpu", HeaderText = "CPU", ReadOnly = true, FillWeight = 70 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Gpu", HeaderText = "GPU", ReadOnly = true, FillWeight = 70 });
@@ -216,7 +223,9 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        controlGrid.RowCount = 4;
         controls.Controls.Add(controlGrid);
 
         roleClientInput.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -280,8 +289,8 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.SaveSettings();
         };
         controlGrid.Controls.Add(Field("In-game frame limit", enforceFrameLimit), 4, 1);
-        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 0, 2);
-        controlGrid.Controls.Add(mainClientsLabel, 1, 2);
+        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 0, 3);
+        controlGrid.Controls.Add(mainClientsLabel, 1, 3);
         controlGrid.SetColumnSpan(mainClientsLabel, 2);
 
         saveButton.Text = "Save";
@@ -300,8 +309,51 @@ internal sealed class OptimizerMonitorForm : Form
             RefreshView();
             ShowFeedback("RAM optimization applied.");
         };
+        placementMode.DropDownStyle = ComboBoxStyle.DropDownList;
+        placementMode.Items.AddRange(PlacementChoices);
+        placementMode.Width = 210;
+        placementMode.Height = 28;
+        toolTip.SetToolTip(placementMode,
+            "Which CPU cores each client runs on.\n" +
+            "Auto: the winner of Test placements on this PC; before a test, the main gets its own cores only on CPUs\n" +
+            "with unequal cores (two CCDs such as a 9950X3D, or Intel P/E cores) and nothing is pinned otherwise.");
+        placementMode.SelectedIndexChanged += (_, _) =>
+        {
+            if (refreshing) return;
+            optimizer.Settings.CpuPlacement = (CpuPlacementSetting)Math.Max(0, placementMode.SelectedIndex);
+            optimizer.SaveSettings();
+            RefreshView();
+        };
+        placementTestButton.Text = "Test placements";
+        placementTestButton.Tag = "Secondary";
+        toolTip.SetToolTip(placementTestButton, "Tries each placement on your running clients for about 3 minutes and keeps the one that holds\nthe most clients at the target FPS, then the best main FPS, then the least CPU.");
+        placementTestButton.Click += (_, _) =>
+        {
+            if (optimizer.PlacementTestRunning)
+            {
+                optimizer.StopPlacementTest();
+                RefreshView();
+                return;
+            }
+            var confirm = MessageBox.Show(this,
+                "Potato will try three CPU placements on your running clients, about 3 minutes in total, and keep the one that works best on this PC.\n\n" +
+                "Leave every client where it is (in game, not loading) and avoid heavy actions until it finishes. The client you used last counts as the main.",
+                "Test placements", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
+            if (confirm != DialogResult.OK) return;
+            var error = optimizer.StartPlacementTest();
+            if (error is not null) MessageBox.Show(this, error, "Test placements", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            RefreshView();
+        };
+        placementLabel.Dock = DockStyle.Fill;
+        placementLabel.AutoEllipsis = true;
+        placementLabel.BackColor = Color.Transparent;
+        placementLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        controlGrid.Controls.Add(Field("CPU placement", placementMode), 0, 2);
+        controlGrid.Controls.Add(placementLabel, 1, 2);
+        controlGrid.SetColumnSpan(placementLabel, 4);
+
         var buttonRow = ButtonRow();
-        controlGrid.Controls.Add(buttonRow, 3, 2);
+        controlGrid.Controls.Add(buttonRow, 3, 3);
         controlGrid.SetColumnSpan(buttonRow, 2);
         UpdateModeControls();
     }
@@ -332,7 +384,7 @@ internal sealed class OptimizerMonitorForm : Form
     private FlowLayoutPanel ButtonRow()
     {
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Color.Transparent };
-        foreach (var button in new[] { trimButton, saveButton })
+        foreach (var button in new[] { placementTestButton, trimButton, saveButton })
         {
             button.Width = 116;
             button.Height = 36;
@@ -362,6 +414,13 @@ internal sealed class OptimizerMonitorForm : Form
         panel.Controls.Add(input);
         panel.Controls.Add(label);
         return panel;
+    }
+
+    private void PlacementTestFinished(object? sender, OptimizerAlertEventArgs e)
+    {
+        if (closing || IsDisposed) return;
+        ShowFeedback(e.Message);
+        QueueRefresh(force: true);
     }
 
     private void OptimizerUpdated(object? sender, EventArgs e)
@@ -399,7 +458,8 @@ internal sealed class OptimizerMonitorForm : Form
     {
         return roleClientInput.DroppedDown ||
                roleInput.DroppedDown ||
-               trimMode.DroppedDown;
+               trimMode.DroppedDown ||
+               placementMode.DroppedDown;
     }
 
     private void RefreshView()
@@ -416,6 +476,10 @@ internal sealed class OptimizerMonitorForm : Form
                 ? "Auto trim at threshold"
                 : "Pressure-aware");
             UpdateModeControls();
+            SetSelectedItemIfIdle(placementMode, PlacementChoices[(int)settings.CpuPlacement]);
+            placementTestButton.Text = optimizer.PlacementTestRunning ? "Stop test" : "Test placements";
+            placementLabel.Text = optimizer.PlacementStatus;
+            toolTip.SetToolTip(placementLabel, optimizer.PlacementStatus);
             SetStepperValueIfIdle(trimTrigger, settings.TrimTriggerMBPerClient);
             SetStepperValueIfIdle(targetFps, settings.TargetFps);
             enforceFrameLimit.Checked = settings.EnforceInGameFrameLimit;
@@ -429,13 +493,15 @@ internal sealed class OptimizerMonitorForm : Form
             var atCap = withFps.Count(snapshot => snapshot.Fps!.Value >= settings.TargetFps - 3);
             var fpsText = withFps.Count == 0 ? "FPS unavailable" : $"{atCap}/{withFps.Count} at {settings.TargetFps} FPS";
             var capacity = optimizer.EstimateCapacity(snapshots, system);
-            var findings = OptimizerDiagnostics.Get(snapshots, settings.TargetFps);
+            var findings = OptimizerDiagnostics.Get(snapshots, settings.TargetFps, optimizer.ExternalChangesLastMinute);
             summaryLabel.Text =
                 $"{snapshots.Count} client{(snapshots.Count == 1 ? "" : "s")}  ·  {fpsText}  ·  CPU {system.CpuPercent:0}%  ·  {systemGpuText}  ·  RAM {FormatMb(system.UsedMemoryBytes)} / {FormatMb(system.TotalMemoryBytes)}" +
                 Environment.NewLine + capacity.Summary +
                 (findings.Count > 0 ? Environment.NewLine + "⚠ " + findings[0] + (findings.Count > 1 ? $"  (+{findings.Count - 1}, hover)" : "") : "");
             toolTip.SetToolTip(summaryLabel, findings.Count > 0 ? string.Join(Environment.NewLine + Environment.NewLine, findings) : capacity.Summary);
             if (grid.Columns["Trim"]!.Visible != settings.WorkingSetTrimEnabled) grid.Columns["Trim"]!.Visible = settings.WorkingSetTrimEnabled;
+            var pinned = snapshots.Any(snapshot => snapshot.Cores is { Length: > 0 } cores && cores != "all");
+            if (grid.Columns["Cores"]!.Visible != pinned) grid.Columns["Cores"]!.Visible = pinned;
             gpuStatusLabel.Text = optimizer.GpuStatusText;
         }
         finally
@@ -508,6 +574,7 @@ internal sealed class OptimizerMonitorForm : Form
         SetCell(row, "Private", $"{snapshot.PrivateBytes / 1024d / 1024d:0} MB");
         SetCell(row, "Threads", snapshot.ThreadCount);
         SetCell(row, "Role", string.IsNullOrEmpty(snapshot.Role) ? "Background" : snapshot.Role);
+        SetCell(row, "Cores", string.IsNullOrEmpty(snapshot.Cores) ? "all" : snapshot.Cores);
         SetCell(row, "Trim", snapshot.LastTrimUtc.HasValue ? snapshot.LastTrimUtc.Value.ToLocalTime().ToString("HH:mm:ss") : "-");
     }
 

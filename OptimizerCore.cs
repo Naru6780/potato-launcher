@@ -60,8 +60,12 @@ internal sealed class OptimizerSettings
         Converters = { new JsonStringEnumConverter() }
     };
 
-    // CPU affinity lanes were removed in 1.0.119: on one CCD they only took cores away from clients (measured), and
-    // the client policy's priorities already protect the main. Their old JSON keys are ignored on load.
+    // CPU placement (CpuPlacement.cs). Auto = the measured winner of "Test placements" on this CPU, else pinning only
+    // where cores are unequal (two CCDs, P/E cores). The 1.0.118 lane keys are ignored on load.
+    public CpuPlacementSetting CpuPlacement { get; set; } = CpuPlacementSetting.Auto;
+    public CpuPlacementMode? TestedPlacement { get; set; }
+    public string TestedPlacementTopology { get; set; } = "";
+    public string TestedPlacementSummary { get; set; } = "";
     public bool WorkingSetTrimEnabled { get; set; } = true;
     public MemoryTrimMode MemoryTrimMode { get; set; } = MemoryTrimMode.PressureAware;
     public int TrimTriggerMBPerClient { get; set; } = 1024;
@@ -180,6 +184,10 @@ internal sealed class OptimizerSettings
     public void Normalize()
     {
         if (!Enum.IsDefined(MemoryTrimMode)) MemoryTrimMode = MemoryTrimMode.PressureAware;
+        if (!Enum.IsDefined(CpuPlacement)) CpuPlacement = CpuPlacementSetting.Auto;
+        if (TestedPlacement is CpuPlacementMode tested && !Enum.IsDefined(tested)) TestedPlacement = null;
+        TestedPlacementTopology ??= "";
+        TestedPlacementSummary ??= "";
         TrimTriggerMBPerClient = Math.Clamp(TrimTriggerMBPerClient, 128, 32768);
         TrimIntervalSeconds = Math.Clamp(TrimIntervalSeconds, 1, 300);
         TrimCooldownSeconds = Math.Clamp(TrimCooldownSeconds, 1, 3600);
@@ -228,7 +236,8 @@ internal sealed record OptimizerClientSnapshot(
     DateTime? LastTrimUtc,
     double? Fps = null,
     string Role = "",
-    short? EngineFrameLimit = null);
+    short? EngineFrameLimit = null,
+    string Cores = "");
 
 internal sealed record SystemMetricsSnapshot(
     double CpuPercent,
@@ -265,10 +274,20 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly SystemUsageSampler systemSampler = new();
     private DateTime lastTrimSweepUtc = DateTime.MinValue;
     private bool memoryPressureActive;
+    private readonly Dictionary<int, (DateTime Start, long Mask)> placedMasks = [];
+    private int? stickyMainId;
+    private readonly Dictionary<int, (DateTime At, TimeSpan Cpu)> placementLoad = [];
+    private readonly Dictionary<int, double> clientLoad = [];
+    private double? followerLoad;
+    private string lastPlacementSignature = "";
+    private PlacementTest? placementTest;
+    private readonly Queue<DateTime> externalPriorityChanges = new();
+    private readonly Queue<DateTime> externalAffinityChanges = new();
 
     public OptimizerSettings Settings { get; }
     public event EventHandler? Updated;
     public event EventHandler<OptimizerAlertEventArgs>? Alert;
+    public event EventHandler<OptimizerAlertEventArgs>? PlacementTestFinished;
 
     public IntegratedOptimizerService(OptimizerSettings settings)
     {
@@ -365,6 +384,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
             {
                 ApplyClientPolicy(clients, activeClientIds);
             }
+            ApplyPlacement(clients, mainSelection, lastForegroundClientId);
 
             if (Settings.WorkingSetTrimEnabled)
             {
@@ -388,7 +408,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
             var role = activeClientIds.Contains(client.Id) ? ClientRole.Active : ClientRole.Background;
             var desired = ClientPolicy.Desired(role, Settings);
             var changed = !appliedPolicies.TryGetValue(client.Id, out var applied) || applied.Start != start || applied.State != desired;
-            ClientPolicyNative.Apply(client, desired, changed);
+            // Priority already set by Potato but found different: another program changed it (Process Lasso's ProBalance).
+            if (ClientPolicyNative.Apply(client, desired, changed) && !changed) externalPriorityChanges.Enqueue(DateTime.UtcNow);
             if (changed)
             {
                 appliedPolicies[client.Id] = (start, desired);
@@ -405,6 +426,175 @@ internal sealed class IntegratedOptimizerService : IDisposable
         Settings.ClientPolicyEnabled = enabled;
         Settings.Save();
         if (!enabled) RestoreClientPolicies();
+    }
+
+    public CpuTopology Topology => CpuTopology.Current;
+    public bool PlacementTestRunning => placementTest is { Done: false };
+    public CpuPlacementMode EffectivePlacement => placementTest is { Done: false, CurrentMode: CpuPlacementMode testing }
+        ? testing
+        : Settings.CpuPlacement switch
+        {
+            CpuPlacementSetting.Off => CpuPlacementMode.Off,
+            CpuPlacementSetting.ReserveMain => CpuPlacementMode.ReserveMain,
+            CpuPlacementSetting.Lanes => CpuPlacementMode.Lanes,
+            _ => Settings.TestedPlacement is CpuPlacementMode tested && Settings.TestedPlacementTopology == Topology.Signature
+                ? tested
+                : CpuPlacementPlanner.DefaultFor(Topology)
+        };
+
+    public string PlacementStatus
+    {
+        get
+        {
+            if (placementTest is { Done: false } running) return running.Status;
+            var measured = Settings.TestedPlacement.HasValue && Settings.TestedPlacementTopology == Topology.Signature;
+            var source = Settings.CpuPlacement != CpuPlacementSetting.Auto ? "chosen by you"
+                : measured ? "measured best on this PC"
+                : Topology.HasUnequalCores ? "default for unequal cores; run Test placements" : "default for equal cores; run Test placements";
+            var text = $"CPU: {Topology.Describe()}.  Placement: {PlacementTest.Label(EffectivePlacement)} ({source}).";
+            if (measured && Settings.TestedPlacementSummary.Length > 0) text += Environment.NewLine + "Last test: " + Settings.TestedPlacementSummary;
+            return text;
+        }
+    }
+
+    /// <summary>Times another program changed a client's priority or affinity in the last minute (e.g. Process Lasso).</summary>
+    public (int Priority, int Affinity) ExternalChangesLastMinute
+    {
+        get
+        {
+            Prune(externalPriorityChanges);
+            Prune(externalAffinityChanges);
+            return (externalPriorityChanges.Count, externalAffinityChanges.Count);
+        }
+    }
+
+    private static void Prune(Queue<DateTime> events)
+    {
+        while (events.Count > 0 && DateTime.UtcNow - events.Peek() > TimeSpan.FromMinutes(1)) events.Dequeue();
+    }
+
+    /// <summary>Starts the placement test; returns why it cannot start, or null.</summary>
+    public string? StartPlacementTest()
+    {
+        if (PlacementTestRunning) return "A placement test is already running.";
+        if (!Topology.IsSupported) return "This CPU's core layout cannot be read, so placement is not available.";
+        if (latestFps.Count < 2) return "Start at least two clients and log them in first: Potato needs to read their FPS.";
+        var main = stickyMainId ?? lastForegroundClientId;
+        placementTest = new PlacementTest(
+            [CpuPlacementMode.Off, CpuPlacementMode.ReserveMain, CpuPlacementMode.Lanes],
+            rounds: 2, TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(20), Settings.TargetFps, main);
+        LogDecision($"Placement test started (main PID {main?.ToString() ?? "none"}).");
+        return null;
+    }
+
+    public void StopPlacementTest()
+    {
+        if (placementTest is not { Done: false } running) return;
+        running.Cancel("Placement test stopped.");
+        FinishPlacementTest(running);
+    }
+
+    private void FinishPlacementTest(PlacementTest test)
+    {
+        placementTest = null;
+        if (test.Result is { } result)
+        {
+            Settings.TestedPlacement = result.Winner;
+            Settings.TestedPlacementTopology = Topology.Signature;
+            Settings.TestedPlacementSummary = result.Summary;
+            Settings.Save();
+        }
+        LogDecision(test.Status);
+        PlacementTestFinished?.Invoke(this, new OptimizerAlertEventArgs(test.Status));
+    }
+
+    // Pins clients per the effective placement. Only processes Potato pinned are touched again, so switching placement
+    // off hands each client back to Windows exactly once and never undoes another tool's settings on its own.
+    private void ApplyPlacement(IReadOnlyList<Process> clients, MainClientSelection mainSelection, int? foregroundClientId)
+    {
+        var alive = clients.Select(client => client.Id).ToHashSet();
+        if (foregroundClientId is int foreground) stickyMainId = foreground;
+        if (stickyMainId is int sticky && !alive.Contains(sticky)) stickyMainId = null;
+        if (placementTest is { } test)
+        {
+            test.Tick(DateTime.UtcNow, clients.Select(client => new ClientRef(client.Id, SafeStartTime(client).ToUniversalTime())).ToList());
+            if (test.Done) FinishPlacementTest(test);
+        }
+
+        // The main is your configured main client if one runs, otherwise the FFXIV window you used last.
+        var mainId = placementTest is { Done: false } running ? running.MainId
+            : mainSelection.CandidateClientIds.Count > 0 ? mainSelection.ActiveMainClientIds.FirstOrDefault() : stickyMainId;
+        var topology = Topology;
+        var mode = EffectivePlacement;
+        UpdateFollowerLoad(clients, mainId);
+        // Size the main's cores from measured load only: a guess here would re-pin everyone a second later.
+        if (mode != CpuPlacementMode.Off && followerLoad is null && clients.Count > 1) return;
+        var plan = CpuPlacementPlanner.Plan(topology, mode, clients.Select(client => client.Id).ToList(), mainId, followerLoad);
+        foreach (var client in clients)
+        {
+            var desired = plan.GetValueOrDefault(client.Id, topology.AllMask);
+            var start = SafeStartTime(client);
+            var known = placedMasks.TryGetValue(client.Id, out var placed) && placed.Start == start;
+            if (!known && desired == topology.AllMask) continue;
+            var actual = SafeAffinity(client);
+            if (known && placed.Mask == desired && actual == desired) continue;
+            if (known && placed.Mask == desired && actual is not null) externalAffinityChanges.Enqueue(DateTime.UtcNow);
+            try { client.ProcessorAffinity = new IntPtr(desired); } catch { continue; }
+            if (desired == topology.AllMask) placedMasks.Remove(client.Id);
+            else placedMasks[client.Id] = (start, desired);
+        }
+        foreach (var gone in placedMasks.Keys.Where(id => !alive.Contains(id)).ToList()) placedMasks.Remove(gone);
+
+        var signature = $"{mode} main={mainId}: " + string.Join(" ", placedMasks.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key}={CpuTopology.FormatMask(entry.Value.Mask)}"));
+        if (signature != lastPlacementSignature)
+        {
+            lastPlacementSignature = signature;
+            LogDecision("Placement " + signature);
+        }
+    }
+
+    // Followers' CPU use in logical processors, smoothed over ~20 s; sizes the main's reserved cores.
+    private void UpdateFollowerLoad(IReadOnlyList<Process> clients, int? mainId)
+    {
+        var now = DateTime.UtcNow;
+        foreach (var client in clients)
+        {
+            TimeSpan cpu;
+            try { cpu = client.TotalProcessorTime; } catch { continue; }
+            if (placementLoad.TryGetValue(client.Id, out var last) && now > last.At)
+            {
+                var logical = Math.Max(0, (cpu - last.Cpu).TotalSeconds / (now - last.At).TotalSeconds);
+                clientLoad[client.Id] = clientLoad.TryGetValue(client.Id, out var smoothed) ? smoothed + (logical - smoothed) * 0.05 : logical;
+            }
+            placementLoad[client.Id] = (now, cpu);
+        }
+        var alive = clients.Select(client => client.Id).ToHashSet();
+        foreach (var gone in placementLoad.Keys.Where(id => !alive.Contains(id)).ToList()) { placementLoad.Remove(gone); clientLoad.Remove(gone); }
+        var followers = clients.Where(client => client.Id != mainId).Select(client => client.Id).ToList();
+        followerLoad = followers.Count > 0 && followers.All(clientLoad.ContainsKey) ? followers.Sum(id => clientLoad[id]) : null;
+    }
+
+    private void RestorePlacement()
+    {
+        if (placedMasks.Count == 0) return;
+        var clients = GetFfxivClients();
+        try
+        {
+            foreach (var client in clients.Where(client => placedMasks.ContainsKey(client.Id)))
+            {
+                try { client.ProcessorAffinity = new IntPtr(Topology.AllMask); } catch { }
+            }
+            placedMasks.Clear();
+        }
+        finally
+        {
+            DisposeProcesses(clients);
+        }
+    }
+
+    private static long? SafeAffinity(Process process)
+    {
+        try { return process.HasExited ? null : process.ProcessorAffinity.ToInt64(); } catch { return null; }
     }
 
     private void LimitMinimizedClients(IReadOnlyList<Process> clients)
@@ -515,7 +705,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
             lastTrimByClientId.TryGetValue(client.Id, out var lastTrimUtc) ? lastTrimUtc : null,
             latestFps.TryGetValue(client.Id, out var fps) ? fps : null,
             client.Id == lastForegroundClientId ? "Playing" : mainSelection.CandidateClientIds.Contains(client.Id) ? "Main" : "Background",
-            latestEngineLimit.TryGetValue(client.Id, out var engineLimit) ? engineLimit : null);
+            latestEngineLimit.TryGetValue(client.Id, out var engineLimit) ? engineLimit : null,
+            placedMasks.TryGetValue(client.Id, out var placed) ? CpuTopology.FormatMask(placed.Mask) : "all");
     }
 
     public CapacityEstimate EstimateCapacity(IReadOnlyList<OptimizerClientSnapshot> snapshots, SystemMetricsSnapshot system) =>
@@ -691,6 +882,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
         timer.Dispose();
         systemSampler.Dispose();
         gpuSampler.Dispose();
+        placementTest = null;
+        RestorePlacement();
         RestoreClientPolicies();
     }
 
