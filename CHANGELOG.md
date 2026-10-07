@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.117 - 2026-10-07
+
+- "Turn ReShade off completely on the other clients" now also applies when no DLSS 5 client is selected at all. Before, clearing the DLSS 5 list made every client load full ReShade again (banner, overlay).
+- Why: the DLSS 5 loader (ReShade + RenoDX + Streamline) adds a steady ~3.7 ms to every frame, so a client running it holds only ~48 FPS against the 60 fps in-game limit and costs ~6% CPU instead of ~2.5%, even with DLSS switched off in-game. Keep the DLSS 5 list empty unless DLSS is actually in use.
+
 ## 1.0.116 - 2026-10-07
 
 - Optimizer resets Windows' TextInputHost when it spins (it was repeatedly stuck at ~5% CPU, as much as two clients; a restart brings it to 0% and Windows recreates it on demand). Acts only after 30 s above 2%, then waits 5 minutes. Setting: resetSpinningInputHost (on).

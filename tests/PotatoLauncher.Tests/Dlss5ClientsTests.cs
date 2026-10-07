@@ -87,6 +87,30 @@ public sealed class Dlss5ClientsTests : IDisposable
     }
 
     [Fact]
+    public void ReShadeOff_StillAppliesWhenNoDlssClientIsSelected()
+    {
+        var none = new Dlss5Config { AccountKeys = [], ReShadeOffForOtherClients = true };
+        var startInfo = new ProcessStartInfo("x.exe");
+        Assert.False(Dlss5Clients.ApplyToLaunch(startInfo, "any-False-False", none, Game, Data, out var message));
+        Assert.Equal("", message);
+        Assert.Equal("1", startInfo.Environment["RESHADE_DISABLE_GRAPHICS_HOOK"]);
+        Assert.Equal(Dlss5Clients.ReShadeOffFolder(Data), startInfo.Environment["RESHADE_BASE_PATH_OVERRIDE"]);
+
+        // Opted out: nothing is touched.
+        var untouched = new ProcessStartInfo("x.exe");
+        untouched.Environment.Remove("RESHADE_DISABLE_GRAPHICS_HOOK");
+        Assert.False(Dlss5Clients.ApplyToLaunch(untouched, "any-False-False", new Dlss5Config { AccountKeys = [], ReShadeOffForOtherClients = false }, Game, Data, out _));
+        Assert.False(untouched.Environment.ContainsKey("RESHADE_DISABLE_GRAPHICS_HOOK"));
+
+        // Without ReShade in the game folder there is nothing to switch off.
+        File.Delete(Path.Combine(Game, "ReShade.ini"));
+        var noReShade = new ProcessStartInfo("x.exe");
+        noReShade.Environment.Remove("RESHADE_DISABLE_GRAPHICS_HOOK");
+        Assert.False(Dlss5Clients.ApplyToLaunch(noReShade, "any-False-False", none, Game, Data, out _));
+        Assert.False(noReShade.Environment.ContainsKey("RESHADE_DISABLE_GRAPHICS_HOOK"));
+    }
+
+    [Fact]
     public void ReShadeOff_SetsAllSwitchesOnlyWithTheForwardingProfile()
     {
         var startInfo = new ProcessStartInfo("x.exe");

@@ -157,12 +157,24 @@ internal static class Dlss5Clients
     // Applies the DLSS base path to this account's launch only. Returns true when DLSS 5 is active for it.
     internal static bool ApplyToLaunch(ProcessStartInfo startInfo, string accountKey, string sharedProfileFolder, out string message)
     {
-        message = "";
         var config = Load();
-        if (config.AccountKeys.Count == 0) return false;
+        return ApplyToLaunch(startInfo, accountKey, config, FindGameFolder(config, sharedProfileFolder), null, out message);
+    }
 
-        var gameFolder = FindGameFolder(config, sharedProfileFolder);
-        var error = EnsureSplit(gameFolder);
+    internal static bool ApplyToLaunch(ProcessStartInfo startInfo, string accountKey, Dlss5Config config, string gameFolder, string? dataRoot, out string message)
+    {
+        message = "";
+        const string reShadeOffFailure = "Could not prepare the ReShade-off profile; this client starts with ReShade (no add-ons).";
+        if (config.AccountKeys.Count == 0)
+        {
+            // No DLSS 5 client at all: "ReShade off" still applies to every client, otherwise the dxgi proxy in the
+            // game folder loads full ReShade (banner, overlay) for all of them.
+            if (config.ReShadeOffForOtherClients && Inspect(gameFolder).ReShadeFound && !TryApplyReShadeOff(startInfo, dataRoot))
+                message = reShadeOffFailure;
+            return false;
+        }
+
+        var error = EnsureSplit(gameFolder, dataRoot);
         if (!string.IsNullOrEmpty(error))
         {
             message = $"DLSS 5 not applied: {error}";
@@ -170,11 +182,10 @@ internal static class Dlss5Clients
         }
         if (!IsEnabled(config, accountKey))
         {
-            if (config.ReShadeOffForOtherClients && !TryApplyReShadeOff(startInfo))
-                message = "Could not prepare the ReShade-off profile; this client starts with ReShade (no add-ons).";
+            if (config.ReShadeOffForOtherClients && !TryApplyReShadeOff(startInfo, dataRoot)) message = reShadeOffFailure;
             return false;
         }
-        startInfo.Environment[BasePathVariable] = DlssProfileFolder();
+        startInfo.Environment[BasePathVariable] = DlssProfileFolder(dataRoot);
         return true;
     }
 
