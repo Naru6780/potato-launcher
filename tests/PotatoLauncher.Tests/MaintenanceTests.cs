@@ -9,15 +9,14 @@ public class MaintenanceTests
     [Fact]
     public void SupersededProfileRetainsThresholdAndPreferences()
     {
+        // The superseded v107 wrote enum names that no longer exist; the removed CPU-lane keys are ignored.
         var settings = OptimizerSettings.DeserializeCompatible("""
             { "cpuAssignmentMode":"BalancedShared", "memoryTrimMode":"BandBudget",
               "trimTriggerMBPerClient":2024, "workingSetTrimEnabled":false, "mainLogicalProcessors":4 }
             """);
-        Assert.Equal(CpuAssignmentMode.AllAvailableCores, settings.CpuAssignmentMode);
         Assert.Equal(MemoryTrimMode.Threshold, settings.MemoryTrimMode);
         Assert.Equal(2024, settings.TrimTriggerMBPerClient);
         Assert.False(settings.WorkingSetTrimEnabled);
-        Assert.Equal(4, settings.MainLogicalProcessors);
     }
 
     [Fact]
@@ -26,7 +25,6 @@ public class MaintenanceTests
         var settings = OptimizerSettings.DeserializeCompatible("""
             { "cpuAssignmentMode":"AdaptiveSharedPools", "memoryTrimMode":"PressureAware", "trimTriggerMBPerClient":500 }
             """);
-        Assert.Equal(CpuAssignmentMode.AdaptiveSharedPools, settings.CpuAssignmentMode);
         Assert.Equal(MemoryTrimMode.PressureAware, settings.MemoryTrimMode);
         Assert.Equal(500, settings.TrimTriggerMBPerClient);
     }

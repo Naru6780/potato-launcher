@@ -30,8 +30,8 @@ public class OptimizerDiagnosticsTests
     {
         var clients = new List<OptimizerClientSnapshot>
         {
-            new(1, "A@W", "", false, false, 5, null, 0, 0, 0, 0, null, null, false, null, 60),
-            new(2, "B@W", "", false, false, 5, null, 0, 0, 0, 0, null, null, false, null, 41)
+            new(1, "A@W", "", false, false, 5, null, 0, 0, 0, 0, null, 60),
+            new(2, "B@W", "", false, false, 5, null, 0, 0, 0, 0, null, 41)
         };
         Assert.Contains(OptimizerDiagnostics.Get(clients, 60), finding => finding.StartsWith("1 client is below 60 FPS: B@W"));
     }

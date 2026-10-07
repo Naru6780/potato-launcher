@@ -284,7 +284,7 @@ internal static class AppText
         Kill FFXIV closes every running FFXIV game process. Per-account and per-band kill actions only target clients Potato Launcher can match to those accounts.
 
         Optimizer
-        Optimizer opens a live monitor for running FFXIV clients. Adaptive Shared Pools uses the chosen main processor count to size a cache-local allocation, then automatically shares the remaining pools among followers; the follower processor count is used only by Split Lanes. Main selection order chooses one active main when multiple configured candidates are running. Live optimization applies CPU affinity; Planning only shows the proposed allocation without changing it. Auto RAM Optimization can be pressure-aware or trim followers above the configured threshold, and Rescue selected temporarily expands a stalled follower's CPU allocation.
+        Optimizer opens a live monitor for running FFXIV clients: FPS against the target cap, which cap each client holds (the game's own limiter or the driver), CPU, GPU and RAM. "Keep every client at its FPS cap" gives the client you are playing and your main clients Above Normal priority, stops Windows throttling covered or minimized windows, and holds minimized clients at the target with a CPU cap. "In-game frame limit" sets FFXIV's own Frame Rate option before each launch. Main selection order chooses one active main when several configured candidates are running. RAM trimming can be pressure-aware or trim followers above the configured threshold.
         """);
     }
 
@@ -988,7 +988,7 @@ internal sealed class MainForm : Form
         helpButton = Button("?", 588, 24, 34, 34, "Secondary");
         appToolTip = new AppToolTip(this);
         appToolTip.Attach(helpButton, "Help", "Open the Potato Launcher feature guide.");
-        appToolTip.Attach(optimizerButton, "Optimizer", "Monitor FFXIV clients and manage CPU, affinity, and memory optimization.");
+        appToolTip.Attach(optimizerButton, "Optimizer", "Monitor FFXIV clients: FPS, caps, CPU, GPU and RAM, and keep every client at its frame cap.");
         appToolTip.Attach(multibandButton, "Multiband", "Pair another PC and launch one band on each PC together.");
         helpButton.Click += (_, _) => ShowHelpWindow();
         background.Controls.Add(helpButton);
@@ -1023,7 +1023,7 @@ internal sealed class MainForm : Form
         FormClosed += async (_, _) =>
         {
             // Synchronous cleanup first: the app context exits on FormClosed, so anything after an await may never
-            // run (that previously left running clients with the optimizer's CPU affinity).
+            // run (that previously left running clients with the optimizer's priorities and CPU caps).
             clientLabels.Dispose();
             multibandForm?.Close();
             optimizerMonitor?.Close();

@@ -19,7 +19,10 @@ Windows 11 build 26200, FFXIV build hash 5BBC501D… (see `ExternalGameState.Sup
 - Windows timer throttling of covered/minimized windows is opted out (`PreventWindowsThrottling`) for all clients.
 
 ## Things measured to NOT help (don't re-add)
-- Hard CPU affinity lanes on a single-CCD CPU: only removes cores from clients; priority already protects the main.
+- Hard CPU affinity lanes on a single-CCD CPU: only removes cores from clients (every core is the same, and each
+  client runs several threads that then queue on the same core); priority already protects the main. Removed in
+  1.0.119. On a CPU with unequal cores (dual-CCD X3D, Intel P/E) the right tool would be a simple "keep clients
+  off the slow cores" mask, not a per-client lane allocator.
 - An "FPS rescue" priority loop: zero-sum when the CPU is saturated.
 - Constant working-set trimming at a fixed threshold: re-faults; pressure-aware trimming is fine (user keeps it on).
 

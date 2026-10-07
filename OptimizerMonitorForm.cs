@@ -10,28 +10,19 @@ internal sealed class OptimizerMonitorForm : Form
     private readonly DataGridView grid = new();
     private readonly Label summaryLabel = new();
     private readonly Label gpuStatusLabel = new();
-    private readonly CheckBox optimizerEnabled = new();
     private readonly CheckBox trimEnabled = new();
     private readonly CheckBox clientPolicyEnabled = new();
     private readonly NumericUpDown targetFps = new();
     private readonly CheckBox enforceFrameLimit = new();
     private readonly ToolTip toolTip = new();
     private readonly ComboBox trimMode = new();
-    private readonly ComboBox cpuOperationMode = new();
-    private readonly ComboBox assignmentMode = new();
-    private readonly ComboBox mainProcessors = new();
-    private readonly ComboBox followerProcessors = new();
     private readonly ComboBox roleClientInput = new();
     private readonly ComboBox roleInput = new();
     private readonly Label mainClientsLabel = new();
-    private readonly NumericUpDown reservedProcessors = new();
     private readonly NumericUpDown mainPriority = new();
     private readonly NumericUpDown trimTrigger = new();
-    private readonly Button applyButton = new NewsPillButton();
     private readonly Button saveButton = new NewsPillButton();
-    private readonly Button restoreButton = new NewsPillButton();
     private readonly Button trimButton = new NewsPillButton();
-    private readonly Button rescueButton = new NewsPillButton();
     private bool refreshing;
     private bool refreshQueued;
     private bool moveOrResizeActive;
@@ -45,8 +36,8 @@ internal sealed class OptimizerMonitorForm : Form
         this.palette = palette;
         Text = "Potato Optimizer";
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(1120, 780);
-        MinimumSize = new Size(940, 680);
+        Size = new Size(1120, 720);
+        MinimumSize = new Size(940, 620);
         Font = new Font("Segoe UI", 10F);
         DoubleBuffered = true;
         BuildUi();
@@ -112,7 +103,7 @@ internal sealed class OptimizerMonitorForm : Form
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 122));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 276));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 192));
         Controls.Add(root);
 
         var header = new OptimizerPanel { Dock = DockStyle.Fill, Radius = 20 };
@@ -139,16 +130,6 @@ internal sealed class OptimizerMonitorForm : Form
         titleStack.Controls.Add(title);
         headerLayout.Controls.Add(titleStack, 0, 0);
 
-        optimizerEnabled.Text = "CPU lanes (advanced)";
-        optimizerEnabled.Dock = DockStyle.None;
-        optimizerEnabled.Width = 230;
-        optimizerEnabled.Height = 26;
-        optimizerEnabled.CheckedChanged += (_, _) =>
-        {
-            if (refreshing) return;
-            optimizer.SetCpuOptimizationEnabled(optimizerEnabled.Checked);
-            RefreshView();
-        };
         trimEnabled.Text = "RAM trimming";
         trimEnabled.Dock = DockStyle.None;
         trimEnabled.Width = 230;
@@ -171,17 +152,6 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.Settings.MemoryTrimMode = trimMode.SelectedIndex == 1
                 ? MemoryTrimMode.Threshold
                 : MemoryTrimMode.PressureAware;
-            optimizer.SaveSettings();
-            RefreshView();
-        };
-        cpuOperationMode.DropDownStyle = ComboBoxStyle.DropDownList;
-        cpuOperationMode.Items.AddRange(["Live optimization — apply CPU affinity", "Planning only — no CPU changes"]);
-        cpuOperationMode.Width = 290;
-        cpuOperationMode.Height = 28;
-        cpuOperationMode.SelectedIndexChanged += (_, _) =>
-        {
-            if (refreshing) return;
-            optimizer.Settings.CpuPreviewOnly = cpuOperationMode.SelectedIndex == 1;
             optimizer.SaveSettings();
             RefreshView();
         };
@@ -233,14 +203,12 @@ internal sealed class OptimizerMonitorForm : Form
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Ram", HeaderText = "RAM in use", ReadOnly = true, FillWeight = 86 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Private", HeaderText = "RAM committed", ReadOnly = true, FillWeight = 96 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Threads", HeaderText = "Threads", ReadOnly = true, FillWeight = 72, Visible = false });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Affinity", HeaderText = "Affinity", ReadOnly = true, FillWeight = 130 });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Planned", HeaderText = "Planned", ReadOnly = true, FillWeight = 130 });
         grid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Trim", HeaderText = "Last trim", ReadOnly = true, FillWeight = 96 });
         root.Controls.Add(grid, 0, 1);
 
         var controls = new OptimizerPanel { Dock = DockStyle.Fill, Radius = 20 };
         root.Controls.Add(controls, 0, 2);
-        var controlGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 4, Padding = new Padding(18, 14, 18, 14), BackColor = Color.Transparent };
+        var controlGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 3, Padding = new Padding(18, 14, 18, 14), BackColor = Color.Transparent };
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
@@ -248,26 +216,9 @@ internal sealed class OptimizerMonitorForm : Form
         controlGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
-        controlGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         controlGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         controls.Controls.Add(controlGrid);
 
-        assignmentMode.DropDownStyle = ComboBoxStyle.DropDownList;
-        assignmentMode.DataSource = Enum.GetValues<CpuAssignmentMode>();
-        assignmentMode.SelectedIndexChanged += (_, _) =>
-        {
-            if (refreshing) return;
-            optimizer.Settings.CpuAssignmentMode = (CpuAssignmentMode)assignmentMode.SelectedItem!;
-            optimizer.SaveSettings();
-            UpdateModeControls();
-        };
-        mainProcessors.DropDownStyle = ComboBoxStyle.DropDownList;
-        var supportedLogicalProcessorCount = ProcessorAffinity.GetSupportedLogicalProcessorCount(Environment.ProcessorCount);
-        mainProcessors.DataSource = OptimizerSettings.GetAllowedLogicalProcessorCounts(supportedLogicalProcessorCount).ToList();
-        mainProcessors.SelectedIndexChanged += (_, _) => SaveSelectedProcessorCounts();
-        followerProcessors.DropDownStyle = ComboBoxStyle.DropDownList;
-        followerProcessors.DataSource = OptimizerSettings.GetAllowedLogicalProcessorCounts(supportedLogicalProcessorCount).ToList();
-        followerProcessors.SelectedIndexChanged += (_, _) => SaveSelectedProcessorCounts();
         roleClientInput.DropDownStyle = ComboBoxStyle.DropDownList;
         roleClientInput.SelectedIndexChanged += (_, _) => SyncRoleInputFromSelectedClient();
         roleInput.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -283,15 +234,8 @@ internal sealed class OptimizerMonitorForm : Form
         mainClientsLabel.AutoEllipsis = true;
         mainClientsLabel.BackColor = Color.Transparent;
         mainClientsLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        ConfigureStepper(reservedProcessors, 0, Math.Max(0, supportedLogicalProcessorCount - 1));
         ConfigureStepper(mainPriority, 1, 100);
         ConfigureStepper(trimTrigger, 128, 32768);
-        reservedProcessors.ValueChanged += (_, _) =>
-        {
-            if (refreshing) return;
-            optimizer.Settings.SystemReservedLogicalProcessors = (int)reservedProcessors.Value;
-            optimizer.SaveSettings();
-        };
         mainPriority.ValueChanged += (_, _) =>
         {
             if (refreshing) return;
@@ -309,14 +253,9 @@ internal sealed class OptimizerMonitorForm : Form
         var autoOptions = AutoOptionsRow();
         controlGrid.Controls.Add(autoOptions, 0, 0);
         controlGrid.SetColumnSpan(autoOptions, 5);
-        controlGrid.Controls.Add(Field("CPU lanes", assignmentMode), 0, 1);
-        controlGrid.Controls.Add(Field("Main logical processors", mainProcessors), 1, 1);
-        controlGrid.Controls.Add(Field("Follower logical processors (Split Lanes only)", followerProcessors), 2, 1);
-        controlGrid.Controls.Add(Field("Reserved logical processors", reservedProcessors), 3, 1);
-        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 4, 1);
-        controlGrid.Controls.Add(Field("Client", roleClientInput), 0, 2);
-        controlGrid.Controls.Add(Field("Selected client role", roleInput), 1, 2);
-        controlGrid.Controls.Add(Field("Main selection order (1 wins)", mainPriority), 2, 2);
+        controlGrid.Controls.Add(Field("Client", roleClientInput), 0, 1);
+        controlGrid.Controls.Add(Field("Selected client role", roleInput), 1, 1);
+        controlGrid.Controls.Add(Field("Main selection order (1 wins)", mainPriority), 2, 1);
         targetFps.Minimum = 15;
         targetFps.Maximum = 360;
         targetFps.Value = Math.Clamp(optimizer.Settings.TargetFps, 15, 360);
@@ -327,8 +266,8 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.Settings.TargetFps = (int)targetFps.Value;
             optimizer.SaveSettings();
         };
-        controlGrid.Controls.Add(Field("Target FPS (every client)", targetFps), 3, 2);
-        enforceFrameLimit.Text = "Set it in-game at each launch";
+        controlGrid.Controls.Add(Field("Target FPS (every client)", targetFps), 3, 1);
+        enforceFrameLimit.Text = "Set in-game at launch";
         enforceFrameLimit.AutoSize = true;
         enforceFrameLimit.BackColor = Color.Transparent;
         toolTip.SetToolTip(enforceFrameLimit,
@@ -340,18 +279,11 @@ internal sealed class OptimizerMonitorForm : Form
             optimizer.Settings.EnforceInGameFrameLimit = enforceFrameLimit.Checked;
             optimizer.SaveSettings();
         };
-        controlGrid.Controls.Add(Field("In-game frame limit", enforceFrameLimit), 4, 2);
-        controlGrid.Controls.Add(mainClientsLabel, 0, 3);
+        controlGrid.Controls.Add(Field("In-game frame limit", enforceFrameLimit), 4, 1);
+        controlGrid.Controls.Add(Field("Trim trigger MB", trimTrigger), 0, 2);
+        controlGrid.Controls.Add(mainClientsLabel, 1, 2);
         controlGrid.SetColumnSpan(mainClientsLabel, 2);
 
-        applyButton.Text = "Optimize CPU Now";
-        applyButton.Tag = "Secondary";
-        applyButton.Click += (_, _) =>
-        {
-            optimizer.ApplyNow();
-            RefreshView();
-            ShowFeedback(optimizer.Settings.CpuPreviewOnly ? "CPU allocation preview refreshed; no affinities were changed." : "CPU optimization applied.");
-        };
         saveButton.Text = "Save";
         saveButton.Tag = "Secondary";
         saveButton.Click += (_, _) =>
@@ -368,28 +300,9 @@ internal sealed class OptimizerMonitorForm : Form
             RefreshView();
             ShowFeedback("RAM optimization applied.");
         };
-        restoreButton.Text = "Restore clients";
-        restoreButton.Tag = "Danger";
-        restoreButton.Click += (_, _) =>
-        {
-            optimizer.RestoreClients();
-            RefreshView();
-            ShowFeedback("Client optimization restored.");
-        };
-        rescueButton.Text = "Rescue selected";
-        rescueButton.Tag = "Secondary";
-        rescueButton.Click += (_, _) =>
-        {
-            var processId = SelectedProcessId();
-            if (!processId.HasValue) return;
-            optimizer.RescueClient(processId.Value);
-            optimizer.ApplyNow();
-            RefreshView();
-            ShowFeedback("Selected client received a 30-second rescue allocation.");
-        };
         var buttonRow = ButtonRow();
-        controlGrid.Controls.Add(buttonRow, 2, 3);
-        controlGrid.SetColumnSpan(buttonRow, 3);
+        controlGrid.Controls.Add(buttonRow, 3, 2);
+        controlGrid.SetColumnSpan(buttonRow, 2);
         UpdateModeControls();
     }
 
@@ -403,14 +316,10 @@ internal sealed class OptimizerMonitorForm : Form
             BackColor = Color.Transparent,
             Padding = new Padding(0, 3, 0, 0)
         };
-        optimizerEnabled.Margin = new Padding(0, 3, 22, 0);
         trimEnabled.Margin = new Padding(0, 3, 22, 0);
         trimMode.Margin = new Padding(0, 2, 22, 0);
-        cpuOperationMode.Margin = new Padding(0, 2, 22, 0);
-        panel.Controls.Add(optimizerEnabled);
         panel.Controls.Add(trimEnabled);
         panel.Controls.Add(trimMode);
-        panel.Controls.Add(cpuOperationMode);
         return panel;
     }
 
@@ -423,7 +332,7 @@ internal sealed class OptimizerMonitorForm : Form
     private FlowLayoutPanel ButtonRow()
     {
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Color.Transparent };
-        foreach (var button in new[] { applyButton, rescueButton, trimButton, saveButton, restoreButton })
+        foreach (var button in new[] { trimButton, saveButton })
         {
             button.Width = 116;
             button.Height = 36;
@@ -488,12 +397,8 @@ internal sealed class OptimizerMonitorForm : Form
 
     private bool IsEditorActive()
     {
-        return assignmentMode.DroppedDown ||
-               mainProcessors.DroppedDown ||
-               followerProcessors.DroppedDown ||
-               roleClientInput.DroppedDown ||
+        return roleClientInput.DroppedDown ||
                roleInput.DroppedDown ||
-               cpuOperationMode.DroppedDown ||
                trimMode.DroppedDown;
     }
 
@@ -505,21 +410,12 @@ internal sealed class OptimizerMonitorForm : Form
         {
             var settings = optimizer.Settings;
             settings.Normalize();
-            optimizerEnabled.Checked = settings.OptimizerEnabled && settings.CpuAffinityOptimizationEnabled;
             trimEnabled.Checked = settings.WorkingSetTrimEnabled;
             clientPolicyEnabled.Checked = settings.ClientPolicyEnabled;
             SetSelectedItemIfIdle(trimMode, settings.MemoryTrimMode == MemoryTrimMode.Threshold
                 ? "Auto trim at threshold"
                 : "Pressure-aware");
-            SetSelectedItemIfIdle(cpuOperationMode, settings.CpuPreviewOnly
-                ? "Planning only — no CPU changes"
-                : "Live optimization — apply CPU affinity");
-            applyButton.Text = settings.CpuPreviewOnly ? "Preview CPU Plan" : "Optimize CPU Now";
-            SetSelectedItemIfIdle(assignmentMode, settings.CpuAssignmentMode);
             UpdateModeControls();
-            SetSelectedItemIfIdle(mainProcessors, settings.MainLogicalProcessors);
-            SetSelectedItemIfIdle(followerProcessors, settings.FollowerLogicalProcessors);
-            SetStepperValueIfIdle(reservedProcessors, settings.SystemReservedLogicalProcessors);
             SetStepperValueIfIdle(trimTrigger, settings.TrimTriggerMBPerClient);
             SetStepperValueIfIdle(targetFps, settings.TargetFps);
             enforceFrameLimit.Checked = settings.EnforceInGameFrameLimit;
@@ -539,11 +435,8 @@ internal sealed class OptimizerMonitorForm : Form
                 Environment.NewLine + capacity.Summary +
                 (findings.Count > 0 ? Environment.NewLine + "⚠ " + findings[0] + (findings.Count > 1 ? $"  (+{findings.Count - 1}, hover)" : "") : "");
             toolTip.SetToolTip(summaryLabel, findings.Count > 0 ? string.Join(Environment.NewLine + Environment.NewLine, findings) : capacity.Summary);
-            var lanesOn = settings.OptimizerEnabled && settings.CpuAffinityOptimizationEnabled;
-            if (grid.Columns["Affinity"]!.Visible != lanesOn) grid.Columns["Affinity"]!.Visible = lanesOn;
-            if (grid.Columns["Planned"]!.Visible != lanesOn) grid.Columns["Planned"]!.Visible = lanesOn;
             if (grid.Columns["Trim"]!.Visible != settings.WorkingSetTrimEnabled) grid.Columns["Trim"]!.Visible = settings.WorkingSetTrimEnabled;
-            gpuStatusLabel.Text = settings.CpuPreviewOnly && lanesOn ? "Planning only — CPU lanes not applied" : optimizer.GpuStatusText;
+            gpuStatusLabel.Text = optimizer.GpuStatusText;
         }
         finally
         {
@@ -614,9 +507,7 @@ internal sealed class OptimizerMonitorForm : Form
         SetCell(row, "Ram", $"{snapshot.WorkingSetBytes / 1024d / 1024d:0} MB");
         SetCell(row, "Private", $"{snapshot.PrivateBytes / 1024d / 1024d:0} MB");
         SetCell(row, "Threads", snapshot.ThreadCount);
-        SetCell(row, "Role", snapshot.IsRescued ? "Rescue" : string.IsNullOrEmpty(snapshot.Role) ? "Background" : snapshot.Role);
-        SetCell(row, "Affinity", snapshot.AffinityMask.HasValue ? ProcessorAffinity.FormatMask(snapshot.AffinityMask.Value) : "N/A");
-        SetCell(row, "Planned", snapshot.PlannedAffinityMask.HasValue ? ProcessorAffinity.FormatMask(snapshot.PlannedAffinityMask.Value) : "N/A");
+        SetCell(row, "Role", string.IsNullOrEmpty(snapshot.Role) ? "Background" : snapshot.Role);
         SetCell(row, "Trim", snapshot.LastTrimUtc.HasValue ? snapshot.LastTrimUtc.Value.ToLocalTime().ToString("HH:mm:ss") : "-");
     }
 
@@ -689,43 +580,10 @@ internal sealed class OptimizerMonitorForm : Form
         return $"{bytes / 1024d / 1024d:0} MB";
     }
 
-    private void SaveSelectedProcessorCounts()
-    {
-        if (refreshing) return;
-        if (mainProcessors.SelectedItem is int mainCount) optimizer.Settings.MainLogicalProcessors = mainCount;
-        if (followerProcessors.SelectedItem is int followerCount) optimizer.Settings.FollowerLogicalProcessors = followerCount;
-        optimizer.SaveSettings();
-    }
-
     private void UpdateModeControls()
     {
-        var mode = assignmentMode.SelectedItem is CpuAssignmentMode selectedMode
-            ? selectedMode
-            : optimizer.Settings.CpuAssignmentMode;
-        // CPU lanes are an advanced, opt-in mode; their controls stay greyed out until it is switched on.
-        var lanesOn = optimizer.Settings.OptimizerEnabled && optimizer.Settings.CpuAffinityOptimizationEnabled;
-        assignmentMode.Enabled = lanesOn;
-        cpuOperationMode.Enabled = lanesOn;
-        mainProcessors.Enabled = lanesOn && UsesManualMainProcessorCount(mode);
-        followerProcessors.Enabled = lanesOn && UsesManualFollowerProcessorCount(mode);
-        reservedProcessors.Enabled = lanesOn && UsesReservedProcessorCount(mode);
         trimMode.Enabled = optimizer.Settings.WorkingSetTrimEnabled;
         trimTrigger.Enabled = optimizer.Settings.WorkingSetTrimEnabled && optimizer.Settings.MemoryTrimMode == MemoryTrimMode.Threshold;
-    }
-
-    internal static bool UsesManualMainProcessorCount(CpuAssignmentMode mode)
-    {
-        return mode is CpuAssignmentMode.SplitLanes or CpuAssignmentMode.AdaptiveSharedPools;
-    }
-
-    internal static bool UsesManualFollowerProcessorCount(CpuAssignmentMode mode)
-    {
-        return mode == CpuAssignmentMode.SplitLanes;
-    }
-
-    internal static bool UsesReservedProcessorCount(CpuAssignmentMode mode)
-    {
-        return mode is CpuAssignmentMode.SplitLanes or CpuAssignmentMode.AdaptiveSharedPools;
     }
 
     private void UpdateRoleControls(IReadOnlyList<OptimizerClientSnapshot> snapshots)
@@ -837,7 +695,7 @@ internal sealed class OptimizerMonitorForm : Form
                 pill.ForeColor = Color.White;
                 break;
             case Button button:
-                button.BackColor = ReferenceEquals(button, restoreButton) ? palette.Danger : palette.Secondary;
+                button.BackColor = palette.Secondary;
                 button.ForeColor = Color.White;
                 break;
         }

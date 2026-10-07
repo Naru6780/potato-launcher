@@ -11,7 +11,7 @@ Potato Launcher is a Windows companion for FFXIV players who manage several XIVL
 - Add a cooldown between clients or wait for each client to initialize before continuing.
 - Pair two trusted PCs on the same private network and start local and remote bands together.
 - Browse accounts as a compact list or a portrait roster populated from the Lodestone.
-- Watch FFXIV CPU, GPU, memory, affinity, and working-set status from the built-in monitor.
+- Watch FFXIV FPS, frame caps, CPU, GPU, and memory from the built-in monitor, and keep every client at its cap.
 - Use Artemis as an optional desktop pet while the launcher is minimized.
 - Install updates directly from GitHub Releases without losing local settings.
 

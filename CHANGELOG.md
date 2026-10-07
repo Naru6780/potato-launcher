@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.119 - 2026-10-07
+
+- Removed CPU lanes (advanced) and everything behind it: the Split Lanes / Adaptive Shared Pools / One core per client / All cores allocator, main and follower logical-processor counts, reserved processors, per-main reservations, Live/Planning mode, the Affinity and Planned columns, "Optimize CPU Now", "Restore clients" and "Rescue selected". Measured on a single-CCD CPU, pinning only took cores away from the followers (they dropped to 48-58 FPS) and could not make the main any faster; "Keep every client at its FPS cap" (priorities + in-game frame limit) holds every client at 60 at ~2.5% CPU each. Old optimizer.json keys are ignored.
+- A follower whose window stays hung for a minute still raises one notification.
+- Optimizer window is shorter; the bottom panel now holds role, target FPS, in-game frame limit, trim trigger and the RAM/Save buttons.
+
 ## 1.0.118 - 2026-10-07
 
 - DLSS 5 clients at 60 again. The RenoDX add-on retries its Streamline swap-chain discovery every frame (a DXGI factory plus 8 log lines per frame, ~500 KB/s), a fixed ~3.7 ms that serializes with the game's 60 fps limiter (= ~48 FPS) but hides inside the frame under the NVIDIA driver cap. Potato now sets the in-game Frame Rate to **None** before launching a DLSS 5 client and to the target option for every other client. Keep the NVIDIA profile Max Frame Rate at 60 (it is).
