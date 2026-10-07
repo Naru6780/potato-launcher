@@ -12,6 +12,8 @@ internal sealed class LoadSample
     public long SystemBusy { get; private init; }
     public long SystemTotal { get; private init; }
     public Dictionary<int, (TimeSpan Cpu, uint? Frames)> Clients { get; private init; } = [];
+    // CPU time of every other program (not the clients, not Idle/System): detects outside load changing mid-test.
+    public TimeSpan OtherCpu { get; private init; }
 
     public static LoadSample Take(IReadOnlyList<ClientRef> clients, ExternalGameState frames)
     {
@@ -26,8 +28,18 @@ internal sealed class LoadSample
             }
             catch { }
         }
+        var other = TimeSpan.Zero;
+        var clientIds = clients.Select(client => client.ProcessId).ToHashSet();
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                if (process.Id <= 4 || clientIds.Contains(process.Id)) continue;
+                try { other += process.TotalProcessorTime; } catch { }
+            }
+        }
         // Kernel time includes idle time.
-        return new LoadSample { TakenUtc = DateTime.UtcNow, SystemBusy = kernel + user - idle, SystemTotal = kernel + user, Clients = values };
+        return new LoadSample { TakenUtc = DateTime.UtcNow, SystemBusy = kernel + user - idle, SystemTotal = kernel + user, Clients = values, OtherCpu = other };
     }
 
     /// <summary>Percent of the whole CPU (all logical processors) and FPS per client between two samples.</summary>
@@ -47,7 +59,9 @@ internal sealed class LoadSample
             clientCpu += share;
             if (before.Frames is uint a && after.Frames is uint b) fps[id] = unchecked(b - a) / seconds;
         }
-        return new LoadWindow(systemCpu, clientCpu, cpu, fps);
+        // Processes that start or exit between the samples make this approximate; it only needs to catch big swings.
+        var otherCpu = Math.Max(0, 100d * (end.OtherCpu - start.OtherCpu).TotalSeconds / seconds / Environment.ProcessorCount);
+        return new LoadWindow(systemCpu, clientCpu, cpu, fps, otherCpu);
     }
 
     [DllImport("kernel32.dll")]
@@ -55,11 +69,11 @@ internal sealed class LoadSample
     private static extern bool GetSystemTimes(out long idle, out long kernel, out long user);
 }
 
-internal sealed record LoadWindow(double SystemCpu, double ClientCpu, IReadOnlyDictionary<int, double> CpuByClient, IReadOnlyDictionary<int, double> FpsByClient);
+internal sealed record LoadWindow(double SystemCpu, double ClientCpu, IReadOnlyDictionary<int, double> CpuByClient, IReadOnlyDictionary<int, double> FpsByClient, double OtherCpu = 0);
 
 internal sealed record PlacementScore(CpuPlacementMode Mode, double SystemCpu, double ClientCpu, double? MainFps, double? LowestFps, int AtTarget, int Measured);
 
-internal sealed record PlacementTestResult(IReadOnlyList<PlacementScore> Scores, CpuPlacementMode Winner, string Summary);
+internal sealed record PlacementTestResult(IReadOnlyList<PlacementScore> Scores, CpuPlacementMode Winner, string Summary, bool Inconclusive = false);
 
 /// <summary>
 /// Tries each placement on the running clients and keeps the one that holds the most clients at the target FPS, then
@@ -81,16 +95,19 @@ internal sealed class PlacementTest
     private DateTime lastTickUtc;
     internal static readonly TimeSpan MaxTickGap = TimeSpan.FromSeconds(5);
 
-    public PlacementTest(IReadOnlyList<CpuPlacementMode> modes, int rounds, TimeSpan settle, TimeSpan measure, int targetFps, int? mainId)
+    public PlacementTest(IReadOnlyList<CpuPlacementMode> modes, int rounds, TimeSpan settle, TimeSpan measure, int targetFps, int? mainId,
+        CpuPlacementMode? preferred = null)
     {
         order = Enumerable.Range(0, rounds).SelectMany(round => round % 2 == 0 ? modes : modes.Reverse()).ToList();
         this.settle = settle;
         this.measure = measure;
         this.targetFps = targetFps;
         MainId = mainId;
+        Preferred = preferred;
     }
 
     public int? MainId { get; }
+    public CpuPlacementMode? Preferred { get; }
     public bool Done { get; private set; }
     public string? Error { get; private set; }
     public PlacementTestResult? Result { get; private set; }
@@ -141,10 +158,16 @@ internal sealed class PlacementTest
         phaseStartUtc = nowUtc;
         if (++phase < order.Count) return;
         Done = true;
-        Result = Score(windows, targetFps, MainId);
+        Result = Score(windows, targetFps, MainId, Preferred);
     }
 
-    internal static PlacementTestResult Score(IReadOnlyList<(CpuPlacementMode Mode, LoadWindow Window)> windows, int targetFps, int? mainId)
+    // Outside load (other programs) moving more than this during the test swamps the ~2-4 point differences measured.
+    internal const double OtherCpuMaxSpread = 3.0;
+
+    /// <param name="preferred">The placement kept when results are within the noise: the topology default, which two
+    /// clean runs measured as cheaper than no pinning (a tie used to fall back to no pinning).</param>
+    internal static PlacementTestResult Score(IReadOnlyList<(CpuPlacementMode Mode, LoadWindow Window)> windows, int targetFps, int? mainId,
+        CpuPlacementMode? preferred = null)
     {
         var scores = windows.GroupBy(entry => entry.Mode).Select(group =>
         {
@@ -161,12 +184,20 @@ internal sealed class PlacementTest
                 fpsByClient.Count);
         }).OrderBy(score => score.Mode).ToList();
 
-        var winner = scores[0];
-        foreach (var candidate in scores.Skip(1)) if (Better(candidate, winner)) winner = candidate;
+        var winner = scores.FirstOrDefault(score => score.Mode == preferred) ?? scores[0];
+        foreach (var candidate in scores.Where(score => score != winner)) if (Better(candidate, winner)) winner = candidate;
         var lines = scores.Select(score =>
             $"{Label(score.Mode)}: CPU {score.SystemCpu:0.0}% (clients {score.ClientCpu:0.0}%), {score.AtTarget}/{score.Measured} at {targetFps}" +
             (score.MainFps is double main ? $", main {main:0}" : "") +
             (score.LowestFps is double low ? $", lowest {low:0}" : ""));
+        var others = windows.Select(entry => entry.Window.OtherCpu).ToList();
+        var spread = others.Count == 0 ? 0 : others.Max() - others.Min();
+        if (spread > OtherCpuMaxSpread)
+        {
+            var noisy = $"Inconclusive: other programs' CPU use changed by {spread:0.0} points during the test, more than the differences it measures. " +
+                        "Your current placement was kept. Close heavy programs (compiles, video exports, analysis tools) and run it again.  " + string.Join("  ·  ", lines);
+            return new PlacementTestResult(scores, winner.Mode, noisy, Inconclusive: true);
+        }
         var summary = $"Best: {Label(winner.Mode)}.  " + string.Join("  ·  ", lines);
         return new PlacementTestResult(scores, winner.Mode, summary);
     }
@@ -174,7 +205,8 @@ internal sealed class PlacementTest
     /// <summary>Bumped when the scoring changes, so results stored by an older version are measured again.</summary>
     // 3: the test now uses the configured main (1.0.120/121 measured without it when no window had been clicked).
     // 4: windows timed from their own sample, starved/impossible runs rejected (a 1.0.122 run stored garbage).
-    public const int ScoringVersion = 4;
+    // 5: outside-load check and ties keep the default (a 1.0.125 run during a background analysis stored "No pinning").
+    public const int ScoringVersion = 5;
 
     // The game's own 60 fps limiter delivers ~58.0-58.2, so a 2 FPS slack put clients on the threshold and 0.1 FPS of
     // noise decided the winner (seen on a 9800X3D). 3 FPS matches "at cap" everywhere else in the Optimizer.

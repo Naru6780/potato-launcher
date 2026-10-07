@@ -287,6 +287,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private readonly Dictionary<int, (DateTime At, TimeSpan Cpu)> placementLoad = [];
     private readonly Dictionary<int, double> clientLoad = [];
     private double? followerLoad;
+    private (CpuPlacementMode Mode, int? MainId, PlacementState State)? placementMemory;
     private string lastPlacementSignature = "";
     private PlacementTest? placementTest;
     private readonly Queue<DateTime> externalPriorityChanges = new();
@@ -506,7 +507,8 @@ internal sealed class IntegratedOptimizerService : IDisposable
         var main = livePlacementMainId ?? stickyMainId ?? lastForegroundClientId;
         List<CpuPlacementMode> modes = [CpuPlacementMode.Off, CpuPlacementMode.ReserveMain, CpuPlacementMode.Lanes];
         if (Topology.Domains.Count > 1) modes.Add(CpuPlacementMode.CacheCcdForMain);
-        placementTest = new PlacementTest(modes, rounds: 2, TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(20), Settings.TargetFps, main);
+        placementTest = new PlacementTest(modes, rounds: 2, TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(20), Settings.TargetFps, main,
+            CpuPlacementPlanner.DefaultFor(Topology));
         LogDecision($"Placement test started (main PID {main?.ToString() ?? "none"}).");
         return null;
     }
@@ -521,7 +523,7 @@ internal sealed class IntegratedOptimizerService : IDisposable
     private void FinishPlacementTest(PlacementTest test)
     {
         placementTest = null;
-        if (test.Result is { } result)
+        if (test.Result is { Inconclusive: false } result)
         {
             Settings.TestedPlacement = result.Winner;
             Settings.TestedPlacementTopology = MeasuredKey;
@@ -553,7 +555,10 @@ internal sealed class IntegratedOptimizerService : IDisposable
         UpdateFollowerLoad(clients, mainId);
         // Size the main's cores from measured load only: a guess here would re-pin everyone a second later.
         if (mode != CpuPlacementMode.Off && followerLoad is null && clients.Count > 1) return;
-        var plan = CpuPlacementPlanner.Plan(topology, mode, clients.Select(client => client.Id).ToList(), mainId, followerLoad);
+        // The previous decision only carries over while the mode and the main stay the same.
+        var previous = placementMemory is { } memory && memory.Mode == mode && memory.MainId == mainId ? memory.State : null;
+        var plan = CpuPlacementPlanner.Plan(topology, mode, clients.Select(client => client.Id).ToList(), mainId, followerLoad, previous, out var used);
+        placementMemory = (mode, mainId, used);
         foreach (var client in clients)
         {
             var desired = plan.GetValueOrDefault(client.Id, topology.AllMask);

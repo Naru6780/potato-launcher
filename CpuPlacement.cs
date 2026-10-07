@@ -26,6 +26,9 @@ internal enum CpuPlacementSetting
     CacheCcdForMain
 }
 
+/// <summary>What the last plan chose, fed back into the next one for hysteresis.</summary>
+internal sealed record PlacementState(int? MainCores, bool CacheCcdEngaged);
+
 internal static class CpuPlacementPlanner
 {
     /// <summary>
@@ -44,15 +47,33 @@ internal static class CpuPlacementPlanner
     /// Physical cores kept for the main client: up to half of the fastest CCD (at most 4), but never so many that the
     /// followers' cores drop below their measured load plus headroom. 0 = the main shares cores with everyone.
     /// </summary>
-    public static int MainCoreCount(CpuTopology topology, int followers, double? followerLoad)
+    public static int MainCoreCount(CpuTopology topology, int followers, double? followerLoad) =>
+        MaxMainCores(topology, (followerLoad ?? followers * UnmeasuredFollowerLoad) * FollowerHeadroom);
+
+    // Taking cores back for the main needs this much room: with one threshold, a follower load sitting on it made the
+    // reservation flip every few seconds and re-pin every client each time (seen in 1.0.125: 0-7 <-> 0-5).
+    internal const double RegrowHeadroom = 1.8;
+
+    /// <summary>
+    /// Same as MainCoreCount, with hysteresis: the main gives cores up as soon as followers need them, but only takes
+    /// them back once followers clearly have room (RegrowHeadroom), so a load near the threshold cannot flip it.
+    /// </summary>
+    public static int MainCoreCount(CpuTopology topology, int followers, double? followerLoad, int? previous)
+    {
+        var load = followerLoad ?? followers * UnmeasuredFollowerLoad;
+        var allowed = MaxMainCores(topology, load * FollowerHeadroom);
+        if (previous is not int current || current > allowed) return allowed;
+        return Math.Min(allowed, Math.Max(current, MaxMainCores(topology, load * RegrowHeadroom)));
+    }
+
+    private static int MaxMainCores(CpuTopology topology, double neededForFollowers)
     {
         if (topology.Domains.Count == 0) return 0;
         var first = topology.Domains[0].Cores;
-        var needed = (followerLoad ?? followers * UnmeasuredFollowerLoad) * FollowerHeadroom;
         for (var count = Math.Clamp(first.Count / 2, 1, 4); count > 0; count--)
         {
             var reserved = first.Take(count).Sum(core => System.Numerics.BitOperations.PopCount(unchecked((ulong)core.Mask)));
-            if (topology.LogicalCount - reserved >= needed) return count;
+            if (topology.LogicalCount - reserved >= neededForFollowers) return count;
         }
         return 0;
     }
@@ -61,8 +82,17 @@ internal static class CpuPlacementPlanner
     /// Affinity mask per client. Clients are listed oldest first so the plan stays stable as clients come and go.
     /// A follower never straddles two CCDs: crossing them costs a game far more than sharing cores does.
     /// </summary>
-    public static Dictionary<int, long> Plan(CpuTopology topology, CpuPlacementMode mode, IReadOnlyList<int> clientIds, int? mainId, double? followerLoad = null)
+    public static Dictionary<int, long> Plan(CpuTopology topology, CpuPlacementMode mode, IReadOnlyList<int> clientIds, int? mainId, double? followerLoad = null) =>
+        Plan(topology, mode, clientIds, mainId, followerLoad, previous: null, out _);
+
+    /// <summary>
+    /// Plan with memory of the previous decision (hysteresis), so a follower load near a threshold cannot make the
+    /// placement flip back and forth. Pass the returned state back in on the next call.
+    /// </summary>
+    public static Dictionary<int, long> Plan(CpuTopology topology, CpuPlacementMode mode, IReadOnlyList<int> clientIds, int? mainId,
+        double? followerLoad, PlacementState? previous, out PlacementState used)
     {
+        used = new PlacementState(null, false);
         var plan = new Dictionary<int, long>();
         if (clientIds.Count == 0) return plan;
         if (mode == CpuPlacementMode.Off || !topology.IsSupported || clientIds.Count == 1)
@@ -76,8 +106,12 @@ internal static class CpuPlacementPlanner
         var hasMain = mainId is int main && clientIds.Contains(main);
         if (mode == CpuPlacementMode.CacheCcdForMain)
         {
-            if (hasMain && FollowersFitOutsideCacheCcd(topology, clientIds.Count - 1, followerLoad))
+            var fits = previous?.CacheCcdEngaged == true
+                ? FollowersFitOutsideCacheCcd(topology, clientIds.Count - 1, followerLoad)
+                : FollowersFitOutsideCacheCcd(topology, clientIds.Count - 1, followerLoad, CacheCcdReenterHeadroom);
+            if (hasMain && fits)
             {
+                used = new PlacementState(null, true);
                 plan[mainId!.Value] = topology.Domains[0].Mask;
                 var others = topology.Domains.Skip(1).Select(domain => domain.Mask).ToList();
                 var load = new int[others.Count];
@@ -95,7 +129,9 @@ internal static class CpuPlacementPlanner
         }
         if (hasMain)
         {
-            var reserved = remaining[0].Take(MainCoreCount(topology, clientIds.Count - 1, followerLoad)).ToList();
+            var count = MainCoreCount(topology, clientIds.Count - 1, followerLoad, previous?.MainCores);
+            used = new PlacementState(count, false);
+            var reserved = remaining[0].Take(count).ToList();
             // Never leave followers with nothing.
             if (reserved.Count > 0 && remaining.Sum(cores => cores.Count) - reserved.Count >= 1)
             {
@@ -143,11 +179,14 @@ internal static class CpuPlacementPlanner
     // because Test placements verifies FPS before Auto ever picks this mode.
     internal const double CacheCcdHeadroom = 1.25;
 
-    internal static bool FollowersFitOutsideCacheCcd(CpuTopology topology, int followers, double? followerLoad)
+    // Moving followers back off the cache CCD once they left it needs more room than staying there.
+    internal const double CacheCcdReenterHeadroom = 1.5;
+
+    internal static bool FollowersFitOutsideCacheCcd(CpuTopology topology, int followers, double? followerLoad, double headroom = CacheCcdHeadroom)
     {
         if (topology.Domains.Count < 2 || followers == 0) return false;
         var outside = topology.Domains.Skip(1).Sum(domain => domain.LogicalCount);
-        return (followerLoad ?? followers * UnmeasuredFollowerLoad) * CacheCcdHeadroom <= outside;
+        return (followerLoad ?? followers * UnmeasuredFollowerLoad) * headroom <= outside;
     }
 
     private static int Threads(long mask) => Math.Max(1, System.Numerics.BitOperations.PopCount(unchecked((ulong)mask)));

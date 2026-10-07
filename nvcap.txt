@@ -1,2 +1,0 @@
-1 CCD, 8 cores / 16 threads, 96 MB L3: every core is equal
-NVIDIA Max Frame Rate for FFXIV: 60

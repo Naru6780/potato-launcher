@@ -110,8 +110,9 @@ public class CpuPlacementTests
     {
         var topology = R9950X3D();
         var clients = Enumerable.Range(1, 16).ToList();
-        // His measured load: ~2.3% of 32 threads = ~0.74 thread per follower, 11 in total; fits in 16 with 25% spare.
-        var plan = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.CacheCcdForMain, clients, mainId: 1, followerLoad: 15 * 0.74);
+        // 15 followers at 0.6 thread = 9 in total: fits in the other CCD's 16 threads with 50% spare, so it engages.
+        // (At his measured ~11 threads it only stays engaged once in, it does not enter from scratch: see CacheCcd hysteresis.)
+        var plan = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.CacheCcdForMain, clients, mainId: 1, followerLoad: 15 * 0.6);
         Assert.Equal(0xFFFFL, plan[1]);
         Assert.All(clients.Skip(1), id => Assert.Equal(unchecked((long)0xFFFF0000), plan[id]));
 
@@ -188,6 +189,62 @@ public class CpuPlacementTests
         Assert.All(result.Scores, score => Assert.Equal(8, score.AtTarget));
         // 4 points below no pinning; lanes are only 1.7 lower again, inside the noise, so the simpler one stays.
         Assert.Equal(CpuPlacementMode.ReserveMain, result.Winner);
+    }
+
+    [Fact]
+    public void MainCores_DoNotFlipWhenFollowerLoadSitsOnTheThreshold()
+    {
+        // The 9800X3D case from 1.0.125's log: 7 followers at ~5.3-5.4 threads flipped the main between 0-7 and 0-5.
+        var topology = R9800X3D();
+        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.4, previous: 4)); // followers need room: give it now
+        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.3, previous: 3)); // back under the line: not enough to regrow
+        Assert.Equal(3, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.0, previous: 3));
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 4.0, previous: 3)); // clearly room again
+        Assert.Equal(4, CpuPlacementPlanner.MainCoreCount(topology, 7, 5.3, previous: null)); // first decision: plain threshold
+
+        var ids = Enumerable.Range(1, 8).ToList();
+        var first = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.ReserveMain, ids, 1, 5.4, previous: null, out var state);
+        Assert.Equal(0x3FL, first[1]);
+        var next = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.ReserveMain, ids, 1, 5.3, state, out state);
+        Assert.Equal(0x3FL, next[1]);
+    }
+
+    [Fact]
+    public void CacheCcd_DoesNotFlipNearItsThreshold()
+    {
+        var topology = R9950X3D();
+        var ids = Enumerable.Range(1, 16).ToList();
+        // 15 followers at 13.5 threads: fits with 25% spare (16.9 > 16? no) -> not engaged from scratch at 1.5x either.
+        var engaged = CpuPlacementPlanner.Plan(topology, CpuPlacementMode.CacheCcdForMain, ids, 1, 10.0, previous: null, out var state);
+        Assert.True(state.CacheCcdEngaged);
+        Assert.Equal(0xFFFFL, engaged[1]);
+        // Load rises to 12: still fits at 1.25x (15 <= 16), stays engaged.
+        CpuPlacementPlanner.Plan(topology, CpuPlacementMode.CacheCcdForMain, ids, 1, 12.0, state, out state);
+        Assert.True(state.CacheCcdEngaged);
+        // From scratch, 12 needs 1.5x = 18 > 16: not engaged.
+        CpuPlacementPlanner.Plan(topology, CpuPlacementMode.CacheCcdForMain, ids, 1, 12.0, previous: null, out var fresh);
+        Assert.False(fresh.CacheCcdEngaged);
+    }
+
+    [Fact]
+    public void Score_TiesKeepTheDefaultAndOutsideLoadMakesItInconclusive()
+    {
+        static LoadWindow Window(double system, double other) =>
+            new(system, system - 12, new Dictionary<int, double>(), new Dictionary<int, double> { [1] = 58.1, [2] = 58.2 }, other);
+
+        // Within 2 points: the default (main gets its own cores) stays instead of falling back to no pinning.
+        var tie = PlacementTest.Score([
+            (CpuPlacementMode.Off, Window(59.4, 19)), (CpuPlacementMode.ReserveMain, Window(58.2, 19)), (CpuPlacementMode.Lanes, Window(60.9, 19))],
+            60, mainId: 1, preferred: CpuPlacementMode.ReserveMain);
+        Assert.Equal(CpuPlacementMode.ReserveMain, tie.Winner);
+        Assert.False(tie.Inconclusive);
+
+        // A background job that moved by 6 points during the test: inconclusive, nothing should be stored.
+        var noisy = PlacementTest.Score([
+            (CpuPlacementMode.Off, Window(59.4, 22)), (CpuPlacementMode.ReserveMain, Window(54.0, 16)), (CpuPlacementMode.Lanes, Window(60.9, 21))],
+            60, mainId: 1, preferred: CpuPlacementMode.ReserveMain);
+        Assert.True(noisy.Inconclusive);
+        Assert.StartsWith("Inconclusive", noisy.Summary);
     }
 
     [Fact]

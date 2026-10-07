@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.126 - 2026-10-07
+
+- Fixed placement flapping: the main's reserved cores flipped (0-7 <-> 0-5) when follower load sat on the threshold, re-pinning every client each time. Hysteresis: shrink at 1.5x headroom, regrow only at 1.8x; cache-CCD mode enters at 1.5x, stays down to 1.25x.
+- Test placements: records other programs' CPU per measurement; a spread over 3 points marks the run inconclusive and keeps the current placement. Ties now keep the topology default (main gets its own cores) instead of no pinning. Earlier results discarded (scoring v5).
+
 ## 1.0.125 - 2026-10-07
 
 - "Main: exact 60 via NVIDIA cap" is off by default: the in-game limit is cheaper (6.26% vs 7.07% CPU on the main, measured) and is the default for every client. Setting renamed so 1.0.124's default-on value is not carried over.
