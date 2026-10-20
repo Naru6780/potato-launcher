@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.132 - 2026-10-21
+
+- Added readiness/FPS detection compatibility for FFXIV build 2026.10.16.0000.0000. Unknown builds still fail safely; unsupported-build messages now include the executable hash for diagnosis.
+- Game-window titles show only the confirmed character name, including through zone loading. Before a character is confirmed, the title stays FINAL FANTASY XIV. Internal Character@World identities are preserved for optimizer matching.
+- Verified the updated executable's six signatures offline and passed all 326 tests. Live launch-queue transitions still require user verification.
+
 ## 1.0.131 - 2026-10-07
 
 - Check for updates finds a release the minute it is published. It asks the GitHub API which release is latest and downloads that tag's zip; the "releases/latest/download" redirect it used before is cached for minutes after a release goes live (right after 1.0.130 it still served 1.0.129, so the button said "already up to date"). The redirect remains the fallback when the API is unreachable.
