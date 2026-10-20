@@ -6,10 +6,22 @@ public class ClientIdentitiesTests
     public void LoadingScreenKeepsTheConfirmedCharacterName()
     {
         var loading = new ExternalGameSnapshot(WorldReadiness.Loading, "");
-        Assert.Equal("Test Player@Jenova", ClientLabels.Title("account", loading, "Test Player@Jenova"));
-        Assert.Contains("Loading", ClientLabels.Title("account", loading));
+        Assert.Equal("Test Player", ClientLabels.Title("account", loading, "Test Player@Jenova"));
+        Assert.Equal("FINAL FANTASY XIV", ClientLabels.Title("account", loading));
         // At the title screen / character select the character may change, so the label is not kept there.
-        Assert.Contains("Client running", ClientLabels.Title("account", new ExternalGameSnapshot(WorldReadiness.Unknown, ""), "Test Player@Jenova"));
+        Assert.Equal("FINAL FANTASY XIV", ClientLabels.Title("account", new ExternalGameSnapshot(WorldReadiness.Unknown, ""), "Test Player@Jenova"));
+    }
+
+    [Fact]
+    public void DisplayNameDoesNotReplaceWorldQualifiedInternalIdentity()
+    {
+        var state = new ExternalGameSnapshot(WorldReadiness.InWorld, "", "Test Player", 12, 132, 40);
+        Assert.Equal("Test Player", ClientLabels.Title("account", state));
+        Assert.Equal("Test Player@Jenova", ClientLabels.ConfirmedIdentity(state));
+        Assert.Null(ClientLabels.ConfirmedIdentity(state with { State = WorldReadiness.Loading }));
+        Assert.Null(ClientLabels.ConfirmedIdentity(state with { HomeWorld = 0 }));
+        Assert.Equal("Test Player", ClientLabels.Title("account", state with { HomeWorld = 0 }));
+        Assert.Equal("FINAL FANTASY XIV", ClientLabels.Title("account", state with { State = WorldReadiness.NotInWorld }, "Old Player@Jenova"));
     }
 
     [Fact]

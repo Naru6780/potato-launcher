@@ -59,6 +59,14 @@ internal sealed class ExternalGameState
 {
     // Deliberately pinned: never apply an old struct layout to a newly patched executable.
     internal const string SupportedSha256 = "5BBC501DD5C7F22FD61A11D08C25356041D878DB7CD83203ADAE393E4DFACC44";
+    // 2026.10.16.0000.0000: same fields/signatures, checked against FFXIVClientStructs dd57986b.
+    internal const string October2026Sha256 = "46A52AB1DBE80B9A8D6C4D4531BF66693904200C5135FACACD053EF28A5DE14A";
+    internal static bool IsSupportedBuild(string sha256) =>
+        string.Equals(sha256, SupportedSha256, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(sha256, October2026Sha256, StringComparison.OrdinalIgnoreCase);
+
+    // Offline verification: checks the allowlist and every signature without opening a running game.
+    internal static void ValidateExecutable(string path) => _ = Resolve(path);
     private static readonly ConcurrentDictionary<string, Lazy<Addresses>> Profiles = new(StringComparer.OrdinalIgnoreCase);
     private sealed record Addresses(int PlayerState, int LocalPlayer, int GameMain, int Conditions, int FrameworkPointer, int DevicePointer);
     private readonly ConcurrentDictionary<int, (DateTime Start, long ModuleBase, Addresses Addresses)> frameTargets = new();
@@ -178,8 +186,9 @@ internal sealed class ExternalGameState
     private static Addresses Resolve(string path)
     {
         var bytes = File.ReadAllBytes(path);
-        if (Convert.ToHexString(SHA256.HashData(bytes)) != SupportedSha256)
-            throw new NotSupportedException("Unsupported FFXIV build: readiness detection needs a compatibility update.");
+        var sha256 = Convert.ToHexString(SHA256.HashData(bytes));
+        if (!IsSupportedBuild(sha256))
+            throw new NotSupportedException($"Unsupported FFXIV build: readiness detection needs a compatibility update. Executable SHA-256: {sha256}");
         using var pe = new PEReader(new MemoryStream(bytes, false));
         var section = pe.PEHeaders.SectionHeaders.Single(s => s.Name == ".text");
         var text = bytes.AsSpan(section.PointerToRawData, section.SizeOfRawData).ToArray();

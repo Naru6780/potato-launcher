@@ -5,6 +5,24 @@ namespace PotatoLauncher.Tests;
 public class ExternalGameStateTests(Xunit.Abstractions.ITestOutputHelper output)
 {
     [Fact]
+    public void OnlyVerifiedExecutableBuildsAreSupported()
+    {
+        Assert.True(ExternalGameState.IsSupportedBuild(ExternalGameState.SupportedSha256));
+        Assert.True(ExternalGameState.IsSupportedBuild(ExternalGameState.October2026Sha256.ToLowerInvariant()));
+        Assert.False(ExternalGameState.IsSupportedBuild(new string('0', 64)));
+        Assert.False(ExternalGameState.IsSupportedBuild(""));
+    }
+
+    [Fact]
+    public void ValidateInstalledExecutableOfflineWhenRequested()
+    {
+        var path = Environment.GetEnvironmentVariable("POTATO_OFFLINE_GAME_EXE");
+        if (string.IsNullOrWhiteSpace(path)) return;
+        ExternalGameState.ValidateExecutable(path);
+        output.WriteLine("Executable hash and all six unique signatures validated offline.");
+    }
+
+    [Fact]
     public void RequiresLoadedZoneAndNoTransition()
     {
         Assert.True(ExternalGameState.IsLoaded(true, 2, 132, false, false, false, false));
@@ -56,8 +74,8 @@ public class ExternalGameStateTests(Xunit.Abstractions.ITestOutputHelper output)
     {
         var unknown = new ExternalGameSnapshot(WorldReadiness.Unknown, "");
         Assert.DoesNotContain("@", ClientLabels.Title("account@example.com", unknown));
-        Assert.Contains("Client running", ClientLabels.Title("account", unknown));
-        Assert.Equal("Test Player@Jenova", ClientLabels.Title("account", new(WorldReadiness.InWorld, "", "Test Player", 12, 132, 40)));
+        Assert.Equal("FINAL FANTASY XIV", ClientLabels.Title("account", unknown));
+        Assert.Equal("Test Player", ClientLabels.Title("account", new(WorldReadiness.InWorld, "", "Test Player", 12, 132, 40)));
         Assert.DoesNotContain("@", ClientLabels.Title("account", new(WorldReadiness.Loading, "", "Test Player", 12, 132, 40)));
     }
 

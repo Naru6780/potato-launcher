@@ -40,15 +40,19 @@ internal sealed class ClientLabels : IDisposable
 
     internal static string Title(string account, ExternalGameSnapshot state, string? lastKnownIdentity = null)
     {
-        if (state.State == WorldReadiness.InWorld && GameWorldNames.All.TryGetValue(state.HomeWorld, out var world))
-            return $"{state.CharacterName}@{world}";
+        if (state.State == WorldReadiness.InWorld && !string.IsNullOrWhiteSpace(state.CharacterName))
+            return state.CharacterName;
         // A zone change does not change who is playing: keep the confirmed name through loading screens.
         if (state.State == WorldReadiness.Loading && !string.IsNullOrWhiteSpace(lastKnownIdentity))
-            return lastKnownIdentity;
-        // Account labels are never formatted as Character@World or treated as evidence of login.
-        var label = new string(account.Where(c => !char.IsControl(c) && c != '@').Take(80).ToArray());
-        return $"Potato Launcher — {label} — {(state.State == WorldReadiness.Loading ? "Loading" : "Client running")}";
+            return lastKnownIdentity.Split('@', 2)[0];
+        // Until a character is confirmed, keep a neutral title rather than exposing account details.
+        return "FINAL FANTASY XIV";
     }
+
+    internal static string? ConfirmedIdentity(ExternalGameSnapshot state) =>
+        state.State == WorldReadiness.InWorld && !string.IsNullOrWhiteSpace(state.CharacterName) &&
+        GameWorldNames.All.TryGetValue(state.HomeWorld, out var world)
+            ? $"{state.CharacterName}@{world}" : null;
 
     private async Task MonitorAsync()
     {
@@ -69,7 +73,7 @@ internal sealed class ClientLabels : IDisposable
                         // Leaving the world (title screen / character select) may mean a different character next.
                         if (state.State == WorldReadiness.NotInWorld) ClientIdentities.Forget(pid);
                         var title = Title(entry.Account, state, ClientIdentities.Get(pid, entry.Start));
-                        if (state.State == WorldReadiness.InWorld && title.Contains('@')) ClientIdentities.Set(pid, entry.Start, title);
+                        if (ConfirmedIdentity(state) is { } identity) ClientIdentities.Set(pid, entry.Start, identity);
                         process.Refresh();
                         var window = process.MainWindowHandle;
                         if (window == IntPtr.Zero || process.MainWindowTitle == title) continue;
