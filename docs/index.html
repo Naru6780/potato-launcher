@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher</title>
+  <meta name="description" content="A Windows launcher for FFXIV / FF14 XIVLauncher accounts, bands, portraits, and client monitoring.">
+  <meta name="keywords" content="Potato Launcher, FFXIV launcher, FF14 launcher, XIVLauncher, FFXIV account launcher, FF14 account launcher, multibox launcher">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://naru6780.github.io/potato-launcher/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher">
+  <meta property="og:description" content="Launch bands, manage portraits, and monitor FFXIV clients from one Windows app.">
+  <meta property="og:url" content="https://naru6780.github.io/potato-launcher/">
+  <meta property="og:image" content="https://naru6780.github.io/potato-launcher/assets/potato-launcher-main-private.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Potato Launcher - FFXIV / FF14 XIVLauncher Account Launcher">
+  <meta name="twitter:description" content="Launch bands, manage portraits, and monitor FFXIV clients from one Windows app.">
+  <meta name="twitter:image" content="https://naru6780.github.io/potato-launcher/assets/potato-launcher-main-private.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Potato Launcher",
+    "applicationCategory": "GameApplication",
+    "operatingSystem": "Windows",
+    "description": "Potato Launcher is a Windows launcher for FFXIV / FF14 XIVLauncher accounts, saved bands, portraits, and client monitoring.",
+    "url": "https://naru6780.github.io/potato-launcher/",
+    "image": "https://naru6780.github.io/potato-launcher/assets/potato-launcher-main-private.png",
+    "downloadUrl": "https://github.com/Naru6780/potato-launcher/releases/latest",
+    "softwareVersion": "1.0.89",
+    "author": {
+      "@type": "Person",
+      "name": "Naru6780"
+    },
+    "codeRepository": "https://github.com/Naru6780/potato-launcher"
+  }
+  </script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #100e1b;
+      --bg-soft: #171325;
+      --panel: rgba(255,255,255,.065);
+      --panel-strong: rgba(255,255,255,.1);
+      --text: #fff9ff;
+      --muted: #cfc6dc;
+      --quiet: #9288a4;
+      --line: rgba(255,255,255,.14);
+      --pink: #e65c98;
+      --blue: #7b92ff;
+      --purple: #b273f1;
+      --shadow: 0 36px 110px rgba(0,0,0,.42);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 82% 8%, rgba(230,92,152,.26), transparent 30%),
+        radial-gradient(circle at 10% 62%, rgba(123,146,255,.16), transparent 34%),
+        linear-gradient(140deg, var(--bg), var(--bg-soft) 60%, #27152f);
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.036) 1px, transparent 1px),
+        linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px);
+      background-size: 88px 88px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,.7), transparent 78%);
+      animation: grid 20s linear infinite;
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: -20%;
+      z-index: -3;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 16% 24%, rgba(123,146,255,.18), transparent 24%),
+        radial-gradient(circle at 76% 44%, rgba(230,92,152,.2), transparent 24%),
+        radial-gradient(circle at 48% 86%, rgba(178,115,241,.18), transparent 28%);
+      filter: blur(10px);
+      animation: aura 15s ease-in-out infinite alternate;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    img {
+      display: block;
+      max-width: 100%;
+    }
+
+    .wrap {
+      width: min(1180px, calc(100vw - 36px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      background: rgba(16,14,27,.74);
+      backdrop-filter: blur(18px);
+    }
+
+    .topbar-inner {
+      min-height: 66px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 22px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      font-weight: 900;
+    }
+
+    .mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, var(--pink), var(--blue));
+      box-shadow: 0 14px 32px rgba(123,146,255,.22);
+      font-size: .86rem;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .nav a,
+    .button {
+      position: relative;
+      overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 0 18px;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 999px;
+      color: white;
+      text-decoration: none;
+      font-size: .92rem;
+      font-weight: 900;
+      background: rgba(255,255,255,.08);
+      transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease;
+    }
+
+    .nav a.primary,
+    .button.primary {
+      background: linear-gradient(135deg, var(--pink), var(--blue));
+      box-shadow: 0 18px 46px rgba(0,0,0,.28);
+    }
+
+    .button::after,
+    .nav a.primary::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      transform: translateX(-130%) skewX(-18deg);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.28), transparent);
+      animation: sheen 5.2s ease-in-out infinite;
+    }
+
+    .nav a:hover,
+    .button:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255,255,255,.34);
+      box-shadow: 0 18px 46px rgba(0,0,0,.3);
+    }
+
+    .hero {
+      min-height: 720px;
+      display: grid;
+      grid-template-columns: minmax(0, .72fr) minmax(520px, 1.28fr);
+      align-items: center;
+      gap: 46px;
+      padding: 70px 0 82px;
+    }
+
+    .hero-copy {
+      min-width: 0;
+    }
+
+    h1 {
+      max-width: 620px;
+      margin: 0;
+      font-size: clamp(3.25rem, 8vw, 6.2rem);
+      line-height: .92;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 510px;
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 1.8vw, 1.25rem);
+      line-height: 1.7;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 32px;
+    }
+
+    .hero-media {
+      min-width: 0;
+      position: relative;
+    }
+
+    .hero-media::before {
+      content: "";
+      position: absolute;
+      inset: 10% -8% 8% 12%;
+      z-index: -1;
+      background: linear-gradient(135deg, rgba(230,92,152,.22), rgba(123,146,255,.2));
+      filter: blur(46px);
+      opacity: .9;
+    }
+
+    .screen {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 24px;
+      background: rgba(255,255,255,.07);
+      box-shadow: var(--shadow);
+    }
+
+    .screen::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(115deg, transparent 18%, rgba(255,255,255,.16) 34%, transparent 52%);
+      transform: translateX(-130%);
+      animation: glint 7s ease-in-out infinite;
+    }
+
+    .hero .screen {
+      transform: rotateX(2deg) rotateY(-5deg);
+      animation: float 7s ease-in-out infinite;
+    }
+
+    .screen img {
+      width: 100%;
+      height: auto;
+      object-fit: contain;
+    }
+
+    section {
+      padding: 86px 0;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: .72fr 1.28fr;
+      gap: 46px;
+      align-items: start;
+      border-top: 1px solid var(--line);
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(2.15rem, 4vw, 4rem);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .copy {
+      max-width: 640px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.06rem;
+      line-height: 1.8;
+    }
+
+    .feature-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1px;
+      margin-top: 34px;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .feature {
+      min-height: 118px;
+      padding: 22px;
+      background: rgba(255,255,255,.055);
+      opacity: 1;
+      transform: none;
+      transition: opacity .65s ease, transform .65s ease, background .22s ease;
+    }
+
+    .feature:hover {
+      background: rgba(255,255,255,.09);
+      transform: translateY(-4px);
+    }
+
+    .feature strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 1rem;
+    }
+
+    .feature span {
+      color: var(--muted);
+      font-size: .95rem;
+      line-height: 1.55;
+    }
+
+    .monitor {
+      display: grid;
+      grid-template-columns: minmax(0, 1.12fr) minmax(260px, .58fr);
+      gap: 42px;
+      align-items: center;
+    }
+
+    .monitor-media {
+      min-width: 0;
+      transform: none;
+      opacity: 1;
+      transition: opacity .75s ease, transform .75s ease;
+    }
+
+    .monitor-text {
+      transform: none;
+      opacity: 1;
+      transition: opacity .75s ease .1s, transform .75s ease .1s;
+    }
+
+    .monitor h2 {
+      max-width: 420px;
+    }
+
+    .monitor p {
+      max-width: 430px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 1.03rem;
+      line-height: 1.75;
+    }
+
+    .download {
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 28px;
+      align-items: center;
+      padding: 38px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 18px;
+      background:
+        linear-gradient(125deg, rgba(230,92,152,.18), transparent 42%),
+        linear-gradient(280deg, rgba(123,146,255,.18), transparent 44%),
+        rgba(255,255,255,.06);
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
+    }
+
+    .download::before {
+      content: "";
+      position: absolute;
+      left: -18%;
+      right: -18%;
+      top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent);
+      animation: line 4.8s ease-in-out infinite;
+    }
+
+    .download p {
+      max-width: 590px;
+      margin: 12px 0 0;
+      color: var(--muted);
+      line-height: 1.75;
+    }
+
+    footer {
+      width: min(1180px, calc(100vw - 36px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+      color: var(--quiet);
+      font-size: .92rem;
+    }
+
+    footer p {
+      margin: 8px 0 0;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: rotateX(2deg) rotateY(-5deg) translateY(0); }
+      50% { transform: rotateX(1deg) rotateY(-3deg) translateY(-12px); }
+    }
+
+    @keyframes sheen {
+      0%, 45% { transform: translateX(-130%) skewX(-18deg); }
+      72%, 100% { transform: translateX(135%) skewX(-18deg); }
+    }
+
+    @keyframes glint {
+      0%, 30% { transform: translateX(-130%); }
+      56%, 100% { transform: translateX(130%); }
+    }
+
+    @keyframes grid {
+      from { background-position: 0 0; }
+      to { background-position: 88px 88px; }
+    }
+
+    @keyframes aura {
+      0% { transform: translate3d(-2%, -1%, 0) scale(1); opacity: .76; }
+      100% { transform: translate3d(2%, 1%, 0) scale(1.08); opacity: 1; }
+    }
+
+    @keyframes line {
+      0%, 100% { transform: translateX(-20%); opacity: .24; }
+      50% { transform: translateX(20%); opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+      }
+
+      .monitor-media,
+      .monitor-text {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    @media (max-width: 980px) {
+      .hero,
+      .split,
+      .monitor,
+      .download {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding-top: 46px;
+      }
+
+      .hero .screen {
+        animation: none;
+        transform: none;
+      }
+
+      .feature-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .wrap,
+      footer {
+        width: min(1180px, calc(100vw - 32px));
+      }
+
+      .topbar-inner {
+        min-height: 58px;
+      }
+
+      .nav {
+        display: none;
+      }
+
+      .hero {
+        display: block;
+        gap: 34px;
+        min-height: auto;
+        padding-bottom: 58px;
+        overflow: hidden;
+      }
+
+      .hero-copy,
+      .hero-media,
+      .actions {
+        width: calc(100vw - 32px);
+        max-width: calc(100vw - 32px);
+        min-width: 0;
+      }
+
+      h1 {
+        max-width: 330px;
+        font-size: clamp(2.85rem, 12vw, 3.35rem);
+        line-height: 1;
+      }
+
+      .lead {
+        max-width: 100%;
+      }
+
+      .lead,
+      .copy {
+        font-size: 1rem;
+      }
+
+      .actions,
+      .button {
+        width: 100%;
+      }
+
+      .hero-media {
+        margin: 34px 0 0;
+      }
+
+      .hero-media .screen {
+        width: calc(100vw - 32px);
+        max-width: calc(100vw - 32px);
+      }
+
+      .hero-media .screen img {
+        width: calc(100vw - 32px);
+        max-width: calc(100vw - 32px);
+      }
+
+      section {
+        padding: 62px 0;
+      }
+
+      .download {
+        padding: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <nav class="topbar" aria-label="Site">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="#">
+        <span class="mark">PL</span>
+        <span>Potato Launcher</span>
+      </a>
+      <div class="nav">
+        <a href="https://github.com/Naru6780/potato-launcher">GitHub</a>
+        <a class="primary" href="https://github.com/Naru6780/potato-launcher/releases/latest">Download</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="wrap hero">
+    <div class="hero-copy">
+      <h1>Launch your bands.</h1>
+      <p class="lead">Manage XIVLauncher accounts and launch bands together across two PCs.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/Naru6780/potato-launcher/releases/latest">Download latest</a>
+        <a class="button" href="https://github.com/Naru6780/potato-launcher">View source</a>
+      </div>
+    </div>
+
+    <div class="hero-media" aria-label="Potato Launcher preview">
+      <div class="screen">
+        <img src="assets/potato-launcher-main-private.png" alt="Potato Launcher account roster and band manager">
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="split" aria-labelledby="simple-title">
+      <div>
+        <h2 id="simple-title">Keep the routine simple.</h2>
+      </div>
+      <div>
+        <p class="copy">Pick the accounts you want, save them as a band, and launch them in order. Portraits make the roster easy to scan, and queue controls help keep startup calm.</p>
+        <div class="feature-row">
+          <div class="feature">
+            <strong>Bands</strong>
+            <span>Launch saved groups with cooldowns and initialization waiting.</span>
+          </div>
+          <div class="feature">
+            <strong>Multiband</strong>
+            <span>Pair two PCs on your private network and start one band on each PC together.</span>
+          </div>
+          <div class="feature">
+            <strong>Portraits</strong>
+            <span>Use Lodestone portraits so each account is easy to recognize.</span>
+          </div>
+          <div class="feature">
+            <strong>Updates</strong>
+            <span>Install normally and keep settings between releases.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="monitor" aria-labelledby="monitor-title">
+      <div class="monitor-media">
+        <div class="screen">
+          <img src="assets/potato-launcher-optimizer.png" alt="Potato Optimizer monitor">
+        </div>
+      </div>
+      <div class="monitor-text">
+        <h2 id="monitor-title">Watch your clients.</h2>
+        <p>Open the Optimizer when you want to see client FPS, frame caps, CPU, GPU, RAM, and trim status at a glance.</p>
+      </div>
+    </section>
+
+    <section id="download" aria-labelledby="download-title">
+      <div class="download">
+        <div>
+          <h2 id="download-title">Install and go.</h2>
+          <p>Download the Windows installer from GitHub Releases. Bands, accounts, settings, and portraits stay in your app data folder when you update.</p>
+        </div>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/Naru6780/potato-launcher/releases/latest">Latest release</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <strong>Potato Launcher</strong>
+    <p>Independent community tool. Not affiliated with Square Enix, Final Fantasy XIV, XIVLauncher, or Dalamud.</p>
+  </footer>
+</body>
+</html>
